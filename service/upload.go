@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/storage"
+	"ayo-mwr/transcode"
 )
 
 // UploadService handles uploading videos to R2 storage
@@ -220,5 +222,62 @@ func (s *UploadService) UploadVideo(videoID string) error {
 	}
 
 	log.Printf("Successfully uploaded video %s to R2 storage", video.ID)
+	return nil
+}
+
+// ProcessVideoFile processes a video file and uploads it
+func (s *UploadService) ProcessVideoFile(filePath string) error {
+	// Extract video ID from filename
+	videoID := filepath.Base(filePath)
+	videoID = videoID[:len(videoID)-len(filepath.Ext(videoID))]
+
+	log.Printf("Processing video file: %s with ID: %s", filePath, videoID)
+
+	// Create metadata record in database
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("error getting file info for %s: %v", filePath, err)
+	}
+
+	// Create metadata
+	metadata := database.VideoMetadata{
+		ID:        videoID,
+		CreatedAt: time.Now(),
+		Status:    database.StatusProcessing,
+		Size:      fileInfo.Size(),
+		LocalPath: filePath,
+		CameraID:  "camera_A", // Could be parameterized
+	}
+
+	// Add to database
+	if err := s.db.CreateVideo(metadata); err != nil {
+		log.Printf("Error creating video record in database: %v", err)
+	}
+
+	// Generate HLS and DASH streams
+	hlsPath := filepath.Join(s.config.StoragePath, "hls", videoID)
+	dashPath := filepath.Join(s.config.StoragePath, "dash", videoID)
+
+	// Use the transcode package
+	urls, _, err := transcode.TranscodeVideo(filePath, videoID, s.config)
+	if err != nil {
+		log.Printf("Error transcoding video %s: %v", videoID, err)
+		s.db.UpdateVideoStatus(videoID, database.StatusFailed, fmt.Sprintf("Transcoding error: %v", err))
+		return err
+	}
+
+	// Update metadata with successful transcoding
+	metadata.Status = database.StatusReady
+	metadata.HLSPath = hlsPath
+	metadata.DASHPath = dashPath
+	metadata.HLSURL = urls["hls"]
+	metadata.DASHURL = urls["dash"]
+	now := time.Now()
+	metadata.FinishedAt = &now
+
+	if err := s.db.UpdateVideo(metadata); err != nil {
+		log.Printf("Error updating video record in database: %v", err)
+	}
+
 	return nil
 }

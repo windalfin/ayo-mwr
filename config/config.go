@@ -109,17 +109,15 @@ func getEnv(key, fallback string) string {
 func EnsurePaths(config Config) {
 	// Create storage directories
 	for _, dir := range []string{"uploads", "hls", "dash", "temp"} {
-		path := os.MkdirAll(config.StoragePath+"/"+dir, 0755)
-		if path != nil {
-			log.Printf("Failed to create directory %s: %v", config.StoragePath+"/"+dir, path)
+		err := os.MkdirAll(filepath.Join(config.StoragePath, dir), 0755)
+		if err != nil {
+			log.Printf("Failed to create directory %s: %v", filepath.Join(config.StoragePath, dir), err)
 		}
 	}
 
 	// Create database directory
-	dbDir := config.DatabasePath[:len(config.DatabasePath)-len(filepath.Base(config.DatabasePath))]
-	if dbDir != "" {
-		if err := os.MkdirAll(dbDir, 0755); err != nil {
-			log.Printf("Failed to create database directory %s: %v", dbDir, err)
-		}
+	dbDir := filepath.Dir(config.DatabasePath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		log.Printf("Failed to create database directory %s: %v", dbDir, err)
 	}
 }

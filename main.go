@@ -4,19 +4,20 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
+	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/service"
 	"ayo-mwr/storage"
+	"ayo-mwr/transcode"
+
+	"github.com/joho/godotenv"
 )
 
 // UploadQueue represents a queue for handling captured video files
@@ -90,8 +91,8 @@ func (q *UploadQueue) ProcessQueue(cfg config.Config, db database.Database, r2St
 			hlsPath := filepath.Join(cfg.StoragePath, "hls", videoID)
 			dashPath := filepath.Join(cfg.StoragePath, "dash", videoID)
 
-			// Start transcoding
-			urls, _, err := transcodeVideo(filename, videoID, cfg)
+			// Start transcoding using the transcode package
+			urls, _, err := transcode.TranscodeVideo(filename, videoID, cfg)
 			if err != nil {
 				log.Printf("Error transcoding video %s: %v\n", videoID, err)
 				db.UpdateVideoStatus(videoID, database.StatusFailed, fmt.Sprintf("Transcoding error: %v", err))
@@ -120,7 +121,7 @@ func (q *UploadQueue) ProcessQueue(cfg config.Config, db database.Database, r2St
 }
 
 // CaptureRTSPSegments captures video from an RTSP stream using FFmpeg and saves it in segments
-func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
+func CaptureRTSPSegments(cfg config.Config, uploadService *service.UploadService) error {
 	// Construct the RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
 		cfg.RTSPUsername,
@@ -129,6 +130,12 @@ func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 		cfg.RTSPPort,
 		cfg.RTSPPath,
 	)
+
+	// Create logs directory if it doesn't exist
+	logDir := filepath.Join(cfg.StoragePath, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("Error creating logs directory: %v", err)
+	}
 
 	for {
 		// Create a new segment file with timestamp
@@ -139,19 +146,50 @@ func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 		log.Printf("Creating new video segment: %s\n", outputFilename)
 
 		// Get input and output parameters based on hardware acceleration
-		inputParams, _ := splitFFmpegParams(cfg.HardwareAccel, cfg.Codec)
+		inputParams, _ := transcode.SplitFFmpegParams(cfg.HardwareAccel, cfg.Codec)
 
-		// For testing the connection first
-		testCmd := exec.Command("ffmpeg", "-i", rtspURL, "-t", "1", "-f", "null", "-")
+		// Test the connection with a timeout
+		testCmd := exec.Command("ffmpeg",
+			"-rtsp_transport", "tcp", // Use TCP for testing too
+			"-i", rtspURL,
+			"-t", "1",
+			"-f", "null",
+			"-")
+
 		var testOutput bytes.Buffer
 		testCmd.Stderr = &testOutput
 
+		// Create a channel to signal completion
+		done := make(chan error, 1)
+
 		log.Printf("Testing RTSP connection: %s", rtspURL)
-		err := testCmd.Run()
-		if err != nil {
-			log.Printf("Error connecting to RTSP: %v", err)
-			log.Printf("FFmpeg output: %s", testOutput.String())
-			log.Printf("Retrying in 10 seconds...")
+
+		// Start the command
+		if err := testCmd.Start(); err != nil {
+			log.Printf("Error starting RTSP test: %v", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		// Wait for command in a goroutine with timeout
+		go func() {
+			done <- testCmd.Wait()
+		}()
+
+		// Wait with timeout
+		select {
+		case err := <-done:
+			if err != nil {
+				log.Printf("Error connecting to RTSP: %v", err)
+				log.Printf("FFmpeg output: %s", testOutput.String())
+				time.Sleep(10 * time.Second)
+				continue
+			}
+			log.Printf("RTSP connection successful")
+		case <-time.After(15 * time.Second):
+			// Kill the process if it takes too long
+			log.Printf("RTSP connection test timed out after 15 seconds")
+			testCmd.Process.Kill()
 			time.Sleep(10 * time.Second)
 			continue
 		}
@@ -159,6 +197,8 @@ func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 		// Construct FFmpeg command for capturing a segment with more detailed parameters
 		ffmpegArgs := []string{
 			"-rtsp_transport", "tcp", // Use TCP (more reliable than UDP)
+			"-timeout", "5000000", // General IO timeout in microseconds (5 seconds) - older param
+			"-fflags", "nobuffer", // Reduce buffering and latency
 		}
 
 		// Add hardware acceleration parameters if configured
@@ -188,10 +228,23 @@ func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 
 		// Create and start FFmpeg command
 		cmd := exec.Command("ffmpeg", ffmpegArgs...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+
+		// Create a log file for FFmpeg error output
+		logFile, err := os.Create(filepath.Join(logDir, fmt.Sprintf("ffmpeg_%s.log", timestamp)))
+		if err != nil {
+			log.Printf("Error creating FFmpeg log file: %v", err)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		} else {
+			defer logFile.Close()
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+		}
 
 		log.Printf("Starting FFmpeg capture with command: ffmpeg %v", ffmpegArgs)
+
+		// Create a channel for capture command completion
+		captureDone := make(chan error, 1)
 
 		if err := cmd.Start(); err != nil {
 			log.Printf("Error starting FFmpeg: %v", err)
@@ -199,266 +252,91 @@ func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 			continue
 		}
 
-		// Wait for the FFmpeg process to complete
-		err = cmd.Wait()
-		if err != nil {
-			log.Printf("FFmpeg process ended with error: %v", err)
-		} else {
-			log.Printf("FFmpeg process completed successfully")
+		// Wait for the FFmpeg process to complete with timeout
+		go func() {
+			captureDone <- cmd.Wait()
+		}()
 
-			// Check if the file exists and has content
-			if fileInfo, err := os.Stat(outputPath); err == nil && fileInfo.Size() > 0 {
-				log.Printf("Recorded video segment: %s (%.2f MB)", outputPath, float64(fileInfo.Size())/(1024*1024))
-				if uploadQueue != nil {
-					uploadQueue.Put(outputPath)
-				}
+		// Wait with a generous timeout - it should complete normally based on -t parameter
+		// but this handles potential hangs
+		select {
+		case err := <-captureDone:
+			if err != nil {
+				log.Printf("FFmpeg process ended with error: %v", err)
 			} else {
-				log.Printf("Output file is empty or doesn't exist")
-			}
-		}
-	}
-}
+				log.Printf("FFmpeg process completed successfully")
 
-// transcodeVideo generates HLS and DASH formats from the MP4 file
-func transcodeVideo(inputPath, videoID string, cfg config.Config) (map[string]string, map[string]float64, error) {
-	hlsPath := filepath.Join(cfg.StoragePath, "hls", videoID)
-	dashPath := filepath.Join(cfg.StoragePath, "dash", videoID)
-
-	// Create output directories
-	os.MkdirAll(hlsPath, 0755)
-	os.MkdirAll(dashPath, 0755)
-
-	timings := make(map[string]float64)
-	inputParams, outputParams := splitFFmpegParams(cfg.HardwareAccel, cfg.Codec)
-
-	// Create channels for error handling and synchronization
-	errChan := make(chan error, 2)
-	timesChan := make(chan struct {
-		key   string
-		value float64
-	}, 2)
-
-	// Start HLS transcoding in a goroutine
-	go func() {
-		hlsStart := time.Now()
-		hlsCmd := exec.Command("ffmpeg", append(append(inputParams, "-i", inputPath),
-			append(outputParams,
-				"-hls_time", "4",
-				"-hls_playlist_type", "vod",
-				"-hls_segment_filename", filepath.Join(hlsPath, "segment_%03d.ts"),
-				filepath.Join(hlsPath, "playlist.m3u8"))...)...)
-		hlsCmd.Stdout = os.Stdout
-		hlsCmd.Stderr = os.Stderr
-
-		if err := hlsCmd.Run(); err != nil {
-			errChan <- fmt.Errorf("HLS transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "hlsTranscode", value: time.Since(hlsStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Start DASH transcoding in a goroutine
-	go func() {
-		dashStart := time.Now()
-		dashCmd := exec.Command("ffmpeg", append(append(inputParams, "-i", inputPath),
-			append(outputParams,
-				"-f", "dash",
-				"-use_timeline", "1",
-				"-use_template", "1",
-				"-seg_duration", "4",
-				"-adaptation_sets", "id=0,streams=v id=1,streams=a",
-				"-init_seg_name", filepath.Join(dashPath, "init-stream$RepresentationID$.m4s"),
-				"-media_seg_name", filepath.Join(dashPath, "chunk-stream$RepresentationID$-$Number$.m4s"),
-				filepath.Join(dashPath, "manifest.mpd"))...)...)
-		dashCmd.Stdout = os.Stdout
-		dashCmd.Stderr = os.Stderr
-
-		if err := dashCmd.Run(); err != nil {
-			errChan <- fmt.Errorf("DASH transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "dashTranscode", value: time.Since(dashStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Wait for both transcoding processes to complete
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return nil, nil, err
-		}
-	}
-
-	// Collect timing information
-	for i := 0; i < 2; i++ {
-		timing := <-timesChan
-		timings[timing.key] = timing.value
-	}
-
-	return map[string]string{
-		"hls":  fmt.Sprintf("%s/hls/%s/playlist.m3u8", cfg.BaseURL, videoID),
-		"dash": fmt.Sprintf("%s/dash/%s/manifest.mpd", cfg.BaseURL, videoID),
-	}, timings, nil
-}
-
-// splitFFmpegParams returns appropriate FFmpeg parameters based on hardware acceleration and codec
-func splitFFmpegParams(hwAccel, codec string) ([]string, []string) {
-	var commonOutput []string
-	switch codec {
-	case "av1":
-		commonOutput = []string{"-c:v", "libaom-av1", "-crf", "30", "-b:v", "0", "-strict", "experimental", "-c:a", "aac", "-b:a", "128k"}
-	case "hevc":
-		commonOutput = []string{"-c:v", "libx265", "-crf", "28", "-preset", "medium", "-c:a", "aac", "-b:a", "128k"}
-	default: // avc
-		commonOutput = []string{
-			"-c:v", "libx264",
-			"-preset", "ultrafast",
-			"-tune", "fastdecode",
-			"-profile:v", "baseline",
-			"-level", "3.0",
-			"-b:v", "2M",
-			"-maxrate", "2.5M",
-			"-bufsize", "5M",
-			"-pix_fmt", "yuv420p",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-movflags", "+faststart",
-			"-g", "48",
-			"-keyint_min", "48",
-			"-sc_threshold", "0",
-			"-bf", "0",
-		}
-	}
-
-	switch hwAccel {
-	case "nvidia":
-		codecParams := map[string][]string{
-			"av1":  {"-c:v", "av1_nvenc"},
-			"hevc": {"-c:v", "hevc_nvenc"},
-			"avc":  {"-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll"},
-		}
-		return []string{"-hwaccel", "cuda"}, append(codecParams[codec], commonOutput...)
-	case "intel":
-		codecParams := map[string][]string{
-			"hevc": {"-c:v", "hevc_qsv"},
-			"avc":  {"-c:v", "h264_qsv", "-preset", "faster"},
-		}
-		if codec == "av1" {
-			return []string{}, commonOutput // Fall back to software encoding for AV1
-		}
-		return []string{"-hwaccel", "qsv"}, append(codecParams[codec], commonOutput...)
-	case "amd":
-		codecParams := map[string][]string{
-			"hevc": {"-c:v", "hevc_amf"},
-			"avc":  {"-c:v", "h264_amf", "-quality", "speed"},
-		}
-		if codec == "av1" {
-			return []string{}, commonOutput // Fall back to software encoding for AV1
-		}
-		return []string{"-hwaccel", "amf"}, append(codecParams[codec], commonOutput...)
-	case "videotoolbox": // macOS
-		codecParams := map[string][]string{
-			"hevc": {"-c:v", "hevc_videotoolbox"},
-			"avc":  {"-c:v", "h264_videotoolbox", "-allow_sw", "0", "-realtime", "1", "-profile:v", "high", "-tag:v", "avc1", "-threads", "0"},
-		}
-		if codec == "avc" {
-			return []string{"-hwaccel", "videotoolbox"},
-				[]string{
-					"-c:v", "h264_videotoolbox",
-					"-b:v", "2M",
-					"-maxrate", "2.5M",
-					"-bufsize", "5M",
-					"-pix_fmt", "nv12",
-					"-c:a", "aac",
-					"-b:a", "128k",
+				// Check if the file exists and has content
+				if fileInfo, err := os.Stat(outputPath); err == nil && fileInfo.Size() > 0 {
+					log.Printf("Recorded video segment: %s (%.2f MB)", outputPath, float64(fileInfo.Size())/(1024*1024))
+					if uploadService != nil {
+						// Use the new ProcessVideoFile method instead of UploadVideo
+						go uploadService.ProcessVideoFile(outputPath)
+					}
+				} else {
+					log.Printf("Output file is empty or doesn't exist")
 				}
+			}
+		case <-time.After(time.Duration(cfg.SegmentDuration+30) * time.Second):
+			// Kill the process if it takes too long (segment duration + 30 seconds buffer)
+			log.Printf("FFmpeg capture timed out, killing process")
+			cmd.Process.Kill()
+			time.Sleep(5 * time.Second)
 		}
-		return []string{"-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"}, append(codecParams[codec], commonOutput...)
-	default: // No hardware acceleration
-		return []string{}, commonOutput
 	}
 }
 
 // setupWebServer configures and starts the web server for streaming
 func setupWebServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) {
-	r := gin.Default()
+	server := api.NewServer(cfg, db, r2Storage, uploadService)
+	server.Start()
+}
 
-	// Enable CORS
-	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		c.Next()
+func main() {
+
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Error loading .env file:", err)
+	}
+
+	// Load config
+	cfg := config.LoadConfig()
+
+	// Ensure all required directories exist
+	config.EnsurePaths(cfg)
+
+	// Initialize database
+	db, err := database.NewSQLiteDB(cfg.DatabasePath)
+	if err != nil {
+		log.Fatal("Failed to initialize SQLite database:", err)
+	}
+	defer db.Close()
+
+	// Initialize R2 storage
+	r2Storage, err := storage.NewR2Storage(storage.R2Config{
+		AccessKey: cfg.R2AccessKey,
+		SecretKey: cfg.R2SecretKey,
+		AccountID: cfg.R2AccountID,
+		Bucket:    cfg.R2Bucket,
+		Endpoint:  cfg.R2Endpoint,
+		Region:    cfg.R2Region,
 	})
+	if err != nil {
+		log.Fatal("Failed to initialize R2 storage:", err)
+	}
 
-	// Serve static files for HLS and DASH streaming
-	r.Static("/hls", filepath.Join(cfg.StoragePath, "hls"))
-	r.Static("/dash", filepath.Join(cfg.StoragePath, "dash"))
+	// Initialize upload service
+	uploadService := service.NewUploadService(db, r2Storage, cfg)
 
-	// API endpoint to list available streams
-	r.GET("/api/streams", func(c *gin.Context) {
-		limit := 20
-		offset := 0
-		videos, err := db.ListVideos(limit, offset)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to list streams: %v", err)})
-			return
+	// Create and start upload queue
+	uploadService.StartUploadWorker()
+
+	// Start RTSP capture in background
+	go func() {
+		if err := CaptureRTSPSegments(cfg, uploadService); err != nil {
+			log.Fatal(err)
 		}
+	}()
 
-		streams := make([]gin.H, 0)
-		for _, video := range videos {
-			stream := gin.H{
-				"id":        video.ID,
-				"status":    video.Status,
-				"createdAt": video.CreatedAt,
-				"size":      video.Size,
-			}
-
-			// Add URLs based on whether R2 is enabled and URLs are available
-			if video.R2HLSURL != "" && video.R2DASHURL != "" {
-				stream["hlsUrl"] = video.R2HLSURL
-				stream["dashUrl"] = video.R2DASHURL
-				stream["usingCloud"] = true
-			} else {
-				stream["hlsUrl"] = video.HLSURL
-				stream["dashUrl"] = video.DASHURL
-				stream["usingCloud"] = false
-			}
-
-			streams = append(streams, stream)
-		}
-
-		c.JSON(http.StatusOK, gin.H{"streams": streams})
-	})
-
-	// API endpoint to get details for a specific stream
-	r.GET("/api/streams/:id", func(c *gin.Context) {
-		id := c.Param("id")
-		video, err := db.GetVideo(id)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get stream: %v", err)})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"id":         video.ID,
-			"status":     video.Status,
-			"createdAt":  video.CreatedAt,
-			"size":       video.Size,
-			"usingCloud": video.R2HLSURL != "" && video.R2DASHURL != "",
-			"hlsUrl":     video.R2HLSURL,
-			"dashUrl":    video.R2DASHURL,
-		})
-	})
-
+	// Start web server
+	setupWebServer(cfg, db, r2Storage, uploadService)
 }

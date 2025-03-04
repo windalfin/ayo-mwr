@@ -7,33 +7,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
-)
 
-// Configuration for the application
-type Config struct {
-	Username        string
-	Password        string
-	IP              string
-	Port            string
-	Path            string
-	SegmentDuration int
-	Width           int
-	Height          int
-	FrameRate       int
-	StoragePath     string
-	HardwareAccel   string
-	Codec           string
-	ServerPort      string
-	BaseURL         string
-}
+	"ayo-mwr/config"
+	"ayo-mwr/database"
+	"ayo-mwr/service"
+	"ayo-mwr/storage"
+)
 
 // UploadQueue represents a queue for handling captured video files
 type UploadQueue struct {
@@ -71,7 +55,7 @@ func (q *UploadQueue) Get() (string, bool) {
 }
 
 // ProcessQueue continuously processes videos in the queue
-func (q *UploadQueue) ProcessQueue(config Config) {
+func (q *UploadQueue) ProcessQueue(cfg config.Config, db database.Database, r2Storage *storage.R2Storage) {
 	for {
 		filename, ok := q.Get()
 		if ok {
@@ -80,11 +64,54 @@ func (q *UploadQueue) ProcessQueue(config Config) {
 
 			log.Printf("Processing video: %s\n", videoID)
 
+			// Create metadata record in database
+			fileInfo, err := os.Stat(filename)
+			if err != nil {
+				log.Printf("Error getting file info for %s: %v\n", filename, err)
+				continue
+			}
+
+			// Create metadata
+			metadata := database.VideoMetadata{
+				ID:        videoID,
+				CreatedAt: time.Now(),
+				Status:    database.StatusProcessing,
+				Size:      fileInfo.Size(),
+				LocalPath: filename,
+				CameraID:  "camera_A", // Could be parameterized
+			}
+
+			// Add to database
+			if err := db.CreateVideo(metadata); err != nil {
+				log.Printf("Error creating video record in database: %v\n", err)
+			}
+
 			// Generate HLS and DASH streams
-			_, _, err := transcodeVideo(filename, videoID, config)
+			hlsPath := filepath.Join(cfg.StoragePath, "hls", videoID)
+			dashPath := filepath.Join(cfg.StoragePath, "dash", videoID)
+
+			// Start transcoding
+			urls, _, err := transcodeVideo(filename, videoID, cfg)
 			if err != nil {
 				log.Printf("Error transcoding video %s: %v\n", videoID, err)
+				db.UpdateVideoStatus(videoID, database.StatusFailed, fmt.Sprintf("Transcoding error: %v", err))
+				continue
 			}
+
+			// Update metadata with successful transcoding
+			metadata.Status = database.StatusReady
+			metadata.HLSPath = hlsPath
+			metadata.DASHPath = dashPath
+			metadata.HLSURL = urls["hls"]
+			metadata.DASHURL = urls["dash"]
+			now := time.Now()
+			metadata.FinishedAt = &now
+
+			if err := db.UpdateVideo(metadata); err != nil {
+				log.Printf("Error updating video record in database: %v\n", err)
+			}
+
+			// If R2 is enabled, the upload service worker will handle uploading
 		} else {
 			// No videos in queue, wait before checking again
 			time.Sleep(1 * time.Second)
@@ -93,26 +120,26 @@ func (q *UploadQueue) ProcessQueue(config Config) {
 }
 
 // CaptureRTSPSegments captures video from an RTSP stream using FFmpeg and saves it in segments
-func CaptureRTSPSegments(config Config, uploadQueue *UploadQueue) error {
+func CaptureRTSPSegments(cfg config.Config, uploadQueue *UploadQueue) error {
 	// Construct the RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
-		config.Username,
-		config.Password,
-		config.IP,
-		config.Port,
-		config.Path,
+		cfg.RTSPUsername,
+		cfg.RTSPPassword,
+		cfg.RTSPIP,
+		cfg.RTSPPort,
+		cfg.RTSPPath,
 	)
 
 	for {
 		// Create a new segment file with timestamp
 		timestamp := time.Now().Format("20060102_150405")
 		outputFilename := fmt.Sprintf("camera_A_%s.mp4", timestamp)
-		outputPath := filepath.Join(config.StoragePath, "uploads", outputFilename)
+		outputPath := filepath.Join(cfg.StoragePath, "uploads", outputFilename)
 
 		log.Printf("Creating new video segment: %s\n", outputFilename)
 
 		// Get input and output parameters based on hardware acceleration
-		inputParams, _ := splitFFmpegParams(config.HardwareAccel, config.Codec)
+		inputParams, _ := splitFFmpegParams(cfg.HardwareAccel, cfg.Codec)
 
 		// For testing the connection first
 		testCmd := exec.Command("ffmpeg", "-i", rtspURL, "-t", "1", "-f", "null", "-")
@@ -140,7 +167,7 @@ func CaptureRTSPSegments(config Config, uploadQueue *UploadQueue) error {
 		// Add input
 		ffmpegArgs = append(ffmpegArgs,
 			"-i", rtspURL,
-			"-t", fmt.Sprintf("%d", config.SegmentDuration),
+			"-t", fmt.Sprintf("%d", cfg.SegmentDuration),
 		)
 
 		// Add output parameters for better reliability
@@ -193,16 +220,16 @@ func CaptureRTSPSegments(config Config, uploadQueue *UploadQueue) error {
 }
 
 // transcodeVideo generates HLS and DASH formats from the MP4 file
-func transcodeVideo(inputPath, videoID string, config Config) (map[string]string, map[string]float64, error) {
-	hlsPath := filepath.Join(config.StoragePath, "hls", videoID)
-	dashPath := filepath.Join(config.StoragePath, "dash", videoID)
+func transcodeVideo(inputPath, videoID string, cfg config.Config) (map[string]string, map[string]float64, error) {
+	hlsPath := filepath.Join(cfg.StoragePath, "hls", videoID)
+	dashPath := filepath.Join(cfg.StoragePath, "dash", videoID)
 
 	// Create output directories
 	os.MkdirAll(hlsPath, 0755)
 	os.MkdirAll(dashPath, 0755)
 
 	timings := make(map[string]float64)
-	inputParams, outputParams := splitFFmpegParams(config.HardwareAccel, config.Codec)
+	inputParams, outputParams := splitFFmpegParams(cfg.HardwareAccel, cfg.Codec)
 
 	// Create channels for error handling and synchronization
 	errChan := make(chan error, 2)
@@ -275,8 +302,8 @@ func transcodeVideo(inputPath, videoID string, config Config) (map[string]string
 	}
 
 	return map[string]string{
-		"hls":  fmt.Sprintf("%s/hls/%s/playlist.m3u8", config.BaseURL, videoID),
-		"dash": fmt.Sprintf("%s/dash/%s/manifest.mpd", config.BaseURL, videoID),
+		"hls":  fmt.Sprintf("%s/hls/%s/playlist.m3u8", cfg.BaseURL, videoID),
+		"dash": fmt.Sprintf("%s/dash/%s/manifest.mpd", cfg.BaseURL, videoID),
 	}, timings, nil
 }
 
@@ -358,23 +385,8 @@ func splitFFmpegParams(hwAccel, codec string) ([]string, []string) {
 	}
 }
 
-// getEnv returns environment variable or fallback value
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return fallback
-}
-
-// ensureDirectories creates necessary directories
-func ensureDirectories(storagePath string) {
-	for _, dir := range []string{"uploads", "hls", "dash"} {
-		os.MkdirAll(filepath.Join(storagePath, dir), 0755)
-	}
-}
-
 // setupWebServer configures and starts the web server for streaming
-func setupWebServer(config Config) {
+func setupWebServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) {
 	r := gin.Default()
 
 	// Enable CORS
@@ -390,104 +402,63 @@ func setupWebServer(config Config) {
 	})
 
 	// Serve static files for HLS and DASH streaming
-	r.Static("/hls", filepath.Join(config.StoragePath, "hls"))
-	r.Static("/dash", filepath.Join(config.StoragePath, "dash"))
+	r.Static("/hls", filepath.Join(cfg.StoragePath, "hls"))
+	r.Static("/dash", filepath.Join(cfg.StoragePath, "dash"))
 
 	// API endpoint to list available streams
 	r.GET("/api/streams", func(c *gin.Context) {
-		hlsStreams, err := listStreams(filepath.Join(config.StoragePath, "hls"))
+		limit := 20
+		offset := 0
+		videos, err := db.ListVideos(limit, offset)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list streams"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to list streams: %v", err)})
 			return
 		}
 
 		streams := make([]gin.H, 0)
-		for _, streamID := range hlsStreams {
-			streams = append(streams, gin.H{
-				"id":      streamID,
-				"hlsUrl":  fmt.Sprintf("%s/hls/%s/playlist.m3u8", config.BaseURL, streamID),
-				"dashUrl": fmt.Sprintf("%s/dash/%s/manifest.mpd", config.BaseURL, streamID),
-			})
+		for _, video := range videos {
+			stream := gin.H{
+				"id":        video.ID,
+				"status":    video.Status,
+				"createdAt": video.CreatedAt,
+				"size":      video.Size,
+			}
+
+			// Add URLs based on whether R2 is enabled and URLs are available
+			if video.R2HLSURL != "" && video.R2DASHURL != "" {
+				stream["hlsUrl"] = video.R2HLSURL
+				stream["dashUrl"] = video.R2DASHURL
+				stream["usingCloud"] = true
+			} else {
+				stream["hlsUrl"] = video.HLSURL
+				stream["dashUrl"] = video.DASHURL
+				stream["usingCloud"] = false
+			}
+
+			streams = append(streams, stream)
 		}
 
 		c.JSON(http.StatusOK, gin.H{"streams": streams})
 	})
 
-	// Run web server
-	go func() {
-		log.Printf("Starting web server on port %s\n", config.ServerPort)
-		if err := r.Run(":" + config.ServerPort); err != nil {
-			log.Fatalf("Failed to start web server: %v", err)
-		}
-	}()
-}
-
-// listStreams returns a list of stream IDs (directory names) in the given path
-func listStreams(dirPath string) ([]string, error) {
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		return nil, err
-	}
-
-	streams := make([]string, 0)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			streams = append(streams, entry.Name())
-		}
-	}
-
-	return streams, nil
-}
-
-func main() {
-	// Load environment variables
-	godotenv.Load()
-
-	// Get configuration from environment variables with fallbacks
-	config := Config{
-		Username:        getEnv("RTSP_USERNAME", "winda"),
-		Password:        getEnv("RTSP_PASSWORD", "Morgana12"),
-		IP:              getEnv("RTSP_IP", "192.168.31.152"),
-		Port:            getEnv("RTSP_PORT", "554"),
-		Path:            getEnv("RTSP_PATH", "/streaming/channels/101/"),
-		SegmentDuration: 30, // 30 seconds per segment
-		Width:           800,
-		Height:          600,
-		FrameRate:       30,
-		StoragePath:     getEnv("STORAGE_PATH", "./videos"),
-		HardwareAccel:   getEnv("HW_ACCEL", ""), // Empty string means no hardware acceleration
-		Codec:           getEnv("CODEC", "avc"), // Default to AVC (H.264)
-		ServerPort:      getEnv("PORT", "3000"),
-		BaseURL:         getEnv("BASE_URL", "http://localhost:3000"),
-	}
-
-	// Create necessary directories
-	ensureDirectories(config.StoragePath)
-
-	// Create upload queue
-	uploadQueue := NewUploadQueue()
-
-	// Set up graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	// Start processing queue in a goroutine
-	go uploadQueue.ProcessQueue(config)
-
-	// Set up web server for streaming
-	setupWebServer(config)
-
-	// Start capture in a goroutine
-	go func() {
-		fmt.Printf("Starting RTSP capture with FFmpeg\n")
-		err := CaptureRTSPSegments(config, uploadQueue)
+	// API endpoint to get details for a specific stream
+	r.GET("/api/streams/:id", func(c *gin.Context) {
+		id := c.Param("id")
+		video, err := db.GetVideo(id)
 		if err != nil {
-			log.Fatalf("Error in RTSP capture: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get stream: %v", err)})
+			return
 		}
-	}()
 
-	// Wait for termination signal
-	<-stop
-	log.Println("Gracefully shutting down...")
-	time.Sleep(1 * time.Second)
+		c.JSON(http.StatusOK, gin.H{
+			"id":         video.ID,
+			"status":     video.Status,
+			"createdAt":  video.CreatedAt,
+			"size":       video.Size,
+			"usingCloud": video.R2HLSURL != "" && video.R2DASHURL != "",
+			"hlsUrl":     video.R2HLSURL,
+			"dashUrl":    video.R2DASHURL,
+		})
+	})
+
 }

@@ -3,8 +3,10 @@ package service
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"ayo-mwr/config"
@@ -13,19 +15,82 @@ import (
 	"ayo-mwr/transcode"
 )
 
+// QueuedVideo represents a video in the upload queue
+type QueuedVideo struct {
+	VideoID     string
+	RetryCount  int
+	LastAttempt time.Time
+	FailReason  string
+}
+
 // UploadService handles uploading videos to R2 storage
 type UploadService struct {
-	db        database.Database
-	r2Storage *storage.R2Storage
-	config    config.Config
+	db           database.Database
+	r2Storage    *storage.R2Storage
+	config       config.Config
+	uploadQueue  []QueuedVideo
+	queueMutex   sync.Mutex
+	maxRetries   int
+	retryBackoff time.Duration
 }
 
 // NewUploadService creates a new upload service
 func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg config.Config) *UploadService {
 	return &UploadService{
-		db:        db,
-		r2Storage: r2Storage,
-		config:    cfg,
+		db:           db,
+		r2Storage:    r2Storage,
+		config:       cfg,
+		uploadQueue:  make([]QueuedVideo, 0),
+		maxRetries:   5, // Maximum number of retry attempts
+		retryBackoff: 5 * time.Minute, // Time to wait between retries
+	}
+}
+
+// QueueVideo adds a video to the upload queue
+func (s *UploadService) QueueVideo(videoID string) {
+	s.queueMutex.Lock()
+	defer s.queueMutex.Unlock()
+
+	// Check if video is already in queue
+	for _, v := range s.uploadQueue {
+		if v.VideoID == videoID {
+			return
+		}
+	}
+
+	s.uploadQueue = append(s.uploadQueue, QueuedVideo{
+		VideoID:     videoID,
+		RetryCount:  0,
+		LastAttempt: time.Time{},
+	})
+	log.Printf("Added video %s to upload queue", videoID)
+}
+
+// removeFromQueue removes a video from the queue
+func (s *UploadService) removeFromQueue(videoID string) {
+	s.queueMutex.Lock()
+	defer s.queueMutex.Unlock()
+
+	for i, v := range s.uploadQueue {
+		if v.VideoID == videoID {
+			s.uploadQueue = append(s.uploadQueue[:i], s.uploadQueue[i+1:]...)
+			return
+		}
+	}
+}
+
+// updateQueuedVideo updates the retry information for a queued video
+func (s *UploadService) updateQueuedVideo(videoID string, failReason string) {
+	s.queueMutex.Lock()
+	defer s.queueMutex.Unlock()
+
+	for i, v := range s.uploadQueue {
+		if v.VideoID == videoID {
+			s.uploadQueue[i].RetryCount++
+			s.uploadQueue[i].LastAttempt = time.Now()
+			s.uploadQueue[i].FailReason = failReason
+			return
+		}
 	}
 }
 
@@ -33,7 +98,25 @@ func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg co
 func (s *UploadService) StartUploadWorker() {
 	go func() {
 		log.Println("Starting R2 upload worker")
+		isOffline := false
+		
 		for {
+			// Check internet connectivity
+			if !s.checkInternetConnectivity() {
+				if !isOffline {
+					log.Println("Internet connection lost. Upload worker entering offline mode")
+					isOffline = true
+				}
+				time.Sleep(30 * time.Second)
+				continue
+			}
+
+			// If we were offline and now we're online, log the recovery
+			if isOffline {
+				log.Println("Internet connection restored. Resuming uploads")
+				isOffline = false
+			}
+
 			// Get videos that are ready but not yet uploaded to R2
 			videos, err := s.db.GetVideosByStatus(database.StatusReady, 10, 0)
 			if err != nil {
@@ -42,62 +125,96 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
-			if len(videos) == 0 {
-				// No videos to upload, sleep and check again
+			// Add ready videos to queue if not already there
+			for _, video := range videos {
+				if video.R2HLSURL == "" || video.R2DASHURL == "" {
+					s.QueueVideo(video.ID)
+				}
+			}
+
+			// Process queue
+			s.queueMutex.Lock()
+			if len(s.uploadQueue) == 0 {
+				s.queueMutex.Unlock()
 				time.Sleep(10 * time.Second)
 				continue
 			}
 
-			for _, video := range videos {
-				// Skip if R2 URLs are already set
-				if video.R2HLSURL != "" && video.R2DASHURL != "" {
-					continue
-				}
+			// Get next video from queue
+			queuedVideo := s.uploadQueue[0]
+			s.queueMutex.Unlock()
 
-				log.Printf("Uploading video %s to R2 storage", video.ID)
-
-				// Update status to uploading
-				err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
-				if err != nil {
-					log.Printf("Error updating video status to uploading: %v", err)
-					continue
-				}
-
-				// Upload HLS stream
-				hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
-				if err != nil {
-					log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
-					s.db.UpdateVideoStatus(video.ID, database.StatusFailed, fmt.Sprintf("HLS upload error: %v", err))
-					continue
-				}
-
-				// Upload DASH stream
-				dashURL, err := s.r2Storage.UploadDASHStream(video.DASHPath, video.ID)
-				if err != nil {
-					log.Printf("Error uploading DASH stream for video %s: %v", video.ID, err)
-					s.db.UpdateVideoStatus(video.ID, database.StatusFailed, fmt.Sprintf("DASH upload error: %v", err))
-					continue
-				}
-
-				// Update R2 paths and URLs in database
-				err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("dash/%s", video.ID))
-				if err != nil {
-					log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
-				}
-
-				err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, dashURL)
-				if err != nil {
-					log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
-				}
-
-				// Update status back to ready
-				err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
-				if err != nil {
-					log.Printf("Error updating video status back to ready: %v", err)
-				}
-
-				log.Printf("Successfully uploaded video %s to R2 storage", video.ID)
+			// Check if we should retry yet
+			if !queuedVideo.LastAttempt.IsZero() && time.Since(queuedVideo.LastAttempt) < s.retryBackoff {
+				time.Sleep(5 * time.Second)
+				continue
 			}
+
+			// Check retry count
+			if queuedVideo.RetryCount >= s.maxRetries {
+				log.Printf("Video %s exceeded maximum retry attempts (%d). Last error: %s", 
+					queuedVideo.VideoID, s.maxRetries, queuedVideo.FailReason)
+				s.db.UpdateVideoStatus(queuedVideo.VideoID, database.StatusFailed, 
+					fmt.Sprintf("Exceeded maximum retry attempts. Last error: %s", queuedVideo.FailReason))
+				s.removeFromQueue(queuedVideo.VideoID)
+				continue
+			}
+
+			video, err := s.db.GetVideo(queuedVideo.VideoID)
+			if err != nil {
+				log.Printf("Error fetching video %s from database: %v", queuedVideo.VideoID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Database error: %v", err))
+				continue
+			}
+
+			// Start upload process
+			log.Printf("Attempting upload for video %s (attempt %d/%d)", 
+				video.ID, queuedVideo.RetryCount + 1, s.maxRetries)
+
+			err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
+			if err != nil {
+				log.Printf("Error updating video status to uploading: %v", err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Status update error: %v", err))
+				continue
+			}
+
+			// Upload HLS stream
+			hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
+			if err != nil {
+				log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("HLS upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("HLS upload error: %v", err))
+				continue
+			}
+
+			// Upload DASH stream
+			dashURL, err := s.r2Storage.UploadDASHStream(video.DASHPath, video.ID)
+			if err != nil {
+				log.Printf("Error uploading DASH stream for video %s: %v", video.ID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("DASH upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("DASH upload error: %v", err))
+				continue
+			}
+
+			// Update R2 paths and URLs in database
+			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("dash/%s", video.ID))
+			if err != nil {
+				log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
+			}
+
+			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, dashURL)
+			if err != nil {
+				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
+			}
+
+			// Update status back to ready and remove from queue
+			err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
+			if err != nil {
+				log.Printf("Error updating video status back to ready: %v", err)
+			}
+
+			s.removeFromQueue(video.ID)
+			log.Printf("Successfully uploaded video %s to R2 storage", video.ID)
 		}
 	}()
 }
@@ -280,4 +397,15 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 	}
 
 	return nil
+}
+
+// checkInternetConnectivity checks if there is an active internet connection
+func (s *UploadService) checkInternetConnectivity() bool {
+	client := http.Client{
+		Timeout: 5 * time.Second,
+	}
+	
+	// Try to connect to Cloudflare's reliable DNS service
+	_, err := client.Get("https://1.1.1.1")
+	return err == nil
 }

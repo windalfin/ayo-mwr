@@ -8,11 +8,11 @@ import (
 type VideoStatus string
 
 const (
-	StatusRecording    VideoStatus = "recording"    // Video is currently being recorded
-	StatusProcessing   VideoStatus = "processing"   // Video is being processed
-	StatusUploading    VideoStatus = "uploading"    // Video is being uploaded to cloud storage
-	StatusReady        VideoStatus = "ready"        // Video is ready for playback
-	StatusFailed       VideoStatus = "failed"       // Video processing failed
+	StatusRecording  VideoStatus = "recording"  // Video is currently being recorded
+	StatusProcessing VideoStatus = "processing" // Video is being processed
+	StatusUploading  VideoStatus = "uploading"  // Video is being uploaded to cloud storage
+	StatusReady      VideoStatus = "ready"      // Video is ready for playback
+	StatusFailed     VideoStatus = "failed"     // Video processing failed
 )
 
 // VideoMetadata represents the metadata for a recorded video
@@ -32,6 +32,10 @@ type VideoMetadata struct {
 	R2DASHPath   string      `json:"r2DashPath"`   // R2 path to DASH stream
 	R2HLSURL     string      `json:"r2HlsUrl"`     // R2 URL to HLS playlist
 	R2DASHURL    string      `json:"r2DashUrl"`    // R2 URL to DASH manifest
+	R2MP4Path    string      `json:"r2Mp4Path"`    // R2 path to MP4 file
+	R2MP4URL     string      `json:"r2Mp4Url"`     // R2 URL to MP4 file
+	MP4Path      string      `json:"mp4Path"`      // Path to MP4 file
+	MP4URL       string      `json:"mp4Url"`       // URL to MP4 file
 	CameraID     string      `json:"cameraId"`     // ID of the camera that recorded this video
 	ErrorMessage string      `json:"errorMessage"` // Error message if processing failed
 }
@@ -44,14 +48,14 @@ type Database interface {
 	UpdateVideo(metadata VideoMetadata) error
 	ListVideos(limit, offset int) ([]VideoMetadata, error)
 	DeleteVideo(id string) error
-	
+
 	// Status operations
 	GetVideosByStatus(status VideoStatus, limit, offset int) ([]VideoMetadata, error)
 	UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error
-	
+
 	// R2 storage operations
-	UpdateVideoR2Paths(id, hlsPath, dashPath string) error
-	UpdateVideoR2URLs(id, hlsURL, dashURL string) error
+	UpdateVideoR2Paths(id, hlsPath, dashPath, mp4Path string) error
+	UpdateVideoR2URLs(id, hlsURL, dashURL, mp4URL string) error
 
 	// Helper operations
 	Close() error

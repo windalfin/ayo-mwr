@@ -41,7 +41,7 @@ func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg co
 		r2Storage:    r2Storage,
 		config:       cfg,
 		uploadQueue:  make([]QueuedVideo, 0),
-		maxRetries:   5, // Maximum number of retry attempts
+		maxRetries:   5,               // Maximum number of retry attempts
 		retryBackoff: 5 * time.Minute, // Time to wait between retries
 	}
 }
@@ -99,7 +99,7 @@ func (s *UploadService) StartUploadWorker() {
 	go func() {
 		log.Println("Starting R2 upload worker")
 		isOffline := false
-		
+
 		for {
 			// Check internet connectivity
 			if !s.checkInternetConnectivity() {
@@ -127,7 +127,7 @@ func (s *UploadService) StartUploadWorker() {
 
 			// Add ready videos to queue if not already there
 			for _, video := range videos {
-				if video.R2HLSURL == "" || video.R2DASHURL == "" {
+				if video.R2HLSURL == "" || video.R2DASHURL == "" || video.R2MP4URL == "" {
 					s.QueueVideo(video.ID)
 				}
 			}
@@ -152,9 +152,9 @@ func (s *UploadService) StartUploadWorker() {
 
 			// Check retry count
 			if queuedVideo.RetryCount >= s.maxRetries {
-				log.Printf("Video %s exceeded maximum retry attempts (%d). Last error: %s", 
+				log.Printf("Video %s exceeded maximum retry attempts (%d). Last error: %s",
 					queuedVideo.VideoID, s.maxRetries, queuedVideo.FailReason)
-				s.db.UpdateVideoStatus(queuedVideo.VideoID, database.StatusFailed, 
+				s.db.UpdateVideoStatus(queuedVideo.VideoID, database.StatusFailed,
 					fmt.Sprintf("Exceeded maximum retry attempts. Last error: %s", queuedVideo.FailReason))
 				s.removeFromQueue(queuedVideo.VideoID)
 				continue
@@ -168,8 +168,8 @@ func (s *UploadService) StartUploadWorker() {
 			}
 
 			// Start upload process
-			log.Printf("Attempting upload for video %s (attempt %d/%d)", 
-				video.ID, queuedVideo.RetryCount + 1, s.maxRetries)
+			log.Printf("Attempting upload for video %s (attempt %d/%d)",
+				video.ID, queuedVideo.RetryCount+1, s.maxRetries)
 
 			err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
 			if err != nil {
@@ -196,13 +196,22 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
+			// Upload MP4 file
+			mp4URL, err := s.r2Storage.UploadMP4(video.LocalPath, video.ID)
+			if err != nil {
+				log.Printf("Error uploading MP4 for video %s: %v", video.ID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("MP4 upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("MP4 upload error: %v", err))
+				continue
+			}
+
 			// Update R2 paths and URLs in database
-			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("dash/%s", video.ID))
+			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("dash/%s", video.ID), fmt.Sprintf("mp4/%s", video.ID))
 			if err != nil {
 				log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
 			}
 
-			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, dashURL)
+			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, dashURL, mp4URL)
 			if err != nil {
 				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
 			}
@@ -404,7 +413,7 @@ func (s *UploadService) checkInternetConnectivity() bool {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}
-	
+
 	// Try to connect to Cloudflare's reliable DNS service
 	_, err := client.Get("https://1.1.1.1")
 	return err == nil

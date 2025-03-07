@@ -27,9 +27,9 @@ type R2Config struct {
 
 // R2Storage handles operations with Cloudflare R2
 type R2Storage struct {
-	config  R2Config
-	session *session.Session
-	client  *s3.S3
+	config   R2Config
+	session  *session.Session
+	client   *s3.S3
 	uploader *s3manager.Uploader
 }
 
@@ -59,7 +59,7 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 
 	// Create S3 client
 	client := s3.New(sess)
-	
+
 	// Create uploader
 	uploader := s3manager.NewUploader(sess)
 
@@ -102,7 +102,7 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 
 	// Upload file
 	log.Printf("Uploading %s to R2 bucket %s with key %s", localPath, r.config.Bucket, remotePath)
-	
+
 	result, err := r.uploader.Upload(&s3manager.UploadInput{
 		Bucket:      aws.String(r.config.Bucket),
 		Key:         aws.String(remotePath),
@@ -114,7 +114,7 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 			"FileSize":         aws.String(fmt.Sprintf("%d", fileInfo.Size())),
 		},
 	})
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to upload file to R2: %v", err)
 	}
@@ -166,14 +166,14 @@ func (r *R2Storage) UploadDirectory(localDir, remotePrefix string) ([]string, er
 // UploadHLSStream uploads an HLS stream directory to R2
 func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, error) {
 	remotePrefix := fmt.Sprintf("hls/%s", videoID)
-	
+
 	log.Printf("Uploading HLS stream for %s to R2", videoID)
-	
+
 	_, err := r.UploadDirectory(hlsDir, remotePrefix)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload HLS stream: %v", err)
 	}
-	
+
 	// Return the URL to the playlist
 	return fmt.Sprintf("%s/hls/%s/playlist.m3u8", r.config.Endpoint, videoID), nil
 }
@@ -181,16 +181,31 @@ func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, error) {
 // UploadDASHStream uploads a DASH stream directory to R2
 func (r *R2Storage) UploadDASHStream(dashDir, videoID string) (string, error) {
 	remotePrefix := fmt.Sprintf("dash/%s", videoID)
-	
+
 	log.Printf("Uploading DASH stream for %s to R2", videoID)
-	
+
 	_, err := r.UploadDirectory(dashDir, remotePrefix)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload DASH stream: %v", err)
 	}
-	
+
 	// Return the URL to the manifest
 	return fmt.Sprintf("%s/dash/%s/manifest.mpd", r.config.Endpoint, videoID), nil
+}
+
+// Upload MP4 to R2
+func (r *R2Storage) UploadMP4(mp4Dir, videoID string) (string, error) {
+	remotePrefix := fmt.Sprintf("mp4/%s%s", videoID, filepath.Ext(mp4Dir))
+
+	log.Printf("Uploading MP4 %s to R2 bucket %s with key %s", mp4Dir, r.config.Bucket, remotePrefix)
+
+	// Use UploadFile instead of UploadDirectory since we're uploading a single file
+	location, err := r.UploadFile(mp4Dir, remotePrefix)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload MP4: %v", err)
+	}
+
+	return location, nil
 }
 
 // ListObjects lists objects in the R2 bucket with a given prefix
@@ -199,12 +214,12 @@ func (r *R2Storage) ListObjects(prefix string) ([]*s3.Object, error) {
 		Bucket: aws.String(r.config.Bucket),
 		Prefix: aws.String(prefix),
 	}
-	
+
 	result, err := r.client.ListObjectsV2(input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %v", err)
 	}
-	
+
 	return result.Contents, nil
 }
 
@@ -214,11 +229,11 @@ func (r *R2Storage) DeleteObject(key string) error {
 		Bucket: aws.String(r.config.Bucket),
 		Key:    aws.String(key),
 	}
-	
+
 	_, err := r.client.DeleteObject(input)
 	if err != nil {
 		return fmt.Errorf("failed to delete object: %v", err)
 	}
-	
+
 	return nil
 }

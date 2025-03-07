@@ -34,3 +34,6 @@ go.work
 videos/dash/*
 videos/hls/*
 videos/uploads/*
+
+# environment variables
+.env

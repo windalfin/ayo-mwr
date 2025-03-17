@@ -1,15 +1,31 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 )
 
+// CameraConfig holds configuration for a single RTSP camera
+type CameraConfig struct {
+	Name      string `json:"name"`       // Unique camera name (used for file naming)
+	IP        string `json:"ip"`         // Camera IP address
+	Port      string `json:"port"`       // RTSP port (typically 554)
+	Path      string `json:"path"`       // RTSP URL path (e.g., "/cam/realmonitor?channel=1&subtype=0")
+	Username  string `json:"username"`   // RTSP authentication username
+	Password  string `json:"password"`   // RTSP authentication password
+	Enabled   bool   `json:"enabled"`    // Whether this camera is enabled for capture
+	Width     int    `json:"width"`      // Video width
+	Height    int    `json:"height"`     // Video height
+	FrameRate int    `json:"frame_rate"` // Video frame rate
+}
+
 // Config contains all configuration for the application
 type Config struct {
-	// RTSP Configuration
+	// RTSP Configuration (Legacy single camera)
 	RTSPUsername string
 	RTSPPassword string
 	RTSPIP       string
@@ -42,6 +58,9 @@ type Config struct {
 	R2Bucket    string
 	R2Endpoint  string
 	R2Region    string
+
+	// Multi-camera configuration
+	Cameras []CameraConfig
 }
 
 // LoadConfig loads configuration from environment variables
@@ -86,15 +105,85 @@ func LoadConfig() Config {
 		R2Bucket:    getEnv("R2_BUCKET", "videos"),
 		R2Endpoint:  getEnv("R2_ENDPOINT", ""),
 		R2Region:    getEnv("R2_REGION", "auto"),
+		
+		// Initialize empty cameras array
+		Cameras: []CameraConfig{},
+	}
+
+	// Try to load cameras from CAMERAS_CONFIG env var (JSON string)
+	camerasJSON := getEnv("CAMERAS_CONFIG", "")
+	if camerasJSON != "" {
+		if err := json.Unmarshal([]byte(camerasJSON), &config.Cameras); err != nil {
+			log.Printf("Failed to parse CAMERAS_CONFIG environment variable: %v", err)
+		} else {
+			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(config.Cameras))
+		}
+	}
+
+	// If no cameras configured yet, create one from legacy settings
+	if len(config.Cameras) == 0 {
+		log.Println("No cameras configured, using legacy camera settings")
+		config.Cameras = append(config.Cameras, CameraConfig{
+			Name:      "camera_A",
+			IP:        config.RTSPIP,
+			Port:      config.RTSPPort,
+			Path:      config.RTSPPath,
+			Username:  config.RTSPUsername,
+			Password:  config.RTSPPassword,
+			Enabled:   true,
+			Width:     config.Width,
+			Height:    config.Height,
+			FrameRate: config.FrameRate,
+		})
 	}
 
 	// Log configuration (without sensitive data)
-	log.Printf("RTSP Configuration: %s@%s:%s%s", "****", config.RTSPIP, config.RTSPPort, config.RTSPPath)
+	log.Printf("Loaded configuration with %d cameras", len(config.Cameras))
+	for i, camera := range config.Cameras {
+		log.Printf("Camera %d: %s @ %s:%s%s (Enabled: %v)", 
+			i+1, camera.Name, camera.IP, camera.Port, camera.Path, camera.Enabled)
+	}
+	
 	log.Printf("Storage Path: %s", config.StoragePath)
 	log.Printf("Server running on port %s with base URL %s", config.ServerPort, config.BaseURL)
 	log.Printf("R2 Storage Enabled: %v", config.R2Enabled)
-
+	
 	return config
+}
+
+// LoadConfigFromFile loads configuration from a JSON file
+func LoadConfigFromFile(filePath string) (Config, error) {
+	var config Config
+
+	// Read the file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return config, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Unmarshal JSON
+	if err := json.Unmarshal(data, &config); err != nil {
+		return config, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// If no cameras but legacy settings exist, create a single camera
+	if len(config.Cameras) == 0 && config.RTSPIP != "" {
+		log.Println("No cameras in config file, using legacy camera settings")
+		config.Cameras = append(config.Cameras, CameraConfig{
+			Name:      "camera_A",
+			IP:        config.RTSPIP,
+			Port:      config.RTSPPort,
+			Path:      config.RTSPPath,
+			Username:  config.RTSPUsername,
+			Password:  config.RTSPPassword,
+			Enabled:   true,
+			Width:     config.Width,
+			Height:    config.Height,
+			FrameRate: config.FrameRate,
+		})
+	}
+
+	return config, nil
 }
 
 // getEnv returns environment variable or fallback value

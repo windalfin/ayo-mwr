@@ -55,15 +55,20 @@ func GetQualityPresets() []QualityPreset {
 
 // TranscodeVideo generates multi-quality HLS and DASH formats from the MP4 file
 func TranscodeVideo(inputPath, videoID string, cfg config.Config) (map[string]string, map[string]float64, error) {
-	hlsPath := filepath.Join(cfg.StoragePath, "hls", videoID)
-	dashPath := filepath.Join(cfg.StoragePath, "dash", videoID)
+	// Extract camera name from the input path
+	cameraName := filepath.Base(filepath.Dir(filepath.Dir(inputPath)))
+	
+	// Set up camera-specific paths
+	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
+	hlsPath := filepath.Join(cameraDir, "hls", videoID)
+	dashPath := filepath.Join(cameraDir, "dash", videoID)
 
 	// Create output directories
 	os.MkdirAll(hlsPath, 0755)
 	os.MkdirAll(dashPath, 0755)
 
 	timings := make(map[string]float64)
-	inputParams, _ := GetInputParams(cfg.HardwareAccel)
+	// inputParams, _ := GetInputParams(cfg.HardwareAccel)
 
 	// Create channels for error handling and synchronization
 	errChan := make(chan error, 2)
@@ -114,8 +119,8 @@ func TranscodeVideo(inputPath, videoID string, cfg config.Config) (map[string]st
 	}
 
 	return map[string]string{
-		"hls":  fmt.Sprintf("%s/hls/%s/master.m3u8", cfg.BaseURL, videoID),
-		"dash": fmt.Sprintf("%s/dash/%s/manifest.mpd", cfg.BaseURL, videoID),
+		"hls":  fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
+		"dash": fmt.Sprintf("%s/recordings/%s/dash/%s/manifest.mpd", cfg.BaseURL, cameraName, videoID),
 	}, timings, nil
 }
 

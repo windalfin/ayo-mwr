@@ -25,13 +25,11 @@ func (s *Server) listStreams(c *gin.Context) {
 			"size":      video.Size,
 		}
 
-		if video.R2HLSURL != "" && video.R2DASHURL != "" {
+		if video.R2HLSURL != "" {
 			stream["hlsUrl"] = video.R2HLSURL
-			stream["dashUrl"] = video.R2DASHURL
 			stream["usingCloud"] = true
 		} else {
 			stream["hlsUrl"] = video.HLSURL
-			stream["dashUrl"] = video.DASHURL
 			stream["usingCloud"] = false
 		}
 
@@ -54,8 +52,7 @@ func (s *Server) getStream(c *gin.Context) {
 		"status":     video.Status,
 		"createdAt":  video.CreatedAt,
 		"size":       video.Size,
-		"usingCloud": video.R2HLSURL != "" && video.R2DASHURL != "",
+		"usingCloud": video.R2HLSURL != "",
 		"hlsUrl":     video.R2HLSURL,
-		"dashUrl":    video.R2DASHURL,
 	})
 }

@@ -108,6 +108,33 @@ videos/
         └── chunk-stream*.m4s
 ```
 
+## Testing Trigger Function
+
+To test the video transcoding trigger function, you can use HTTP requests to the `/transcode` endpoint:
+
+1. Send a POST request to `http://localhost:3000/transcode` with the following JSON body:
+   ```json
+   {
+     "timestamp": "2025-03-20T11:58:51+07:00",
+     "cameraName": "camera_2"
+   }
+   ```
+
+2. Example using curl:
+   ```bash
+   curl -X POST http://localhost:3000/transcode \
+     -H "Content-Type: application/json" \
+     -d '{"timestamp": "2025-03-20T11:58:51+07:00", "cameraName": "camera_2"}'
+   ```
+
+3. The response will include:
+   - `urls`: Map of URLs to access the transcoded content (HLS and MP4)
+   - `timings`: Performance metrics for the transcoding process
+   - `videoId`: Unique identifier for the video
+   - `filename`: Original source video filename
+
+The system will find the closest video to the specified timestamp and begin the transcoding process.
+
 ## Troubleshooting
 
 - **RTSP Connection Issues**: Verify your camera's IP, username, password, and RTSP path

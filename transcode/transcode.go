@@ -54,73 +54,36 @@ func GetQualityPresets() []QualityPreset {
 }
 
 // TranscodeVideo generates multi-quality HLS and DASH formats from the MP4 file
-func TranscodeVideo(inputPath, videoID string, cfg config.Config) (map[string]string, map[string]float64, error) {
-	// Extract camera name from the input path
-	cameraName := filepath.Base(filepath.Dir(filepath.Dir(inputPath)))
-	
+func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (map[string]string, map[string]float64, error) {
 	// Set up camera-specific paths
-	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
-	hlsPath := filepath.Join(cameraDir, "hls", videoID)
-	dashPath := filepath.Join(cameraDir, "dash", videoID)
+	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
+	hlsPath := filepath.Join(baseDir, "hls", videoID)
+	// dashPath := filepath.Join(baseDir, "dash", videoID)
 
 	// Create output directories
 	os.MkdirAll(hlsPath, 0755)
-	os.MkdirAll(dashPath, 0755)
+	// os.MkdirAll(dashPath, 0755)
 
 	timings := make(map[string]float64)
-	// inputParams, _ := GetInputParams(cfg.HardwareAccel)
 
-	// Create channels for error handling and synchronization
-	errChan := make(chan error, 2)
-	timesChan := make(chan struct {
-		key   string
-		value float64
-	}, 2)
-
-	// Start HLS transcoding in a goroutine
-	go func() {
-		hlsStart := time.Now()
-		if err := generateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
-			errChan <- fmt.Errorf("HLS transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "hlsTranscode", value: time.Since(hlsStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Start DASH transcoding in a goroutine
-	go func() {
-		dashStart := time.Now()
-		if err := generateDASH(inputPath, dashPath, videoID, cfg); err != nil {
-			errChan <- fmt.Errorf("DASH transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "dashTranscode", value: time.Since(dashStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Wait for both transcoding processes to complete
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return nil, nil, err
-		}
+	hlsStart := time.Now()
+	if err := generateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
+		return nil, nil, fmt.Errorf("HLS transcoding error: %v", err)
 	}
+	timings["hlsTranscode"] = time.Since(hlsStart).Seconds()
 
-	// Collect timing information
-	for i := 0; i < 2; i++ {
-		timing := <-timesChan
-		timings[timing.key] = timing.value
+	// Commented out DASH transcoding
+	/*
+	dashStart := time.Now()
+	if err := generateDASH(inputPath, dashPath, videoID, cfg); err != nil {
+		return nil, nil, fmt.Errorf("DASH transcoding error: %v", err)
 	}
+	timings["dashTranscode"] = time.Since(dashStart).Seconds()
+	*/
 
 	return map[string]string{
-		"hls":  fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
-		"dash": fmt.Sprintf("%s/recordings/%s/dash/%s/manifest.mpd", cfg.BaseURL, cameraName, videoID),
+		"hls": fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
+		// "dash": fmt.Sprintf("%s/recordings/%s/dash/%s/manifest.mpd", cfg.BaseURL, cameraName, videoID),
 	}, timings, nil
 }
 

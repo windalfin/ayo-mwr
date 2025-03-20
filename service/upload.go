@@ -385,7 +385,7 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 	dashPath := filepath.Join(s.config.StoragePath, "dash", videoID)
 
 	// Use the transcode package
-	urls, _, err := transcode.TranscodeVideo(filePath, videoID, s.config)
+	urls, _, err := transcode.TranscodeVideo(filePath, videoID, "hls", s.config)
 	if err != nil {
 		log.Printf("Error transcoding video %s: %v", videoID, err)
 		s.db.UpdateVideoStatus(videoID, database.StatusFailed, fmt.Sprintf("Transcoding error: %v", err))

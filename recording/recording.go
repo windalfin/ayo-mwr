@@ -67,12 +67,13 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 		cameraName = fmt.Sprintf("camera_%d", cameraID)
 	}
 
-	// Create camera-specific directories
+	// Create camera-specific directories and add MP4 folder
 	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	cameraLogsDir := filepath.Join(cameraDir, "logs")
+	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
 
 	// Create all required directories
-	for _, dir := range []string{cameraDir, cameraLogsDir} {
+	for _, dir := range []string{cameraDir, cameraLogsDir, cameraMP4Dir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
 		}
@@ -84,7 +85,7 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 		// Create a new segment file with timestamp
 		timestamp := time.Now().Format("20060102_150405")
 		outputFilename := fmt.Sprintf("%s_%s.mp4", cameraName, timestamp)
-		outputPath := filepath.Join(cameraDir, outputFilename)
+		outputPath := filepath.Join(cameraMP4Dir, outputFilename)
 
 		log.Printf("[%s] Creating new video segment: %s\n", cameraName, outputFilename)
 

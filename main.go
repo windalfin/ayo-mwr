@@ -55,6 +55,10 @@ func main() {
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
 
+	// Initialize HTTP signal handler for transcoding
+	httpSignal := signaling.NewHTTPSignal(cfg)
+	go httpSignal.Start()
+
 	// Initialize Arduino signal handler
 	signalCallback := func(signal string) error {
 		log.Printf("Received signal from Arduino: %s", signal)

@@ -59,8 +59,10 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (m
 	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	hlsPath := filepath.Join(baseDir, "hls", videoID)
 
-	// Create output directories
-	os.MkdirAll(hlsPath, 0755)
+	// Create HLS output directory
+	if err := os.MkdirAll(hlsPath, 0755); err != nil {
+		return nil, nil, fmt.Errorf("failed to create HLS directory: %v", err)
+	}
 
 	timings := make(map[string]float64)
 

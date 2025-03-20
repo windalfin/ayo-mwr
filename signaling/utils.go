@@ -18,7 +18,7 @@ func FindClosestVideo(storagePath string, cameraName string, targetTime time.Tim
 	}
 
 	// Find the video file closest to the timestamp
-	videoDir := filepath.Join(absStoragePath, "recordings", cameraName)
+	videoDir := filepath.Join(absStoragePath, "recordings", cameraName, "mp4")
 	targetDate := targetTime.Format("20060102")
 
 	// Ensure the directory exists

@@ -8,11 +8,14 @@ import (
 	"github.com/joho/godotenv"
 
 	// Update these imports to match your local module path
+	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
+	"ayo-mwr/service"
 	"ayo-mwr/signaling"
+	"ayo-mwr/storage"
 )
 
 func main() {
@@ -55,9 +58,26 @@ func main() {
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
 
-	// Initialize HTTP signal handler for transcoding
-	httpSignal := signaling.NewHTTPSignal(cfg)
-	go httpSignal.Start()
+	// Initialize R2 storage with config
+	r2Config := storage.R2Config{
+		AccessKey: cfg.R2AccessKey,
+		SecretKey: cfg.R2SecretKey,
+		AccountID: cfg.R2AccountID,
+		Bucket:    cfg.R2Bucket,
+		Region:    cfg.R2Region,
+		Endpoint:  cfg.R2Endpoint,
+	}
+	r2Storage, err := storage.NewR2Storage(r2Config)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize R2 storage: %v", err)
+	}
+
+	// Initialize upload service
+	uploadService := service.NewUploadService(db, r2Storage, cfg)
+
+	// Initialize and start API server
+	apiServer := api.NewServer(cfg, db, r2Storage, uploadService)
+	go apiServer.Start()
 
 	// Initialize Arduino signal handler
 	signalCallback := func(signal string) error {

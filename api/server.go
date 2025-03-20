@@ -56,6 +56,6 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	{
 		api.GET("/streams", s.listStreams)
 		api.GET("/streams/:id", s.getStream)
-		// Add your new endpoints here
+		api.POST("/transcode", s.handleTranscode)
 	}
 }

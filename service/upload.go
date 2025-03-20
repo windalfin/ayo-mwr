@@ -197,12 +197,12 @@ func (s *UploadService) StartUploadWorker() {
 			}
 
 			// Update R2 paths and URLs in database
-			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), "", fmt.Sprintf("mp4/%s", video.ID))
+			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("mp4/%s", video.ID))
 			if err != nil {
 				log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
 			}
 
-			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, "", mp4URL)
+			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, mp4URL)
 			if err != nil {
 				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
 			}

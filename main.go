@@ -12,6 +12,7 @@ import (
 	"ayo-mwr/database"
 	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
+	"ayo-mwr/signaling"
 )
 
 func main() {
@@ -54,28 +55,24 @@ func main() {
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
 
+	// Initialize Arduino signal handler
+	signalCallback := func(signal string) error {
+		log.Printf("Received signal from Arduino: %s", signal)
+		// TODO: Add your signal handling logic here
+		return nil
+	}
+
+	arduino, err := signaling.NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, signalCallback)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize Arduino signal handler: %v", err)
+	} else {
+		if err := arduino.Connect(); err != nil {
+			log.Printf("Warning: Failed to connect to Arduino: %v", err)
+		}
+		defer arduino.Close()
+	}
+
 	log.Println("Starting 24/7 RTSP stream recording")
-
-	// TODO
-	// This is commented as we will not be doing automatic upload to R2 Server.
-	// This piece of code will either be modified or deleted in another Ticket
-
-	// // Initialize R2 storage
-	// r2Config := storage.R2Config{
-	// 	AccessKey: cfg.R2AccessKey,
-	// 	SecretKey: cfg.R2SecretKey,
-	// 	AccountID: cfg.R2AccountID,
-	// 	Bucket:    cfg.R2Bucket,
-	// 	Endpoint:  cfg.R2Endpoint,
-	// 	Region:    cfg.R2Region,
-	// }
-	// r2Storage, err := storage.NewR2Storage(r2Config)
-	// if err != nil {
-	// 	log.Fatalf("Failed to initialize R2 storage: %v", err)
-	// }
-
-	// // Initialize upload service with all required dependencies
-	// uploadService := service.NewUploadService(db, r2Storage, cfg)
 
 	// Start capturing from all cameras
 	if err := recording.CaptureMultipleRTSPStreams(cfg); err != nil {

@@ -25,6 +25,10 @@ type CameraConfig struct {
 
 // Config contains all configuration for the application
 type Config struct {
+	// Arduino Configuration
+	ArduinoCOMPort string
+	ArduinoBaudRate int
+
 	// RTSP Configuration (Legacy single camera)
 	RTSPUsername string
 	RTSPPassword string
@@ -70,8 +74,13 @@ func LoadConfig() Config {
 	height, _ := strconv.Atoi(getEnv("HEIGHT", "600"))
 	frameRate, _ := strconv.Atoi(getEnv("FRAME_RATE", "30"))
 	r2Enabled, _ := strconv.ParseBool(getEnv("R2_ENABLED", "false"))
+	arduinoBaudRate, _ := strconv.Atoi(getEnv("ARDUINO_BAUD_RATE", "9600"))
 
 	config := Config{
+		// Arduino Configuration
+		ArduinoCOMPort: getEnv("ARDUINO_COM_PORT", "COM4"),
+		ArduinoBaudRate: arduinoBaudRate,
+
 		// RTSP Configuration
 		RTSPUsername: getEnv("RTSP_USERNAME", "admin"),
 		RTSPPassword: getEnv("RTSP_PASSWORD", "admin"),
@@ -147,6 +156,8 @@ func LoadConfig() Config {
 	log.Printf("Storage Path: %s", config.StoragePath)
 	log.Printf("Server running on port %s with base URL %s", config.ServerPort, config.BaseURL)
 	log.Printf("R2 Storage Enabled: %v", config.R2Enabled)
+	log.Printf("Arduino COM Port: %s", config.ArduinoCOMPort)
+	log.Printf("Arduino Baud Rate: %d", config.ArduinoBaudRate)
 	
 	return config
 }

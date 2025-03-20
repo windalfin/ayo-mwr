@@ -3,12 +3,14 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"github.com/joho/godotenv"
 
 	// Update these imports to match your local module path
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
 )
 
@@ -49,6 +51,11 @@ func main() {
 	}
 	defer db.Close()
 
+	// Start resource monitoring (every 30 seconds)
+	monitoring.StartMonitoring(30 * time.Second)
+
+	log.Println("Starting 24/7 RTSP stream recording")
+
 	// TODO
 	// This is commented as we will not be doing automatic upload to R2 Server.
 	// This piece of code will either be modified or deleted in another Ticket
@@ -69,8 +76,6 @@ func main() {
 
 	// // Initialize upload service with all required dependencies
 	// uploadService := service.NewUploadService(db, r2Storage, cfg)
-
-	log.Println("Starting 24/7 RTSP stream recording")
 
 	// Start capturing from all cameras
 	if err := recording.CaptureMultipleRTSPStreams(cfg); err != nil {

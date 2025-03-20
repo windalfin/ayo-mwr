@@ -37,60 +37,23 @@ func initTables(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS videos (
 			id TEXT PRIMARY KEY,
-			created_at TIMESTAMP NOT NULL,
-			finished_at TIMESTAMP,
-			status TEXT NOT NULL,
-			duration REAL DEFAULT 0,
-			size INTEGER DEFAULT 0,
+			camera_name TEXT,
 			local_path TEXT,
 			hls_path TEXT,
-			dash_path TEXT,
 			hls_url TEXT,
-			dash_url TEXT,
 			r2_hls_path TEXT,
-			r2_dash_path TEXT,
 			r2_mp4_path TEXT,
 			r2_hls_url TEXT,
-			r2_dash_url TEXT,
 			r2_mp4_url TEXT,
-			camera_id TEXT,
-			error_message TEXT
+			status TEXT,
+			error TEXT,
+			created_at DATETIME,
+			finished_at DATETIME,
+			uploaded_at DATETIME
 		)
 	`)
 	if err != nil {
 		return err
-	}
-
-	// Check if r2_mp4_path column exists, if not add it
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='r2_mp4_path'`).Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count == 0 {
-		// Column doesn't exist, add it
-		_, err = db.Exec(`ALTER TABLE videos ADD COLUMN r2_mp4_path TEXT`)
-		if err != nil {
-			return err
-		}
-		log.Println("Added r2_mp4_path column to videos table")
-	}
-
-	// Check if r2_mp4_url column exists, if not add it
-	count = 0
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='r2_mp4_url'`).Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count == 0 {
-		// Column doesn't exist, add it
-		_, err = db.Exec(`ALTER TABLE videos ADD COLUMN r2_mp4_url TEXT`)
-		if err != nil {
-			return err
-		}
-		log.Println("Added r2_mp4_url column to videos table")
 	}
 
 	// Create index on status
@@ -104,133 +67,72 @@ func initTables(db *sql.DB) error {
 	return nil
 }
 
-// CreateVideo inserts a new video record into the database
+// CreateVideo creates a new video record in the database
 func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
+	// Insert video metadata
 	_, err := s.db.Exec(`
 		INSERT INTO videos (
-			id, created_at, finished_at, status, duration, size, 
-			local_path, hls_path, dash_path, hls_url, dash_url, 
-			r2_hls_path, r2_dash_path, r2_mp4_path, r2_hls_url, r2_dash_url, r2_mp4_url,
-			camera_id, error_message
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
+			id, camera_name, local_path, hls_path, hls_url, 
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
+			status, error, created_at, finished_at, uploaded_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metadata.ID,
-		metadata.CreatedAt,
-		metadata.FinishedAt,
-		metadata.Status,
-		metadata.Duration,
-		metadata.Size,
+		metadata.CameraID,
 		metadata.LocalPath,
 		metadata.HLSPath,
-		metadata.DASHPath,
 		metadata.HLSURL,
-		metadata.DASHURL,
 		metadata.R2HLSPath,
-		metadata.R2DASHPath,
 		metadata.R2MP4Path,
 		metadata.R2HLSURL,
-		metadata.R2DASHURL,
 		metadata.R2MP4URL,
-		metadata.CameraID,
+		metadata.Status,
 		metadata.ErrorMessage,
+		metadata.CreatedAt,
+		metadata.FinishedAt,
+		nil,
 	)
-
-	if err != nil {
-		return fmt.Errorf("failed to create video: %v", err)
-	}
-
-	return nil
+	return err
 }
 
-// GetVideo retrieves a video by its ID
+// GetVideo retrieves a video record by ID
 func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	var video VideoMetadata
-	var finishedAt sql.NullTime
-	var localPath, hlsPath, dashPath, hlsURL, dashURL sql.NullString
-	var r2HLSPath, r2DASHPath, r2MP4Path, r2HLSURL, r2DASHURL, r2MP4URL sql.NullString
-	var cameraID, errorMessage sql.NullString
+	var finishedAt, uploadedAt sql.NullTime
+	var cameraName sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT 
-			id, created_at, finished_at, status, duration, size, 
-			local_path, hls_path, dash_path, hls_url, dash_url,
-			r2_hls_path, r2_dash_path, r2_mp4_path, r2_hls_url, r2_dash_url, r2_mp4_url,
-			camera_id, error_message
-		FROM videos 
-		WHERE id = ?
-	`, id).Scan(
+		SELECT id, camera_name, local_path, hls_path, hls_url,
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
+			status, error, created_at, finished_at, uploaded_at
+		FROM videos WHERE id = ?`, id).Scan(
 		&video.ID,
+		&cameraName,
+		&video.LocalPath,
+		&video.HLSPath,
+		&video.HLSURL,
+		&video.R2HLSPath,
+		&video.R2MP4Path,
+		&video.R2HLSURL,
+		&video.R2MP4URL,
+		&video.Status,
+		&video.ErrorMessage,
 		&video.CreatedAt,
 		&finishedAt,
-		&video.Status,
-		&video.Duration,
-		&video.Size,
-		&localPath,
-		&hlsPath,
-		&dashPath,
-		&hlsURL,
-		&dashURL,
-		&r2HLSPath,
-		&r2DASHPath,
-		&r2MP4Path,
-		&r2HLSURL,
-		&r2DASHURL,
-		&r2MP4URL,
-		&cameraID,
-		&errorMessage,
+		&uploadedAt,
 	)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-
 	if err != nil {
-		return nil, fmt.Errorf("failed to get video: %v", err)
+		return nil, err
 	}
 
-	// Convert SQL nullable types to Go types
+	if cameraName.Valid {
+		video.CameraID = cameraName.String
+	}
 	if finishedAt.Valid {
 		video.FinishedAt = &finishedAt.Time
-	}
-
-	if localPath.Valid {
-		video.LocalPath = localPath.String
-	}
-	if hlsPath.Valid {
-		video.HLSPath = hlsPath.String
-	}
-	if dashPath.Valid {
-		video.DASHPath = dashPath.String
-	}
-	if hlsURL.Valid {
-		video.HLSURL = hlsURL.String
-	}
-	if dashURL.Valid {
-		video.DASHURL = dashURL.String
-	}
-	if r2HLSPath.Valid {
-		video.R2HLSPath = r2HLSPath.String
-	}
-	if r2DASHPath.Valid {
-		video.R2DASHPath = r2DASHPath.String
-	}
-	if r2MP4Path.Valid {
-		video.R2MP4Path = r2MP4Path.String
-	}
-	if r2HLSURL.Valid {
-		video.R2HLSURL = r2HLSURL.String
-	}
-	if r2DASHURL.Valid {
-		video.R2DASHURL = r2DASHURL.String
-	}
-	if r2MP4URL.Valid {
-		video.R2MP4URL = r2MP4URL.String
-	}
-	if cameraID.Valid {
-		video.CameraID = cameraID.String
-	}
-	if errorMessage.Valid {
-		video.ErrorMessage = errorMessage.String
 	}
 
 	return &video, nil
@@ -239,64 +141,62 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 // UpdateVideo updates an existing video record
 func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET 
-			created_at = ?,
-			finished_at = ?,
-			status = ?,
-			duration = ?,
-			size = ?,
+		UPDATE videos SET
+			camera_name = ?,
 			local_path = ?,
 			hls_path = ?,
-			dash_path = ?,
 			hls_url = ?,
-			dash_url = ?,
 			r2_hls_path = ?,
-			r2_dash_path = ?,
 			r2_mp4_path = ?,
 			r2_hls_url = ?,
-			r2_dash_url = ?,
 			r2_mp4_url = ?,
-			camera_id = ?,
-			error_message = ?
-		WHERE id = ?
-	`,
-		metadata.CreatedAt,
-		metadata.FinishedAt,
-		metadata.Status,
-		metadata.Duration,
-		metadata.Size,
+			status = ?,
+			error = ?,
+			finished_at = ?
+		WHERE id = ?`,
+		metadata.CameraID,
 		metadata.LocalPath,
 		metadata.HLSPath,
-		metadata.DASHPath,
 		metadata.HLSURL,
-		metadata.DASHURL,
 		metadata.R2HLSPath,
-		metadata.R2DASHPath,
 		metadata.R2MP4Path,
 		metadata.R2HLSURL,
-		metadata.R2DASHURL,
 		metadata.R2MP4URL,
-		metadata.CameraID,
+		metadata.Status,
 		metadata.ErrorMessage,
+		metadata.FinishedAt,
 		metadata.ID,
 	)
+	return err
+}
 
-	if err != nil {
-		return fmt.Errorf("failed to update video: %v", err)
-	}
+// UpdateVideoR2Paths updates the R2 paths for a video
+func (s *SQLiteDB) UpdateVideoR2Paths(id, hlsPath, mp4Path string) error {
+	_, err := s.db.Exec(`
+		UPDATE videos 
+		SET r2_hls_path = ?, r2_mp4_path = ?
+		WHERE id = ?`,
+		hlsPath, mp4Path, id)
+	return err
+}
 
-	return nil
+// UpdateVideoR2URLs updates the R2 URLs for a video
+func (s *SQLiteDB) UpdateVideoR2URLs(id, hlsURL, mp4URL string) error {
+	_, err := s.db.Exec(`
+		UPDATE videos 
+		SET r2_hls_url = ?, r2_mp4_url = ?
+		WHERE id = ?`,
+		hlsURL, mp4URL, id)
+	return err
 }
 
 // ListVideos retrieves a list of videos with pagination
 func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 	rows, err := s.db.Query(`
 		SELECT 
-			id, created_at, finished_at, status, duration, size, 
-			local_path, hls_path, dash_path, hls_url, dash_url,
-			r2_hls_path, r2_dash_path, r2_mp4_path, r2_hls_url, r2_dash_url, r2_mp4_url,
-			camera_id, error_message
+			id, camera_name, local_path, hls_path, hls_url,
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
+			status, error, created_at, finished_at, uploaded_at
 		FROM videos 
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -310,80 +210,35 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 	var videos []VideoMetadata
 	for rows.Next() {
 		var video VideoMetadata
-		var finishedAt sql.NullTime
-		var localPath, hlsPath, dashPath, hlsURL, dashURL sql.NullString
-		var r2HLSPath, r2DASHPath, r2MP4Path, r2HLSURL, r2DASHURL, r2MP4URL sql.NullString
-		var cameraID, errorMessage sql.NullString
+		var finishedAt, uploadedAt sql.NullTime
+		var cameraName sql.NullString
 
 		err := rows.Scan(
 			&video.ID,
+			&cameraName,
+			&video.LocalPath,
+			&video.HLSPath,
+			&video.HLSURL,
+			&video.R2HLSPath,
+			&video.R2MP4Path,
+			&video.R2HLSURL,
+			&video.R2MP4URL,
+			&video.Status,
+			&video.ErrorMessage,
 			&video.CreatedAt,
 			&finishedAt,
-			&video.Status,
-			&video.Duration,
-			&video.Size,
-			&localPath,
-			&hlsPath,
-			&dashPath,
-			&hlsURL,
-			&dashURL,
-			&r2HLSPath,
-			&r2DASHPath,
-			&r2MP4Path,
-			&r2HLSURL,
-			&r2DASHURL,
-			&r2MP4URL,
-			&cameraID,
-			&errorMessage,
+			&uploadedAt,
 		)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan video row: %v", err)
 		}
 
-		// Convert SQL nullable types to Go types
+		if cameraName.Valid {
+			video.CameraID = cameraName.String
+		}
 		if finishedAt.Valid {
 			video.FinishedAt = &finishedAt.Time
-		}
-
-		if localPath.Valid {
-			video.LocalPath = localPath.String
-		}
-		if hlsPath.Valid {
-			video.HLSPath = hlsPath.String
-		}
-		if dashPath.Valid {
-			video.DASHPath = dashPath.String
-		}
-		if hlsURL.Valid {
-			video.HLSURL = hlsURL.String
-		}
-		if dashURL.Valid {
-			video.DASHURL = dashURL.String
-		}
-		if r2HLSPath.Valid {
-			video.R2HLSPath = r2HLSPath.String
-		}
-		if r2DASHPath.Valid {
-			video.R2DASHPath = r2DASHPath.String
-		}
-		if r2MP4Path.Valid {
-			video.R2MP4Path = r2MP4Path.String
-		}
-		if r2HLSURL.Valid {
-			video.R2HLSURL = r2HLSURL.String
-		}
-		if r2DASHURL.Valid {
-			video.R2DASHURL = r2DASHURL.String
-		}
-		if r2MP4URL.Valid {
-			video.R2MP4URL = r2MP4URL.String
-		}
-		if cameraID.Valid {
-			video.CameraID = cameraID.String
-		}
-		if errorMessage.Valid {
-			video.ErrorMessage = errorMessage.String
 		}
 
 		videos = append(videos, video)
@@ -396,24 +251,13 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 	return videos, nil
 }
 
-// DeleteVideo removes a video record by its ID
-func (s *SQLiteDB) DeleteVideo(id string) error {
-	_, err := s.db.Exec("DELETE FROM videos WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("failed to delete video: %v", err)
-	}
-
-	return nil
-}
-
 // GetVideosByStatus retrieves videos with a specific status
 func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]VideoMetadata, error) {
 	rows, err := s.db.Query(`
 		SELECT 
-			id, created_at, finished_at, status, duration, size, 
-			local_path, hls_path, dash_path, hls_url, dash_url,
-			r2_hls_path, r2_dash_path, r2_mp4_path, r2_hls_url, r2_dash_url, r2_mp4_url,
-			camera_id, error_message
+			id, camera_name, local_path, hls_path, hls_url,
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
+			status, error, created_at, finished_at, uploaded_at
 		FROM videos 
 		WHERE status = ?
 		ORDER BY created_at DESC
@@ -428,80 +272,35 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 	var videos []VideoMetadata
 	for rows.Next() {
 		var video VideoMetadata
-		var finishedAt sql.NullTime
-		var localPath, hlsPath, dashPath, hlsURL, dashURL sql.NullString
-		var r2HLSPath, r2DASHPath, r2MP4Path, r2HLSURL, r2DASHURL, r2MP4URL sql.NullString
-		var cameraID, errorMessage sql.NullString
+		var finishedAt, uploadedAt sql.NullTime
+		var cameraName sql.NullString
 
 		err := rows.Scan(
 			&video.ID,
+			&cameraName,
+			&video.LocalPath,
+			&video.HLSPath,
+			&video.HLSURL,
+			&video.R2HLSPath,
+			&video.R2MP4Path,
+			&video.R2HLSURL,
+			&video.R2MP4URL,
+			&video.Status,
+			&video.ErrorMessage,
 			&video.CreatedAt,
 			&finishedAt,
-			&video.Status,
-			&video.Duration,
-			&video.Size,
-			&localPath,
-			&hlsPath,
-			&dashPath,
-			&hlsURL,
-			&dashURL,
-			&r2HLSPath,
-			&r2DASHPath,
-			&r2MP4Path,
-			&r2HLSURL,
-			&r2DASHURL,
-			&r2MP4URL,
-			&cameraID,
-			&errorMessage,
+			&uploadedAt,
 		)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan video row: %v", err)
 		}
 
-		// Convert SQL nullable types to Go types
+		if cameraName.Valid {
+			video.CameraID = cameraName.String
+		}
 		if finishedAt.Valid {
 			video.FinishedAt = &finishedAt.Time
-		}
-
-		if localPath.Valid {
-			video.LocalPath = localPath.String
-		}
-		if hlsPath.Valid {
-			video.HLSPath = hlsPath.String
-		}
-		if dashPath.Valid {
-			video.DASHPath = dashPath.String
-		}
-		if hlsURL.Valid {
-			video.HLSURL = hlsURL.String
-		}
-		if dashURL.Valid {
-			video.DASHURL = dashURL.String
-		}
-		if r2HLSPath.Valid {
-			video.R2HLSPath = r2HLSPath.String
-		}
-		if r2DASHPath.Valid {
-			video.R2DASHPath = r2DASHPath.String
-		}
-		if r2MP4Path.Valid {
-			video.R2MP4Path = r2MP4Path.String
-		}
-		if r2HLSURL.Valid {
-			video.R2HLSURL = r2HLSURL.String
-		}
-		if r2DASHURL.Valid {
-			video.R2DASHURL = r2DASHURL.String
-		}
-		if r2MP4URL.Valid {
-			video.R2MP4URL = r2MP4URL.String
-		}
-		if cameraID.Valid {
-			video.CameraID = cameraID.String
-		}
-		if errorMessage.Valid {
-			video.ErrorMessage = errorMessage.String
 		}
 
 		videos = append(videos, video)
@@ -528,7 +327,7 @@ func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg str
 		UPDATE videos 
 		SET 
 			status = ?,
-			error_message = ?,
+			error = ?,
 			finished_at = ?
 		WHERE id = ?
 	`, status, errorMsg, finishedAt, id)
@@ -541,37 +340,11 @@ func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg str
 	return nil
 }
 
-// UpdateVideoR2Paths updates the R2 storage paths for a video
-func (s *SQLiteDB) UpdateVideoR2Paths(id, hlsPath, dashPath, mp4Path string) error {
-	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET 
-			r2_hls_path = ?,
-			r2_dash_path = ?,
-			r2_mp4_path = ?
-		WHERE id = ?
-	`, hlsPath, dashPath, mp4Path, id)
-
+// DeleteVideo removes a video record by its ID
+func (s *SQLiteDB) DeleteVideo(id string) error {
+	_, err := s.db.Exec("DELETE FROM videos WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("failed to update video R2 paths: %v", err)
-	}
-
-	return nil
-}
-
-// UpdateVideoR2URLs updates the R2 URLs for a video
-func (s *SQLiteDB) UpdateVideoR2URLs(id, hlsURL, dashURL, mp4URL string) error {
-	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET 
-			r2_hls_url = ?,
-			r2_dash_url = ?,
-			r2_mp4_url = ?
-		WHERE id = ?
-	`, hlsURL, dashURL, mp4URL, id)
-
-	if err != nil {
-		return fmt.Errorf("failed to update video R2 URLs: %v", err)
+		return fmt.Errorf("failed to delete video: %v", err)
 	}
 
 	return nil

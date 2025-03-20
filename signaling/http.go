@@ -16,7 +16,6 @@ import (
 // TranscodeRequest represents an HTTP request for transcoding
 type TranscodeRequest struct {
 	Timestamp  time.Time `json:"timestamp"`
-	Format     string    `json:"format"`     // "hls" or "dash"
 	CameraName string    `json:"cameraName"` // Camera identifier
 }
 
@@ -85,10 +84,10 @@ func (h *HTTPSignal) handleTranscode(w http.ResponseWriter, r *http.Request) {
 
 	// Return the URLs and timings
 	response := struct {
-		URLs     map[string]string      `json:"urls"`
-		Timings  map[string]float64     `json:"timings"`
-		VideoID  string                 `json:"videoId"`
-		Filename string                 `json:"filename"`
+		URLs     map[string]string  `json:"urls"`
+		Timings  map[string]float64 `json:"timings"`
+		VideoID  string             `json:"videoId"`
+		Filename string             `json:"filename"`
 	}{
 		URLs:     urls,
 		Timings:  timings,

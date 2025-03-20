@@ -53,16 +53,14 @@ func GetQualityPresets() []QualityPreset {
 	}
 }
 
-// TranscodeVideo generates multi-quality HLS and DASH formats from the MP4 file
+// TranscodeVideo generates multi-quality HLS format from the MP4 file
 func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (map[string]string, map[string]float64, error) {
 	// Set up camera-specific paths
 	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	hlsPath := filepath.Join(baseDir, "hls", videoID)
-	// dashPath := filepath.Join(baseDir, "dash", videoID)
 
 	// Create output directories
 	os.MkdirAll(hlsPath, 0755)
-	// os.MkdirAll(dashPath, 0755)
 
 	timings := make(map[string]float64)
 
@@ -72,18 +70,8 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (m
 	}
 	timings["hlsTranscode"] = time.Since(hlsStart).Seconds()
 
-	// Commented out DASH transcoding
-	/*
-	dashStart := time.Now()
-	if err := generateDASH(inputPath, dashPath, videoID, cfg); err != nil {
-		return nil, nil, fmt.Errorf("DASH transcoding error: %v", err)
-	}
-	timings["dashTranscode"] = time.Since(dashStart).Seconds()
-	*/
-
 	return map[string]string{
 		"hls": fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
-		// "dash": fmt.Sprintf("%s/recordings/%s/dash/%s/manifest.mpd", cfg.BaseURL, cameraName, videoID),
 	}, timings, nil
 }
 
@@ -139,47 +127,16 @@ func createHLSMasterPlaylist(outputDir string, presets []QualityPreset) error {
 	return nil
 }
 
-// generateDASH creates a multi-quality DASH stream
-func generateDASH(inputPath, outputDir, videoID string, cfg config.Config) error {
-	inputParams, _ := GetInputParams(cfg.HardwareAccel)
-	qualityPresets := GetQualityPresets()
-
-	// Prepare filter complex and map options for multiple quality renditions
-	var filterComplex string
-	var mapOptions []string
-
-	for i, preset := range qualityPresets {
-		filterComplex += fmt.Sprintf("[0:v]scale=%d:%d,format=yuv420p[v%d];",
-			preset.Width, preset.Height, i)
-		mapOptions = append(mapOptions,
-			fmt.Sprintf("-map", "[v%d]", i),
-			"-c:v", GetVideoCodec(cfg.HardwareAccel, cfg.Codec),
-			"-b:v", preset.Bitrate)
+// getProfileForQuality returns the H.264 profile based on quality level
+func getProfileForQuality(qualityIndex int) string {
+	switch qualityIndex {
+	case 0:
+		return "baseline" // For lowest quality
+	case 1:
+		return "main" // For medium quality
+	default:
+		return "high" // For highest qualities
 	}
-
-	// Add audio mapping
-	filterComplex = filterComplex[:len(filterComplex)-1] // Remove trailing semicolon
-	mapOptions = append(mapOptions, "-map", "0:a", "-c:a", "aac", "-b:a", "128k")
-
-	// Build the command
-	dashCmd := exec.Command("ffmpeg",
-		append(append(inputParams,
-			"-i", inputPath,
-			"-filter_complex", filterComplex),
-			append(mapOptions,
-				"-f", "dash",
-				"-use_timeline", "1",
-				"-use_template", "1",
-				"-seg_duration", "4",
-				"-adaptation_sets", "id=0,streams=v id=1,streams=a",
-				"-init_seg_name", filepath.Join(outputDir, "init-stream$RepresentationID$.m4s"),
-				"-media_seg_name", filepath.Join(outputDir, "chunk-stream$RepresentationID$-$Number$.m4s"),
-				filepath.Join(outputDir, "manifest.mpd"))...)...)
-
-	dashCmd.Stdout = os.Stdout
-	dashCmd.Stderr = os.Stderr
-
-	return dashCmd.Run()
 }
 
 // GetInputParams returns appropriate FFmpeg input parameters based on hardware acceleration

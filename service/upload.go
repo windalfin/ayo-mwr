@@ -127,7 +127,7 @@ func (s *UploadService) StartUploadWorker() {
 
 			// Add ready videos to queue if not already there
 			for _, video := range videos {
-				if video.R2HLSURL == "" || video.R2DASHURL == "" || video.R2MP4URL == "" {
+				if video.R2HLSURL == "" || video.R2MP4URL == "" {
 					s.QueueVideo(video.ID)
 				}
 			}
@@ -187,15 +187,6 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
-			// Upload DASH stream
-			dashURL, err := s.r2Storage.UploadDASHStream(video.DASHPath, video.ID)
-			if err != nil {
-				log.Printf("Error uploading DASH stream for video %s: %v", video.ID, err)
-				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("DASH upload error: %v", err))
-				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("DASH upload error: %v", err))
-				continue
-			}
-
 			// Upload MP4 file
 			mp4URL, err := s.r2Storage.UploadMP4(video.LocalPath, video.ID)
 			if err != nil {
@@ -206,12 +197,12 @@ func (s *UploadService) StartUploadWorker() {
 			}
 
 			// Update R2 paths and URLs in database
-			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("dash/%s", video.ID), fmt.Sprintf("mp4/%s", video.ID))
+			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), "", fmt.Sprintf("mp4/%s", video.ID))
 			if err != nil {
 				log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
 			}
 
-			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, dashURL, mp4URL)
+			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, "", mp4URL)
 			if err != nil {
 				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
 			}
@@ -247,7 +238,7 @@ func (s *UploadService) CleanupLocalStorage(retentionHours int) {
 			now := time.Now()
 			for _, video := range videos {
 				// Skip if no R2 URLs (not uploaded yet)
-				if video.R2HLSURL == "" || video.R2DASHURL == "" {
+				if video.R2HLSURL == "" {
 					continue
 				}
 
@@ -286,13 +277,6 @@ func removeLocalFiles(video database.VideoMetadata) {
 			log.Printf("Error removing HLS directory %s: %v", video.HLSPath, err)
 		}
 	}
-
-	// Remove DASH directory
-	if video.DASHPath != "" {
-		if err := os.RemoveAll(video.DASHPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("Error removing DASH directory %s: %v", video.DASHPath, err)
-		}
-	}
 }
 
 // UploadVideo manually uploads a specific video to R2
@@ -312,13 +296,9 @@ func (s *UploadService) UploadVideo(videoID string) error {
 		return fmt.Errorf("error updating video status to uploading: %v", err)
 	}
 
-	// Check if HLS and DASH directories exist
+	// Check if HLS directory exists
 	if _, err := os.Stat(video.HLSPath); os.IsNotExist(err) {
 		return fmt.Errorf("HLS directory %s does not exist", video.HLSPath)
-	}
-
-	if _, err := os.Stat(video.DASHPath); os.IsNotExist(err) {
-		return fmt.Errorf("DASH directory %s does not exist", video.DASHPath)
 	}
 
 	// Upload HLS stream
@@ -328,18 +308,9 @@ func (s *UploadService) UploadVideo(videoID string) error {
 		return fmt.Errorf("error uploading HLS stream: %v", err)
 	}
 
-	// Upload DASH stream
-	dashURL, err := s.r2Storage.UploadDASHStream(video.DASHPath, video.ID)
-	if err != nil {
-		s.db.UpdateVideoStatus(video.ID, database.StatusFailed, fmt.Sprintf("DASH upload error: %v", err))
-		return fmt.Errorf("error uploading DASH stream: %v", err)
-	}
-
 	// Update video metadata with R2 information
 	video.R2HLSURL = hlsURL
-	video.R2DASHURL = dashURL
 	video.R2HLSPath = fmt.Sprintf("hls/%s", video.ID)
-	video.R2DASHPath = fmt.Sprintf("dash/%s", video.ID)
 	video.Status = database.StatusReady
 
 	// Update the complete video metadata
@@ -380,9 +351,8 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 		log.Printf("Error creating video record in database: %v", err)
 	}
 
-	// Generate HLS and DASH streams
+	// Generate HLS streams
 	hlsPath := filepath.Join(s.config.StoragePath, "hls", videoID)
-	dashPath := filepath.Join(s.config.StoragePath, "dash", videoID)
 
 	// Use the transcode package
 	urls, _, err := transcode.TranscodeVideo(filePath, videoID, "hls", s.config)
@@ -395,9 +365,7 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 	// Update metadata with successful transcoding
 	metadata.Status = database.StatusReady
 	metadata.HLSPath = hlsPath
-	metadata.DASHPath = dashPath
 	metadata.HLSURL = urls["hls"]
-	metadata.DASHURL = urls["dash"]
 	now := time.Now()
 	metadata.FinishedAt = &now
 

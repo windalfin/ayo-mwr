@@ -104,44 +104,6 @@ segment_001.ts
 		}
 	}
 
-	// Create a test DASH directory structure
-	dashDir := filepath.Join(tempDir, "dash", "test-video")
-	err = os.MkdirAll(dashDir, 0755)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		t.Fatalf("Failed to create DASH directory: %v", err)
-	}
-
-	// Create manifest.mpd
-	manifestPath := filepath.Join(dashDir, "manifest.mpd")
-	manifestContent := `<?xml version="1.0" encoding="utf-8"?>
-<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
-  <!-- Sample MPD content -->
-</MPD>`
-	err = ioutil.WriteFile(manifestPath, []byte(manifestContent), 0644)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		t.Fatalf("Failed to create manifest file: %v", err)
-	}
-
-	// Create segment files
-	for i := 0; i < 2; i++ {
-		initSegPath := filepath.Join(dashDir, "init-stream1.m4s")
-		err = ioutil.WriteFile(initSegPath, []byte("fake init segment content"), 0644)
-		if err != nil {
-			os.RemoveAll(tempDir)
-			t.Fatalf("Failed to create init segment file: %v", err)
-		}
-
-		segmentPath := filepath.Join(dashDir, "chunk-stream1-%d.m4s")
-		segmentPath = filepath.Join(dashDir, filepath.Base(fmt.Sprintf(segmentPath, i+1)))
-		err = ioutil.WriteFile(segmentPath, []byte("fake dash segment content"), 0644)
-		if err != nil {
-			os.RemoveAll(tempDir)
-			t.Fatalf("Failed to create dash segment file: %v", err)
-		}
-	}
-
 	// Return the temp directory and a cleanup function
 	return tempDir, func() {
 		os.RemoveAll(tempDir)
@@ -212,34 +174,18 @@ func (m *mockR2Storage) UploadHLSStream(hlsDir, videoID string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return m.config.Endpoint + "/" + remotePrefix + "/playlist.m3u8", nil
+	return fmt.Sprintf("%s/%s/playlist.m3u8", m.config.Endpoint, remotePrefix), nil
 }
 
-func (m *mockR2Storage) UploadDASHStream(dashDir, videoID string) (string, error) {
-	remotePrefix := "dash/" + videoID
-	_, err := m.UploadDirectory(dashDir, remotePrefix)
-	if err != nil {
-		return "", err
-	}
-	return m.config.Endpoint + "/" + remotePrefix + "/manifest.mpd", nil
-}
-
-// TestUploadHLSAndDASH tests the upload of HLS and DASH streams
-func TestUploadHLSAndDASH(t *testing.T) {
-	// Set up test files
+// TestUploadHLS tests the upload of HLS stream
+func TestUploadHLS(t *testing.T) {
 	tempDir, cleanup := setupTestFiles(t)
 	defer cleanup()
 
-	// Create mock R2 storage
-	config := R2Config{
-		AccessKey: "test-access-key",
-		SecretKey: "test-secret-key",
-		AccountID: "test-account-id",
-		Bucket:    "test-bucket",
-		Endpoint:  "https://test.cloudflare.com",
-		Region:    "auto",
-	}
-	mock := newMockR2Storage(config)
+	mock := newMockR2Storage(R2Config{
+		Endpoint: "https://test.cloudflare.com",
+		Bucket:   "test-bucket",
+	})
 
 	// Test HLS upload
 	hlsDir := filepath.Join(tempDir, "hls", "test-video")
@@ -255,38 +201,12 @@ func TestUploadHLSAndDASH(t *testing.T) {
 
 	// Check that HLS files were uploaded
 	if _, exists := mock.uploadedFiles["hls/test-video/playlist.m3u8"]; !exists {
-		t.Error("Expected playlist.m3u8 to be uploaded, but it wasn't")
+		t.Error("HLS playlist was not uploaded")
 	}
-	for i := 0; i < 2; i++ {
-		segmentKey := filepath.ToSlash(filepath.Join("hls/test-video", fmt.Sprintf("segment_%03d.ts", i)))
-		if _, exists := mock.uploadedFiles[segmentKey]; !exists {
-			t.Errorf("Expected %s to be uploaded, but it wasn't", segmentKey)
-		}
+	if _, exists := mock.uploadedFiles["hls/test-video/segment_000.ts"]; !exists {
+		t.Error("HLS segment 0 was not uploaded")
 	}
-
-	// Test DASH upload
-	dashDir := filepath.Join(tempDir, "dash", "test-video")
-	dashURL, err := mock.UploadDASHStream(dashDir, "test-video")
-	if err != nil {
-		t.Fatalf("Failed to upload DASH stream: %v", err)
-	}
-
-	expectedDASHURL := "https://test.cloudflare.com/dash/test-video/manifest.mpd"
-	if dashURL != expectedDASHURL {
-		t.Errorf("Expected DASH URL %s, got %s", expectedDASHURL, dashURL)
-	}
-
-	// Check that DASH files were uploaded
-	if _, exists := mock.uploadedFiles["dash/test-video/manifest.mpd"]; !exists {
-		t.Error("Expected manifest.mpd to be uploaded, but it wasn't")
-	}
-	if _, exists := mock.uploadedFiles["dash/test-video/init-stream1.m4s"]; !exists {
-		t.Error("Expected init segment to be uploaded, but it wasn't")
-	}
-	for i := 0; i < 2; i++ {
-		segmentKey := filepath.ToSlash(filepath.Join("dash/test-video", fmt.Sprintf("chunk-stream1-%d.m4s", i+1)))
-		if _, exists := mock.uploadedFiles[segmentKey]; !exists {
-			t.Errorf("Expected %s to be uploaded, but it wasn't", segmentKey)
-		}
+	if _, exists := mock.uploadedFiles["hls/test-video/segment_001.ts"]; !exists {
+		t.Error("HLS segment 1 was not uploaded")
 	}
 }

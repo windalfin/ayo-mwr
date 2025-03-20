@@ -3,15 +3,13 @@ package main
 import (
 	"flag"
 	"log"
-	
+
 	"github.com/joho/godotenv"
-	
+
 	// Update these imports to match your local module path
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/recording"
-	"ayo-mwr/service"
-	"ayo-mwr/storage"
 )
 
 func main() {
@@ -27,7 +25,7 @@ func main() {
 
 	// Load configuration
 	var cfg config.Config
-	
+
 	// If config file is specified, load from file
 	if *configFile != "" {
 		var err error
@@ -51,27 +49,31 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize R2 storage
-	r2Config := storage.R2Config{
-		AccessKey: cfg.R2AccessKey,
-		SecretKey: cfg.R2SecretKey,
-		AccountID: cfg.R2AccountID,
-		Bucket:    cfg.R2Bucket,
-		Endpoint:  cfg.R2Endpoint,
-		Region:    cfg.R2Region,
-	}
-	r2Storage, err := storage.NewR2Storage(r2Config)
-	if err != nil {
-		log.Fatalf("Failed to initialize R2 storage: %v", err)
-	}
+	// TODO
+	// This is commented as we will not be doing automatic upload to R2 Server.
+	// This piece of code will either be modified or deleted in another Ticket
 
-	// Initialize upload service with all required dependencies
-	uploadService := service.NewUploadService(db, r2Storage, cfg)
+	// // Initialize R2 storage
+	// r2Config := storage.R2Config{
+	// 	AccessKey: cfg.R2AccessKey,
+	// 	SecretKey: cfg.R2SecretKey,
+	// 	AccountID: cfg.R2AccountID,
+	// 	Bucket:    cfg.R2Bucket,
+	// 	Endpoint:  cfg.R2Endpoint,
+	// 	Region:    cfg.R2Region,
+	// }
+	// r2Storage, err := storage.NewR2Storage(r2Config)
+	// if err != nil {
+	// 	log.Fatalf("Failed to initialize R2 storage: %v", err)
+	// }
+
+	// // Initialize upload service with all required dependencies
+	// uploadService := service.NewUploadService(db, r2Storage, cfg)
 
 	log.Println("Starting 24/7 RTSP stream recording")
-	
+
 	// Start capturing from all cameras
-	if err := recording.CaptureMultipleRTSPStreams(cfg, uploadService); err != nil {
+	if err := recording.CaptureMultipleRTSPStreams(cfg); err != nil {
 		log.Fatalf("Error capturing RTSP streams: %v", err)
 	}
 }

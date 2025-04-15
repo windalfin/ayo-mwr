@@ -116,10 +116,10 @@ func getWatermark(venueCode string) (string, error) {
 type WatermarkPosition int
 
 const (
-	PositionTopLeft WatermarkPosition = iota
-	PositionTopRight
-	PositionBottomLeft
-	PositionBottomRight
+	TopLeft WatermarkPosition = iota
+	TopRight
+	BottomLeft
+	BottomRight
 )
 
 // AddWatermark overlays a PNG watermark at (x, y) on the input video and writes to outputVideo.

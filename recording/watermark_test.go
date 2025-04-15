@@ -1,12 +1,34 @@
 package recording
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"image"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"github.com/joho/godotenv"
 )
+
+func init() {
+    // Load .env file for tests
+    err := godotenv.Load("../../.env")
+    if err != nil {
+        fmt.Println("Could not load .env file, using system environment variables")
+    }
+}
+
+func TestMain(m *testing.M) {
+	godotenv.Load() // This loads .env into the environment
+	os.Exit(m.Run())
+}
 
 func TestAddWatermark(t *testing.T) {
 	inputVideo := filepath.Join("..", "test", "videos", "uploads", "camera_A_20250304_120503.mp4")
@@ -74,4 +96,89 @@ func TestAddWatermark(t *testing.T) {
 	if !diff {
 		t.Error("No difference detected in watermark region; watermark may not have been applied")
 	}
+}
+
+func TestGetWatermark(t *testing.T) {
+    // Setup test server for image downloads
+    tsImage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Create a simple dummy image
+        img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+        var buf bytes.Buffer
+        if err := png.Encode(&buf, img); err != nil {
+            http.Error(w, "Failed to encode image", http.StatusInternalServerError)
+            return
+        }
+        w.Header().Set("Content-Type", "image/png")
+        w.Write(buf.Bytes())
+    }))
+    defer tsImage.Close()
+
+    // Setup test server for API
+    tsAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Simulate API response
+        type WatermarkData struct {
+            Resolution string `json:"resolution"`
+            Path       string `json:"path"`
+        }
+        response := struct {
+            Error      bool            `json:"error"`
+            StatusCode int             `json:"status_code"`
+            Data       []WatermarkData `json:"data"`
+        } {
+            Error: false,
+            StatusCode: 200,
+            Data: []WatermarkData{
+                {Resolution: "480", Path: tsImage.URL + "/mock-image/480.png"},
+                {Resolution: "720", Path: tsImage.URL + "/mock-image/720.png"},
+                {Resolution: "1080", Path: tsImage.URL + "/mock-image/1080.png"},
+            },
+        }
+        jsonResponse, _ := json.Marshal(response)
+        w.Header().Set("Content-Type", "application/json")
+        w.Write(jsonResponse)
+    }))
+    defer tsAPI.Close()
+
+    // Override environment variable for test
+    originalEndpoint := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+    os.Setenv("AYOINDO_API_BASE_ENDPOINT", tsAPI.URL)
+    defer os.Setenv("AYOINDO_API_BASE_ENDPOINT", originalEndpoint)
+
+    // We need to override the http.Get function to redirect image downloads to our mock image server
+    originalTransport := http.DefaultTransport
+    http.DefaultTransport = &http.Transport{
+        Proxy: func(req *http.Request) (*url.URL, error) {
+            if strings.Contains(req.URL.String(), "/mock-image/") {
+                return url.Parse(tsImage.URL)
+            }
+            return nil, nil
+        },
+    }
+    defer func() { http.DefaultTransport = originalTransport }()
+
+    venueCode := "testvenue"
+    folder := filepath.Join(".", "watermark", venueCode)
+    os.RemoveAll(folder) // Clean before test
+    defer os.RemoveAll(folder)
+
+    // Debug environment variable
+    t.Logf("AYOINDO_API_BASE_ENDPOINT: %s", os.Getenv("AYOINDO_API_BASE_ENDPOINT"))
+
+    imgPath, err := getWatermark(venueCode)
+    if err != nil {
+        t.Fatalf("getWatermark failed: %v", err)
+    }
+
+    if _, err := os.Stat(imgPath); os.IsNotExist(err) {
+        t.Fatalf("Watermark image not downloaded")
+    }
+
+    // Check if all expected files exist
+    expectedResolutions := []string{"480", "720", "1080"}
+    for _, res := range expectedResolutions {
+        filePath := filepath.Join(folder, fmt.Sprintf("watermark_%s.png", res))
+        if _, err := os.Stat(filePath); os.IsNotExist(err) {
+            t.Errorf("Expected watermark file for resolution %s not found at %s", res, filePath)
+        }
+    }
 }

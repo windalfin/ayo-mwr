@@ -109,6 +109,19 @@ func getWatermark(venueCode string) (string, error) {
 	return "", fmt.Errorf("no watermark image found after download")
 }
 
+// WatermarkPosition defines standard positions for watermark overlay
+// Margin is the distance from the video edge in pixels
+// Position options: TopLeft, TopRight, BottomLeft, BottomRight
+// Example usage: AddWatermarkWithPosition(..., PositionTopRight, 10)
+type WatermarkPosition int
+
+const (
+	PositionTopLeft WatermarkPosition = iota
+	PositionTopRight
+	PositionBottomLeft
+	PositionBottomRight
+)
+
 // AddWatermark overlays a PNG watermark at (x, y) on the input video and writes to outputVideo.
 // Returns error if the operation fails.
 func AddWatermark(inputVideo, watermarkImg, outputVideo string, x, y int) error {
@@ -119,6 +132,44 @@ func AddWatermark(inputVideo, watermarkImg, outputVideo string, x, y int) error 
 		"-i", inputVideo,
 		"-i", watermarkImg,
 		"-filter_complex", fmt.Sprintf("overlay=%d:%d", x, y),
+		outputVideo,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg error: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// AddWatermarkWithPosition overlays a PNG watermark at a relative position with margin and opacity
+// on the input video and writes to outputVideo.
+// Opacity should be between 0.0 (fully transparent) and 1.0 (fully opaque).
+func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, position WatermarkPosition, margin int, opacity float64) error {
+	if opacity < 0.0 {
+		opacity = 0.0
+	} else if opacity > 1.0 {
+		opacity = 1.0
+	}
+	var overlayExpr string
+	switch position {
+	case PositionTopLeft:
+		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
+	case PositionTopRight:
+		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:%d", margin, margin)
+	case PositionBottomLeft:
+		overlayExpr = fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
+	case PositionBottomRight:
+		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
+	}
+
+	filter := fmt.Sprintf("[1]format=rgba,colorchannelmixer=aa=%.2f[wm];[0][wm]%s", opacity, overlayExpr)
+	cmd := exec.Command(
+		"ffmpeg", "-y",
+		"-i", inputVideo,
+		"-i", watermarkImg,
+		"-filter_complex", filter,
 		outputVideo,
 	)
 	output, err := cmd.CombinedOutput()

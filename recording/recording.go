@@ -13,6 +13,28 @@ import (
 	"ayo-mwr/config"
 )
 
+// ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
+// Uses ffprobe to get duration, ffmpeg to extract frame. Returns error if any step fails.
+func ExtractThumbnail(videoPath, outPath string) error {
+	getVideoDuration := func(video string) (float64, error) {
+		cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video)
+		output, err := cmd.Output()
+		if err != nil {
+			return 0, err
+		}
+		var dur float64
+		_, err = fmt.Sscanf(string(output), "%f", &dur)
+		return dur, err
+	}
+	dur, err := getVideoDuration(videoPath)
+	if err != nil {
+		return err
+	}
+	middle := fmt.Sprintf("%.2f", dur/2)
+	cmd := exec.Command("ffmpeg", "-y", "-ss", middle, "-i", videoPath, "-vframes", "1", outPath)
+	return cmd.Run()
+}
+
 // CaptureMultipleRTSPStreams captures video from multiple RTSP streams using FFmpeg and saves them in segments
 func CaptureMultipleRTSPStreams(cfg config.Config) error {
 	// Create logs directory if it doesn't exist

@@ -152,13 +152,13 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 	}
 	var overlayExpr string
 	switch position {
-	case PositionTopLeft:
+	case TopLeft:
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
-	case PositionTopRight:
+	case TopRight:
 		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:%d", margin, margin)
-	case PositionBottomLeft:
+	case BottomLeft:
 		overlayExpr = fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
-	case PositionBottomRight:
+	case BottomRight:
 		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
 	default:
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)

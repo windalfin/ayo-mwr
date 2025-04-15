@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,15 +48,11 @@ func TestAddWatermark(t *testing.T) {
 		t.Fatalf("AddWatermark failed: %v", err)
 	}
 
-	// Extract frame at 1 second from both videos
-	extractFrame := func(video, out string) error {
-		cmd := exec.Command("ffmpeg", "-y", "-ss", "1", "-i", video, "-vframes", "1", out)
-		return cmd.Run()
-	}
-	if err := extractFrame(inputVideo, frameOriginal); err != nil {
+	// Use the new ExtractThumbnail from recording.go
+	if err := ExtractThumbnail(inputVideo, frameOriginal); err != nil {
 		t.Fatalf("Failed to extract original frame: %v", err)
 	}
-	if err := extractFrame(outputVideo, frameWatermarked); err != nil {
+	if err := ExtractThumbnail(outputVideo, frameWatermarked); err != nil {
 		t.Fatalf("Failed to extract watermarked frame: %v", err)
 	}
 
@@ -116,15 +111,11 @@ func TestAddWatermarkWithPosition(t *testing.T) {
 		t.Fatalf("AddWatermarkWithPosition failed: %v", err)
 	}
 
-	// Extract frame at 1 second from both videos
-	extractFrame := func(video, out string) error {
-		cmd := exec.Command("ffmpeg", "-y", "-ss", "1", "-i", video, "-vframes", "1", out)
-		return cmd.Run()
-	}
-	if err := extractFrame(inputVideo, frameOriginal); err != nil {
+	// Use the new ExtractFrameAtMiddle from recording.go
+	if err := ExtractFrameAtMiddle(inputVideo, frameOriginal); err != nil {
 		t.Fatalf("Extract frame from original: %v", err)
 	}
-	if err := extractFrame(outputVideo, frameWatermarked); err != nil {
+	if err := ExtractFrameAtMiddle(outputVideo, frameWatermarked); err != nil {
 		t.Fatalf("Extract frame from watermarked: %v", err)
 	}
 

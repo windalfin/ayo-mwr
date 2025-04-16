@@ -57,16 +57,12 @@ func TestTranscodeVideoValidation(t *testing.T) {
 	// Test that directories are created
 	videoID := "test123"
 	hlsPath := filepath.Join(tempDir, "hls", videoID)
-	dashPath := filepath.Join(tempDir, "dash", videoID)
 
 	// This will fail because we're not actually transcoding, but we can check if directories were created
-	_, _, err = TranscodeVideo(inputPath, videoID, cfg)
+	_, _, err = TranscodeVideo(inputPath, videoID, "hls", cfg)
 	
 	// The transcoding will fail, but the directories should be created
 	if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
 		t.Errorf("HLS directory was not created")
-	}
-	if _, err := os.Stat(dashPath); os.IsNotExist(err) {
-		t.Errorf("DASH directory was not created")
 	}
 }

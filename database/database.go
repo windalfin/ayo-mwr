@@ -25,13 +25,9 @@ type VideoMetadata struct {
 	Size         int64       `json:"size"`         // Size in bytes
 	LocalPath    string      `json:"localPath"`    // Path to local file
 	HLSPath      string      `json:"hlsPath"`      // Path to HLS stream directory
-	DASHPath     string      `json:"dashPath"`     // Path to DASH stream directory
 	HLSURL       string      `json:"hlsUrl"`       // URL to HLS playlist
-	DASHURL      string      `json:"dashUrl"`      // URL to DASH manifest
 	R2HLSPath    string      `json:"r2HlsPath"`    // R2 path to HLS stream
-	R2DASHPath   string      `json:"r2DashPath"`   // R2 path to DASH stream
 	R2HLSURL     string      `json:"r2HlsUrl"`     // R2 URL to HLS playlist
-	R2DASHURL    string      `json:"r2DashUrl"`    // R2 URL to DASH manifest
 	R2MP4Path    string      `json:"r2Mp4Path"`    // R2 path to MP4 file
 	R2MP4URL     string      `json:"r2Mp4Url"`     // R2 URL to MP4 file
 	MP4Path      string      `json:"mp4Path"`      // Path to MP4 file
@@ -54,8 +50,8 @@ type Database interface {
 	UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error
 
 	// R2 storage operations
-	UpdateVideoR2Paths(id, hlsPath, dashPath, mp4Path string) error
-	UpdateVideoR2URLs(id, hlsURL, dashURL, mp4URL string) error
+	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
+	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
 
 	// Helper operations
 	Close() error

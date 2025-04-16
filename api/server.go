@@ -50,13 +50,12 @@ func (s *Server) setupCORS(r *gin.Engine) {
 func (s *Server) setupRoutes(r *gin.Engine) {
 	// Static routes
 	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
-	r.Static("/dash", filepath.Join(s.config.StoragePath, "dash"))
 
 	// API routes
 	api := r.Group("/api")
 	{
 		api.GET("/streams", s.listStreams)
 		api.GET("/streams/:id", s.getStream)
-		// Add your new endpoints here
+		api.POST("/transcode", s.handleTranscode)
 	}
 }

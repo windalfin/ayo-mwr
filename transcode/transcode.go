@@ -53,74 +53,27 @@ func GetQualityPresets() []QualityPreset {
 	}
 }
 
-// TranscodeVideo generates multi-quality HLS and DASH formats from the MP4 file
-func TranscodeVideo(inputPath, videoID string, cfg config.Config) (map[string]string, map[string]float64, error) {
-	// Extract camera name from the input path
-	cameraName := filepath.Base(filepath.Dir(filepath.Dir(inputPath)))
-	
+// TranscodeVideo generates multi-quality HLS format from the MP4 file
+func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (map[string]string, map[string]float64, error) {
 	// Set up camera-specific paths
-	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
-	hlsPath := filepath.Join(cameraDir, "hls", videoID)
-	dashPath := filepath.Join(cameraDir, "dash", videoID)
+	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
+	hlsPath := filepath.Join(baseDir, "hls", videoID)
 
-	// Create output directories
-	os.MkdirAll(hlsPath, 0755)
-	os.MkdirAll(dashPath, 0755)
+	// Create HLS output directory
+	if err := os.MkdirAll(hlsPath, 0755); err != nil {
+		return nil, nil, fmt.Errorf("failed to create HLS directory: %v", err)
+	}
 
 	timings := make(map[string]float64)
-	// inputParams, _ := GetInputParams(cfg.HardwareAccel)
 
-	// Create channels for error handling and synchronization
-	errChan := make(chan error, 2)
-	timesChan := make(chan struct {
-		key   string
-		value float64
-	}, 2)
-
-	// Start HLS transcoding in a goroutine
-	go func() {
-		hlsStart := time.Now()
-		if err := generateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
-			errChan <- fmt.Errorf("HLS transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "hlsTranscode", value: time.Since(hlsStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Start DASH transcoding in a goroutine
-	go func() {
-		dashStart := time.Now()
-		if err := generateDASH(inputPath, dashPath, videoID, cfg); err != nil {
-			errChan <- fmt.Errorf("DASH transcoding error: %v", err)
-			return
-		}
-		timesChan <- struct {
-			key   string
-			value float64
-		}{key: "dashTranscode", value: time.Since(dashStart).Seconds()}
-		errChan <- nil
-	}()
-
-	// Wait for both transcoding processes to complete
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return nil, nil, err
-		}
+	hlsStart := time.Now()
+	if err := generateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
+		return nil, nil, fmt.Errorf("HLS transcoding error: %v", err)
 	}
-
-	// Collect timing information
-	for i := 0; i < 2; i++ {
-		timing := <-timesChan
-		timings[timing.key] = timing.value
-	}
+	timings["hlsTranscode"] = time.Since(hlsStart).Seconds()
 
 	return map[string]string{
-		"hls":  fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
-		"dash": fmt.Sprintf("%s/recordings/%s/dash/%s/manifest.mpd", cfg.BaseURL, cameraName, videoID),
+		"hls": fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
 	}, timings, nil
 }
 
@@ -176,47 +129,16 @@ func createHLSMasterPlaylist(outputDir string, presets []QualityPreset) error {
 	return nil
 }
 
-// generateDASH creates a multi-quality DASH stream
-func generateDASH(inputPath, outputDir, videoID string, cfg config.Config) error {
-	inputParams, _ := GetInputParams(cfg.HardwareAccel)
-	qualityPresets := GetQualityPresets()
-
-	// Prepare filter complex and map options for multiple quality renditions
-	var filterComplex string
-	var mapOptions []string
-
-	for i, preset := range qualityPresets {
-		filterComplex += fmt.Sprintf("[0:v]scale=%d:%d,format=yuv420p[v%d];",
-			preset.Width, preset.Height, i)
-		mapOptions = append(mapOptions,
-			fmt.Sprintf("-map", "[v%d]", i),
-			"-c:v", GetVideoCodec(cfg.HardwareAccel, cfg.Codec),
-			"-b:v", preset.Bitrate)
+// getProfileForQuality returns the H.264 profile based on quality level
+func getProfileForQuality(qualityIndex int) string {
+	switch qualityIndex {
+	case 0:
+		return "baseline" // For lowest quality
+	case 1:
+		return "main" // For medium quality
+	default:
+		return "high" // For highest qualities
 	}
-
-	// Add audio mapping
-	filterComplex = filterComplex[:len(filterComplex)-1] // Remove trailing semicolon
-	mapOptions = append(mapOptions, "-map", "0:a", "-c:a", "aac", "-b:a", "128k")
-
-	// Build the command
-	dashCmd := exec.Command("ffmpeg",
-		append(append(inputParams,
-			"-i", inputPath,
-			"-filter_complex", filterComplex),
-			append(mapOptions,
-				"-f", "dash",
-				"-use_timeline", "1",
-				"-use_template", "1",
-				"-seg_duration", "4",
-				"-adaptation_sets", "id=0,streams=v id=1,streams=a",
-				"-init_seg_name", filepath.Join(outputDir, "init-stream$RepresentationID$.m4s"),
-				"-media_seg_name", filepath.Join(outputDir, "chunk-stream$RepresentationID$-$Number$.m4s"),
-				filepath.Join(outputDir, "manifest.mpd"))...)...)
-
-	dashCmd.Stdout = os.Stdout
-	dashCmd.Stderr = os.Stderr
-
-	return dashCmd.Run()
 }
 
 // GetInputParams returns appropriate FFmpeg input parameters based on hardware acceleration

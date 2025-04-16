@@ -94,10 +94,6 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 		contentType = "video/MP2T"
 	case ".m3u8":
 		contentType = "application/vnd.apple.mpegurl"
-	case ".mpd":
-		contentType = "application/dash+xml"
-	case ".m4s":
-		contentType = "video/iso.segment"
 	}
 
 	// Upload file
@@ -166,31 +162,11 @@ func (r *R2Storage) UploadDirectory(localDir, remotePrefix string) ([]string, er
 // UploadHLSStream uploads an HLS stream directory to R2
 func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, error) {
 	remotePrefix := fmt.Sprintf("hls/%s", videoID)
-
-	log.Printf("Uploading HLS stream for %s to R2", videoID)
-
 	_, err := r.UploadDirectory(hlsDir, remotePrefix)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload HLS stream: %v", err)
 	}
-
-	// Return the URL to the playlist
-	return fmt.Sprintf("%s/hls/%s/playlist.m3u8", r.config.Endpoint, videoID), nil
-}
-
-// UploadDASHStream uploads a DASH stream directory to R2
-func (r *R2Storage) UploadDASHStream(dashDir, videoID string) (string, error) {
-	remotePrefix := fmt.Sprintf("dash/%s", videoID)
-
-	log.Printf("Uploading DASH stream for %s to R2", videoID)
-
-	_, err := r.UploadDirectory(dashDir, remotePrefix)
-	if err != nil {
-		return "", fmt.Errorf("failed to upload DASH stream: %v", err)
-	}
-
-	// Return the URL to the manifest
-	return fmt.Sprintf("%s/dash/%s/manifest.mpd", r.config.Endpoint, videoID), nil
+	return fmt.Sprintf("%s/%s/playlist.m3u8", r.config.Endpoint, remotePrefix), nil
 }
 
 // Upload MP4 to R2

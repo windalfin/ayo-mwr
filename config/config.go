@@ -25,6 +25,10 @@ type CameraConfig struct {
 
 // Config contains all configuration for the application
 type Config struct {
+	// Arduino Configuration
+	ArduinoCOMPort  string
+	ArduinoBaudRate int
+
 	// RTSP Configuration (Legacy single camera)
 	RTSPUsername string
 	RTSPPassword string
@@ -45,45 +49,59 @@ type Config struct {
 
 	// Server Configuration
 	ServerPort string
-	BaseURL    string
+	BaseURL    string // Base URL for accessing transcoded videos
 
 	// Database Configuration
 	DatabasePath string
 
-	// R2 Configuration
-	R2Enabled   bool
+	// R2 Storage Configuration
 	R2AccessKey string
 	R2SecretKey string
 	R2AccountID string
 	R2Bucket    string
-	R2Endpoint  string
 	R2Region    string
+	R2Endpoint  string
+	R2Enabled   bool
+	R2TokenValue string
 
-	// Multi-camera configuration
+	// Multi-camera Configuration
 	Cameras []CameraConfig
 }
 
 // LoadConfig loads configuration from environment variables
 func LoadConfig() Config {
-	segmentDuration, _ := strconv.Atoi(getEnv("SEGMENT_DURATION", "30"))
-	width, _ := strconv.Atoi(getEnv("WIDTH", "800"))
-	height, _ := strconv.Atoi(getEnv("HEIGHT", "600"))
-	frameRate, _ := strconv.Atoi(getEnv("FRAME_RATE", "30"))
-	r2Enabled, _ := strconv.ParseBool(getEnv("R2_ENABLED", "false"))
+	cfg := Config{
+		// Arduino Configuration
+		ArduinoCOMPort: getEnv("ARDUINO_COM_PORT", "COM4"),
+		ArduinoBaudRate: func() int {
+			rate, _ := strconv.Atoi(getEnv("ARDUINO_BAUD_RATE", "9600"))
+			return rate
+		}(),
 
-	config := Config{
 		// RTSP Configuration
-		RTSPUsername: getEnv("RTSP_USERNAME", "admin"),
-		RTSPPassword: getEnv("RTSP_PASSWORD", "admin"),
-		RTSPIP:       getEnv("RTSP_IP", "192.168.1.100"),
+		RTSPUsername: getEnv("RTSP_USERNAME", "winda"),
+		RTSPPassword: getEnv("RTSP_PASSWORD", "Morgana12"),
+		RTSPIP:       getEnv("RTSP_IP", "192.168.31.152"),
 		RTSPPort:     getEnv("RTSP_PORT", "554"),
 		RTSPPath:     getEnv("RTSP_PATH", "/streaming/channels/101/"),
 
 		// Recording Configuration
-		SegmentDuration: segmentDuration,
-		Width:           width,
-		Height:          height,
-		FrameRate:       frameRate,
+		SegmentDuration: func() int {
+			duration, _ := strconv.Atoi(getEnv("SEGMENT_DURATION", "30"))
+			return duration
+		}(),
+		Width: func() int {
+			width, _ := strconv.Atoi(getEnv("WIDTH", "800"))
+			return width
+		}(),
+		Height: func() int {
+			height, _ := strconv.Atoi(getEnv("HEIGHT", "600"))
+			return height
+		}(),
+		FrameRate: func() int {
+			rate, _ := strconv.Atoi(getEnv("FRAME_RATE", "30"))
+			return rate
+		}(),
 
 		// Storage Configuration
 		StoragePath:   getEnv("STORAGE_PATH", "./videos"),
@@ -98,57 +116,62 @@ func LoadConfig() Config {
 		DatabasePath: getEnv("DATABASE_PATH", "./data/videos.db"),
 
 		// R2 Configuration
-		R2Enabled:   r2Enabled,
-		R2AccessKey: getEnv("R2_ACCESS_KEY", ""),
-		R2SecretKey: getEnv("R2_SECRET_KEY", ""),
-		R2AccountID: getEnv("R2_ACCOUNT_ID", ""),
-		R2Bucket:    getEnv("R2_BUCKET", "videos"),
-		R2Endpoint:  getEnv("R2_ENDPOINT", ""),
-		R2Region:    getEnv("R2_REGION", "auto"),
-		
-		// Initialize empty cameras array
-		Cameras: []CameraConfig{},
+		R2Enabled: func() bool {
+			enabled, _ := strconv.ParseBool(getEnv("R2_ENABLED", "false"))
+			return enabled
+		}(),
+		R2TokenValue: getEnv("R2_TOKEN_VALUE", ""),
+		R2AccessKey:  getEnv("R2_ACCESS_KEY", ""),
+		R2SecretKey:  getEnv("R2_SECRET_KEY", ""),
+		R2AccountID:  getEnv("R2_ACCOUNT_ID", ""),
+		R2Bucket:     getEnv("R2_BUCKET", ""),
+		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
+		R2Region:     getEnv("R2_REGION", "auto"),
 	}
 
-	// Try to load cameras from CAMERAS_CONFIG env var (JSON string)
+	// Load multiple cameras configuration
 	camerasJSON := getEnv("CAMERAS_CONFIG", "")
 	if camerasJSON != "" {
-		if err := json.Unmarshal([]byte(camerasJSON), &config.Cameras); err != nil {
-			log.Printf("Failed to parse CAMERAS_CONFIG environment variable: %v", err)
+		var cameras []CameraConfig
+		if err := json.Unmarshal([]byte(camerasJSON), &cameras); err != nil {
+			log.Printf("Warning: Failed to parse CAMERAS_CONFIG: %v", err)
 		} else {
-			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(config.Cameras))
+			cfg.Cameras = cameras
+			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(cameras))
 		}
 	}
 
-	// If no cameras configured yet, create one from legacy settings
-	if len(config.Cameras) == 0 {
+	// If no cameras configured, use legacy camera settings
+	if len(cfg.Cameras) == 0 {
 		log.Println("No cameras configured, using legacy camera settings")
-		config.Cameras = append(config.Cameras, CameraConfig{
-			Name:      "camera_A",
-			IP:        config.RTSPIP,
-			Port:      config.RTSPPort,
-			Path:      config.RTSPPath,
-			Username:  config.RTSPUsername,
-			Password:  config.RTSPPassword,
+		cfg.Cameras = append(cfg.Cameras, CameraConfig{
+			Name:      "camera_1",
+			IP:        cfg.RTSPIP,
+			Port:      cfg.RTSPPort,
+			Path:      cfg.RTSPPath,
+			Username:  cfg.RTSPUsername,
+			Password:  cfg.RTSPPassword,
 			Enabled:   true,
-			Width:     config.Width,
-			Height:    config.Height,
-			FrameRate: config.FrameRate,
+			Width:     cfg.Width,
+			Height:    cfg.Height,
+			FrameRate: cfg.FrameRate,
 		})
 	}
 
-	// Log configuration (without sensitive data)
-	log.Printf("Loaded configuration with %d cameras", len(config.Cameras))
-	for i, camera := range config.Cameras {
-		log.Printf("Camera %d: %s @ %s:%s%s (Enabled: %v)", 
+	// Log configuration
+	log.Printf("Loaded configuration with %d cameras", len(cfg.Cameras))
+	for i, camera := range cfg.Cameras {
+		log.Printf("Camera %d: %s @ %s:%s%s (Enabled: %v)",
 			i+1, camera.Name, camera.IP, camera.Port, camera.Path, camera.Enabled)
 	}
-	
-	log.Printf("Storage Path: %s", config.StoragePath)
-	log.Printf("Server running on port %s with base URL %s", config.ServerPort, config.BaseURL)
-	log.Printf("R2 Storage Enabled: %v", config.R2Enabled)
-	
-	return config
+
+	log.Printf("Storage Path: %s", cfg.StoragePath)
+	log.Printf("Server running on port %s with base URL %s", cfg.ServerPort, cfg.BaseURL)
+	log.Printf("R2 Storage Enabled: %v", cfg.R2Enabled)
+	log.Printf("Arduino COM Port: %s", cfg.ArduinoCOMPort)
+	log.Printf("Arduino Baud Rate: %d", cfg.ArduinoBaudRate)
+
+	return cfg
 }
 
 // LoadConfigFromFile loads configuration from a JSON file
@@ -196,13 +219,6 @@ func getEnv(key, fallback string) string {
 
 // EnsurePaths creates necessary paths
 func EnsurePaths(config Config) {
-	// Create storage directories
-	for _, dir := range []string{"uploads", "hls", "dash", "temp"} {
-		err := os.MkdirAll(filepath.Join(config.StoragePath, dir), 0755)
-		if err != nil {
-			log.Printf("Failed to create directory %s: %v", filepath.Join(config.StoragePath, dir), err)
-		}
-	}
 
 	// Create database directory
 	dbDir := filepath.Dir(config.DatabasePath)

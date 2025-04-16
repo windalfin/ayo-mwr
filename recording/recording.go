@@ -13,6 +13,28 @@ import (
 	"ayo-mwr/config"
 )
 
+// ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
+// Uses ffprobe to get duration, ffmpeg to extract frame. Returns error if any step fails.
+func ExtractThumbnail(videoPath, outPath string) error {
+	getVideoDuration := func(video string) (float64, error) {
+		cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video)
+		output, err := cmd.Output()
+		if err != nil {
+			return 0, err
+		}
+		var dur float64
+		_, err = fmt.Sscanf(string(output), "%f", &dur)
+		return dur, err
+	}
+	dur, err := getVideoDuration(videoPath)
+	if err != nil {
+		return err
+	}
+	middle := fmt.Sprintf("%.2f", dur/2)
+	cmd := exec.Command("ffmpeg", "-y", "-ss", middle, "-i", videoPath, "-vframes", "1", outPath)
+	return cmd.Run()
+}
+
 // CaptureMultipleRTSPStreams captures video from multiple RTSP streams using FFmpeg and saves them in segments
 func CaptureMultipleRTSPStreams(cfg config.Config) error {
 	// Create logs directory if it doesn't exist
@@ -67,12 +89,13 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 		cameraName = fmt.Sprintf("camera_%d", cameraID)
 	}
 
-	// Create camera-specific directories
+	// Create camera-specific directories and add MP4 folder
 	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	cameraLogsDir := filepath.Join(cameraDir, "logs")
+	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
 
 	// Create all required directories
-	for _, dir := range []string{cameraDir, cameraLogsDir} {
+	for _, dir := range []string{cameraDir, cameraLogsDir, cameraMP4Dir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
 		}
@@ -84,7 +107,7 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 		// Create a new segment file with timestamp
 		timestamp := time.Now().Format("20060102_150405")
 		outputFilename := fmt.Sprintf("%s_%s.mp4", cameraName, timestamp)
-		outputPath := filepath.Join(cameraDir, outputFilename)
+		outputPath := filepath.Join(cameraMP4Dir, outputFilename)
 
 		log.Printf("[%s] Creating new video segment: %s\n", cameraName, outputFilename)
 

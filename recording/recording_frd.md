@@ -1,7 +1,7 @@
 # Recording Storage & Processing: Design Decision & Functionality
 
 ## Extension of Watermarking Design
-This document extends the decisions made in `watermarking_decision.md` regarding post-processing and watermarking of recorded videos.
+This document extends the decisions made in `watermarking_frd.md` regarding post-processing and watermarking of recorded videos.
 
 ## Key Decisions
 1. **Stored Recording = Watermarked Version**

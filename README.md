@@ -132,7 +132,6 @@ Response:
 {
   "urls": {
     "hls": "http://localhost:3000/hls/camera_2_20250320_115851/master.m3u8",
-    "dash": "http://localhost:3000/dash/camera_2_20250320_115851/manifest.mpd",
     "mp4": "http://localhost:3000/mp4/camera_2_20250320_115851.mp4"
   },
   "timings": {

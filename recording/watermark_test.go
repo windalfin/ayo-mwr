@@ -111,11 +111,11 @@ func TestAddWatermarkWithPosition(t *testing.T) {
 		t.Fatalf("AddWatermarkWithPosition failed: %v", err)
 	}
 
-	// Use the new ExtractFrameAtMiddle from recording.go
-	if err := ExtractFrameAtMiddle(inputVideo, frameOriginal); err != nil {
+	// Use the new ExtractThumbnail from recording.go
+	if err := ExtractThumbnail(inputVideo, frameOriginal); err != nil {
 		t.Fatalf("Extract frame from original: %v", err)
 	}
-	if err := ExtractFrameAtMiddle(outputVideo, frameWatermarked); err != nil {
+	if err := ExtractThumbnail(outputVideo, frameWatermarked); err != nil {
 		t.Fatalf("Extract frame from watermarked: %v", err)
 	}
 

@@ -101,9 +101,9 @@ func TestAddWatermarkWithPosition(t *testing.T) {
 	frameOriginal := filepath.Join("..", "test", "videos", "uploads", "frame_original.png")
 	frameWatermarked := filepath.Join("..", "test", "videos", "uploads", "frame_watermarked_pos.png")
 
-	// defer os.Remove(outputVideo)
-	// defer os.Remove(frameOriginal)
-	// defer os.Remove(frameWatermarked)
+	defer os.Remove(outputVideo)
+	defer os.Remove(frameOriginal)
+	defer os.Remove(frameWatermarked)
 
 	// Use top right, 10px margin, 60% opacity
 	err := AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo, TopRight, 10, 0.6)

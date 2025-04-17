@@ -15,7 +15,7 @@ import (
 // We will store the watermark image in specific folder do we don't have to download it every time
 // We will store the watermark image in ./watermark/{venue_code} folder
 // The API will return 3 watermark with 3 different size for different video quality
-func getWatermark(venueCode string) (string, error) {
+func GetWatermark(venueCode string) (string, error) {
 	ayoindoAPIBase := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
 	if ayoindoAPIBase == "" {
 		ayoindoAPIBase = "http://iot-api.ayodev.xyz:6060/api/v1"

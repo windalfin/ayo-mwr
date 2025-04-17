@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ayo-mwr/recording"
 	"ayo-mwr/signaling"
 	"ayo-mwr/transcode"
 
@@ -76,6 +77,8 @@ func (s *Server) handleUpload(c *gin.Context) {
 		return
 	}
 
+	// TODO: Prevent concurrent requests for the same video/camera (locking)
+
 	// Find the closest video file
 	inputPath, err := signaling.FindClosestVideo(s.config.StoragePath, req.CameraName, req.Timestamp)
 	if err != nil {
@@ -86,8 +89,30 @@ func (s *Server) handleUpload(c *gin.Context) {
 	// Extract video ID from the file path
 	videoID := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 
-	// Transcode the video
-	urls, timings, err := transcode.TranscodeVideo(inputPath, videoID, req.CameraName, s.config)
+	// getWatermark for that venue from config or env
+	venueCode := req.CameraName
+	recordingName := fmt.Sprintf("wm_%s.mp4", videoID)
+
+	// MP4 output: /recordings/[camera]/[recordingName]
+	mp4Path := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "mp4", recordingName)
+	// HLS output dir: /recordings/[camera]/hls/[videoId]
+	hlsDir := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "hls", videoID)
+
+	watermarkPath, err := recording.GetWatermark(venueCode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get watermark: %v", err)})
+		return
+	}
+
+	// Add watermark to the video
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, mp4Path, recording.TopRight, 10, 0.6)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to add watermark: %v", err)})
+		return
+	}
+
+	// Transcode the watermarked video
+	urls, timings, err := transcode.TranscodeVideo(mp4Path, videoID, req.CameraName, s.config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Transcoding failed: %v", err)})
 		return
@@ -98,16 +123,12 @@ func (s *Server) handleUpload(c *gin.Context) {
 		"urls":     urls,
 		"timings":  timings,
 		"videoId":  videoID,
-		"filename": filepath.Base(inputPath),
+		"filename": filepath.Base(mp4Path),
 	})
 
 	// --- R2 Upload Integration ---
 	// After successful transcoding, upload HLS and MP4 to R2
 	if s.r2Storage != nil {
-		// HLS output dir: /recordings/[camera]/hls/[videoId]
-		hlsDir := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "hls", videoID)
-		// MP4 output: /recordings/[camera]/mp4/[videoId].mp4
-		mp4Path := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "mp4", videoID+".mp4")
 
 		// Upload HLS
 		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)

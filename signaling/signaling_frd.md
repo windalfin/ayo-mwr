@@ -19,6 +19,7 @@
 - Integrate watermarking (AddWatermark/AddWatermarkWithPosition) into the main pipeline after recording, before HLS/R2 upload.
 - Update metadata sidecar after watermarking and upload steps.
 - Ensure robust error handling and logging for all new steps.
+- Prevent concurrent requests for the same video/camera (locking)
 
 ## Overview
 The signaling subsystem manages the reception and processing of signals (both hardware and software) that trigger video transcoding operations. It is designed to be extensible, supporting multiple sources of signals, and to decouple signal handling from transcoding logic.

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // get Watermark for that video from AyoIndonesia API
@@ -122,6 +124,40 @@ const (
 	BottomRight
 )
 
+// ParseWatermarkPosition parses the env value to WatermarkPosition
+func ParseWatermarkPosition(env string) WatermarkPosition {
+	switch strings.ToLower(env) {
+	case "top_left":
+		return TopLeft
+	case "top_right":
+		return TopRight
+	case "bottom_left":
+		return BottomLeft
+	case "bottom_right":
+		return BottomRight
+	default:
+		return TopRight // fallback default
+	}
+}
+
+// GetWatermarkSettings fetches watermark position, margin, and opacity from env
+func GetWatermarkSettings() (WatermarkPosition, int, float64) {
+	pos := ParseWatermarkPosition(os.Getenv("WATERMARK_POSITION"))
+	margin := 10
+	if m := os.Getenv("WATERMARK_MARGIN"); m != "" {
+		if val, err := strconv.Atoi(m); err == nil {
+			margin = val
+		}
+	}
+	opacity := 0.6
+	if o := os.Getenv("WATERMARK_OPACITY"); o != "" {
+		if val, err := strconv.ParseFloat(o, 64); err == nil {
+			opacity = val
+		}
+	}
+	return pos, margin, opacity
+}
+
 // AddWatermark overlays a PNG watermark at (x, y) on the input video and writes to outputVideo.
 // Returns error if the operation fails.
 func AddWatermark(inputVideo, watermarkImg, outputVideo string, x, y int) error {
@@ -160,6 +196,8 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 		overlayExpr = fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
 	case BottomRight:
 		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	case Center:
+		overlayExpr = fmt.Sprintf("overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2")
 	default:
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
 	}

@@ -9,14 +9,15 @@
 - Directory structure and naming conventions for source, HLS, and DASH outputs.
 - Consistent API and response format for transcoding.
 - Extensible design for adding new signal sources.
+- Integrate R2 upload: trigger upload of transcoded files to Cloudflare R2 after successful transcoding.
+- Never upload files from the raw/ directory.
+
 
 ## ⏳ Not Done (Pending/TODO)
-- Integrate R2 upload: trigger upload of transcoded files to Cloudflare R2 after successful transcoding.
 - Enforce watermarking: ensure only watermarked (post-processed) videos are uploaded to R2.
 - Add metadata check before upload (read video_id.json, confirm watermark_applied is true).
 - Integrate watermarking (AddWatermark/AddWatermarkWithPosition) into the main pipeline after recording, before HLS/R2 upload.
 - Update metadata sidecar after watermarking and upload steps.
-- Never upload files from the raw/ directory.
 - Ensure robust error handling and logging for all new steps.
 
 ## Overview

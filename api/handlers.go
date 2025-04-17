@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"ayo-mwr/transcode"
 	"ayo-mwr/signaling"
+	"ayo-mwr/transcode"
 
 	"github.com/gin-gonic/gin"
 )
@@ -69,7 +69,7 @@ type TranscodeRequest struct {
 	CameraName string    `json:"cameraName"` // Camera identifier
 }
 
-func (s *Server) handleTranscode(c *gin.Context) {
+func (s *Server) handleUpload(c *gin.Context) {
 	var req TranscodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid request: %v", err)})
@@ -100,4 +100,29 @@ func (s *Server) handleTranscode(c *gin.Context) {
 		"videoId":  videoID,
 		"filename": filepath.Base(inputPath),
 	})
+
+	// --- R2 Upload Integration ---
+	// After successful transcoding, upload HLS and MP4 to R2
+	if s.r2Storage != nil {
+		// HLS output dir: /recordings/[camera]/hls/[videoId]
+		hlsDir := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "hls", videoID)
+		// MP4 output: /recordings/[camera]/mp4/[videoId].mp4
+		mp4Path := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "mp4", videoID+".mp4")
+
+		// Upload HLS
+		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
+		if err != nil {
+			fmt.Printf("[R2] Failed to upload HLS: %v\n", err)
+		} else {
+			fmt.Printf("[R2] HLS uploaded: %s\n", hlsURL)
+		}
+
+		// Upload MP4
+		mp4URL, err := s.r2Storage.UploadMP4(mp4Path, videoID)
+		if err != nil {
+			fmt.Printf("[R2] Failed to upload MP4: %v\n", err)
+		} else {
+			fmt.Printf("[R2] MP4 uploaded: %s\n", mp4URL)
+		}
+	}
 }

@@ -23,7 +23,7 @@ func GetWatermark(venueCode string) (string, error) {
 		ayoindoAPIBase = "http://iot-api.ayodev.xyz:6060/api/v1"
 	}
 	ayoindoAPIToken := os.Getenv("AYOINDO_API_TOKEN")
-	folder := filepath.Join(".", "watermark", venueCode)
+	folder := filepath.Join("..", "recording", "watermark", venueCode)
 	os.MkdirAll(folder, 0755)
 
 	// Define watermark sizes and filenames
@@ -36,12 +36,16 @@ func GetWatermark(venueCode string) (string, error) {
 	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
 
 	// Check if all files exist
+	cwd, _ := os.Getwd()
+	fmt.Println("Current working directory:", cwd)
 	allExist := true
 	for res, fname := range sizes {
 		if _, err := os.Stat(filepath.Join(folder, fname)); os.IsNotExist(err) && wanted[res] {
 			allExist = false
 		}
 	}
+	fmt.Println("Checking watermark files in folder:", folder)
+	fmt.Println("Does watermark files exist:", allExist)
 
 	if !allExist {
 		// Download metadata JSON from API
@@ -196,8 +200,6 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 		overlayExpr = fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
 	case BottomRight:
 		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
-	case Center:
-		overlayExpr = fmt.Sprintf("overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2")
 	default:
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
 	}

@@ -90,7 +90,7 @@ func (s *Server) handleUpload(c *gin.Context) {
 	videoID := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 
 	// getWatermark for that venue from config or env
-	venueCode := req.CameraName
+	venueCode := s.config.VenueCode
 	recordingName := fmt.Sprintf("wm_%s.mp4", videoID)
 
 	// MP4 output: /recordings/[camera]/[recordingName]
@@ -132,8 +132,7 @@ func (s *Server) handleUpload(c *gin.Context) {
 	// --- R2 Upload Integration ---
 	// After successful transcoding, upload HLS and MP4 to R2
 	if s.r2Storage != nil {
-
-		// Upload HLS
+		fmt.Println("[TEST DEBUG] R2 storage is set, attempting upload...")
 		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
 		if err != nil {
 			fmt.Printf("[R2] Failed to upload HLS: %v\n", err)
@@ -141,12 +140,13 @@ func (s *Server) handleUpload(c *gin.Context) {
 			fmt.Printf("[R2] HLS uploaded: %s\n", hlsURL)
 		}
 
-		// Upload MP4
 		mp4URL, err := s.r2Storage.UploadMP4(mp4Path, videoID)
 		if err != nil {
 			fmt.Printf("[R2] Failed to upload MP4: %v\n", err)
 		} else {
 			fmt.Printf("[R2] MP4 uploaded: %s\n", mp4URL)
 		}
+	} else {
+		fmt.Println("[TEST DEBUG] R2 storage is nil, skipping upload.")
 	}
 }

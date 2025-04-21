@@ -132,7 +132,6 @@ func (s *Server) handleUpload(c *gin.Context) {
 	// --- R2 Upload Integration ---
 	// After successful transcoding, upload HLS and MP4 to R2
 	if s.r2Storage != nil {
-		fmt.Println("[TEST DEBUG] R2 storage is set, attempting upload...")
 		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
 		if err != nil {
 			fmt.Printf("[R2] Failed to upload HLS: %v\n", err)
@@ -147,6 +146,6 @@ func (s *Server) handleUpload(c *gin.Context) {
 			fmt.Printf("[R2] MP4 uploaded: %s\n", mp4URL)
 		}
 	} else {
-		fmt.Println("[TEST DEBUG] R2 storage is nil, skipping upload.")
+		fmt.Println("R2 storage is nil, skipping upload.")
 	}
 }

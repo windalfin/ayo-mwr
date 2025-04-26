@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // get Watermark for that video from AyoIndonesia API
@@ -15,15 +18,16 @@ import (
 // We will store the watermark image in specific folder do we don't have to download it every time
 // We will store the watermark image in ./watermark/{venue_code} folder
 // The API will return 3 watermark with 3 different size for different video quality
-func getWatermark(venueCode string) (string, error) {
+func GetWatermark(venueCode string) (string, error) {
 	ayoindoAPIBase := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
 	if ayoindoAPIBase == "" {
 		ayoindoAPIBase = "http://iot-api.ayodev.xyz:6060/api/v1"
 	}
 	ayoindoAPIToken := os.Getenv("AYOINDO_API_TOKEN")
-	folder := filepath.Join(".", "watermark", venueCode)
-	os.MkdirAll(folder, 0755)
-
+	folder := filepath.Join("..", "recording", "watermark", venueCode)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
+	}
 	// Define watermark sizes and filenames
 	sizes := map[string]string{
 		"360":  "watermark_360.png",
@@ -34,12 +38,16 @@ func getWatermark(venueCode string) (string, error) {
 	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
 
 	// Check if all files exist
+	cwd, _ := os.Getwd()
+	log.Printf("Current working directory: %s", cwd)
 	allExist := true
 	for res, fname := range sizes {
 		if _, err := os.Stat(filepath.Join(folder, fname)); os.IsNotExist(err) && wanted[res] {
 			allExist = false
 		}
 	}
+	log.Printf("Checking watermark files in folder: %s", folder)
+	log.Printf("Does watermark files exist: %t", allExist)
 
 	if !allExist {
 		// Download metadata JSON from API
@@ -121,6 +129,40 @@ const (
 	BottomLeft
 	BottomRight
 )
+
+// ParseWatermarkPosition parses the env value to WatermarkPosition
+func ParseWatermarkPosition(env string) WatermarkPosition {
+	switch strings.ToLower(env) {
+	case "top_left":
+		return TopLeft
+	case "top_right":
+		return TopRight
+	case "bottom_left":
+		return BottomLeft
+	case "bottom_right":
+		return BottomRight
+	default:
+		return TopRight // fallback default
+	}
+}
+
+// GetWatermarkSettings fetches watermark position, margin, and opacity from env
+func GetWatermarkSettings() (WatermarkPosition, int, float64) {
+	pos := ParseWatermarkPosition(os.Getenv("WATERMARK_POSITION"))
+	margin := 10
+	if m := os.Getenv("WATERMARK_MARGIN"); m != "" {
+		if val, err := strconv.Atoi(m); err == nil {
+			margin = val
+		}
+	}
+	opacity := 0.6
+	if o := os.Getenv("WATERMARK_OPACITY"); o != "" {
+		if val, err := strconv.ParseFloat(o, 64); err == nil {
+			opacity = val
+		}
+	}
+	return pos, margin, opacity
+}
 
 // AddWatermark overlays a PNG watermark at (x, y) on the input video and writes to outputVideo.
 // Returns error if the operation fails.

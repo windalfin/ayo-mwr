@@ -3,8 +3,9 @@ package signaling
 import (
 	"bufio"
 	"fmt"
-	"github.com/tarm/serial"
 	"sync"
+
+	"github.com/tarm/serial"
 )
 
 // SignalHandler interface defines methods for handling signals

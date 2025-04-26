@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"ayo-mwr/transcode"
+	"ayo-mwr/recording"
 	"ayo-mwr/signaling"
+	"ayo-mwr/transcode"
 
 	"github.com/gin-gonic/gin"
 )
@@ -69,12 +70,14 @@ type TranscodeRequest struct {
 	CameraName string    `json:"cameraName"` // Camera identifier
 }
 
-func (s *Server) handleTranscode(c *gin.Context) {
+func (s *Server) handleUpload(c *gin.Context) {
 	var req TranscodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid request: %v", err)})
 		return
 	}
+
+	// TODO: Prevent concurrent requests for the same video/camera (locking)
 
 	// Find the closest video file
 	inputPath, err := signaling.FindClosestVideo(s.config.StoragePath, req.CameraName, req.Timestamp)
@@ -86,8 +89,33 @@ func (s *Server) handleTranscode(c *gin.Context) {
 	// Extract video ID from the file path
 	videoID := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 
-	// Transcode the video
-	urls, timings, err := transcode.TranscodeVideo(inputPath, videoID, req.CameraName, s.config)
+	// getWatermark for that venue from config or env
+	venueCode := s.config.VenueCode
+	recordingName := fmt.Sprintf("wm_%s.mp4", videoID)
+
+	// MP4 output: /recordings/[camera]/[recordingName]
+	mp4Path := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "mp4", recordingName)
+	// HLS output dir: /recordings/[camera]/hls/[videoId]
+	hlsDir := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "hls", videoID)
+
+	watermarkPath, err := recording.GetWatermark(venueCode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get watermark: %v", err)})
+		return
+	}
+
+	// Get watermark settings from environment
+	position, margin, opacity := recording.GetWatermarkSettings()
+
+	// Add watermark to the video
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, mp4Path, position, margin, opacity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to add watermark: %v", err)})
+		return
+	}
+
+	// Transcode the watermarked video
+	urls, timings, err := transcode.TranscodeVideo(mp4Path, videoID, req.CameraName, s.config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Transcoding failed: %v", err)})
 		return
@@ -98,6 +126,26 @@ func (s *Server) handleTranscode(c *gin.Context) {
 		"urls":     urls,
 		"timings":  timings,
 		"videoId":  videoID,
-		"filename": filepath.Base(inputPath),
+		"filename": filepath.Base(mp4Path),
 	})
+
+	// --- R2 Upload Integration ---
+	// After successful transcoding, upload HLS and MP4 to R2
+	if s.r2Storage != nil {
+		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
+		if err != nil {
+			fmt.Printf("[R2] Failed to upload HLS: %v\n", err)
+		} else {
+			fmt.Printf("[R2] HLS uploaded: %s\n", hlsURL)
+		}
+
+		mp4URL, err := s.r2Storage.UploadMP4(mp4Path, videoID)
+		if err != nil {
+			fmt.Printf("[R2] Failed to upload MP4: %v\n", err)
+		} else {
+			fmt.Printf("[R2] MP4 uploaded: %s\n", mp4URL)
+		}
+	} else {
+		fmt.Println("R2 storage is nil, skipping upload.")
+	}
 }

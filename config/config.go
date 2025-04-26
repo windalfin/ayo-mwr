@@ -25,6 +25,10 @@ type CameraConfig struct {
 
 // Config contains all configuration for the application
 type Config struct {
+
+	// Venue Configuration
+	VenueCode string
+
 	// Arduino Configuration
 	ArduinoCOMPort  string
 	ArduinoBaudRate int
@@ -55,13 +59,13 @@ type Config struct {
 	DatabasePath string
 
 	// R2 Storage Configuration
-	R2AccessKey string
-	R2SecretKey string
-	R2AccountID string
-	R2Bucket    string
-	R2Region    string
-	R2Endpoint  string
-	R2Enabled   bool
+	R2AccessKey  string
+	R2SecretKey  string
+	R2AccountID  string
+	R2Bucket     string
+	R2Region     string
+	R2Endpoint   string
+	R2Enabled    bool
 	R2TokenValue string
 
 	// Multi-camera Configuration

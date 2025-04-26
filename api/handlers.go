@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
 	"ayo-mwr/signaling"
 	"ayo-mwr/transcode"
@@ -228,4 +229,22 @@ func (s *Server) handleUpload(c *gin.Context) {
 	} else {
 		fmt.Println("R2 storage is nil, skipping upload.")
 	}
+}
+
+// GET /api/system_health
+func (s *Server) getSystemHealth(c *gin.Context) {
+	usage, err := monitoring.GetCurrentResourceUsage(s.config.StoragePath)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"cpu": usage.CPUPercent,
+		"memory_used": usage.MemoryUsedMB,
+		"memory_total": usage.MemoryTotalMB,
+		"memory_percent": usage.MemoryPercent,
+		"goroutines": usage.NumGoroutines,
+		"uptime": usage.Uptime,
+		"storage": usage.Storage,
+	})
 }

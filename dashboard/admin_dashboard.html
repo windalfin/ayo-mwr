@@ -202,7 +202,7 @@
       <table id="cameras-table">
         <thead>
           <tr>
-            <th>Name</th><th>IP</th><th>Port</th><th>Path</th><th>Status</th><th>Last Rec.</th><th>Actions</th>
+            <th>Name</th><th>IP</th><th>Port</th><th>Path</th><th>Status</th><th>Last Checked</th><th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -245,23 +245,23 @@
       <h3>System Health</h3>
       <div class="summary-cards">
         <div class="card">
-          <h2>12%</h2>
+          <h2 id="sys-cpu">-</h2>
           <span>CPU Usage</span>
         </div>
         <div class="card">
-          <h2>420MB / 2GB</h2>
+          <h2 id="sys-mem">-</h2>
           <span>Memory Usage</span>
         </div>
         <div class="card">
-          <h2>32</h2>
+          <h2 id="sys-goroutines">-</h2>
           <span>Goroutines</span>
         </div>
         <div class="card">
-          <h2>3d 2h 15m</h2>
+          <h2 id="sys-uptime">-</h2>
           <span>Uptime</span>
         </div>
         <div class="card">
-          <h2>120GB / 500GB</h2>
+          <h2 id="sys-storage">-</h2>
           <span>Storage Used</span>
         </div>
       </div>
@@ -320,7 +320,7 @@
           tbody.innerHTML += `<tr>
             <td>${cam.name}</td><td>${cam.ip}</td><td>${cam.port}</td><td>${cam.path}</td>
             <td><span class="status ${cam.status}">${cam.status.toUpperCase()}</span></td>
-            <td>${cam.lastRec || ''}</td>
+            <td>${cam.last_checked ? new Date(cam.last_checked).toLocaleString() : ''}</td>
             <td class="actions"><button>Logs</button></td>
           </tr>`;
         }
@@ -369,6 +369,34 @@
       });
     }
 
+    // Update summary cards with real data
+    function updateSummaryCards() {
+      // Cameras
+      const cameraCount = Array.isArray(cameras) ? cameras.length : 0;
+      const activeCount = Array.isArray(cameras) ? cameras.filter(c => c.status === 'online').length : 0;
+      document.querySelector('#summary-cards .card:nth-child(1) h2').textContent = cameraCount;
+      document.querySelector('#summary-cards .card:nth-child(2) h2').textContent = activeCount;
+      // Failed videos
+      const failedCount = Array.isArray(videos) ? videos.filter(v => v.status === 'failed').length : 0;
+      document.querySelector('#summary-cards .card:nth-child(3) h2').textContent = failedCount;
+    }
+
+    // Update system health
+    function updateSystemHealth() {
+      fetch('/api/system_health').then(res => res.json()).then(data => {
+        document.getElementById('sys-cpu').textContent = (data.cpu !== undefined) ? Math.round(data.cpu) + '%' : '-';
+        document.getElementById('sys-mem').textContent = (data.memory_used !== undefined && data.memory_total !== undefined)
+          ? Math.round(data.memory_used) + 'MB / ' + Math.round(data.memory_total) + 'MB'
+          : '-';
+        document.getElementById('sys-goroutines').textContent = (data.goroutines !== undefined) ? data.goroutines : '-';
+        // Uptime and Storage Used: backend must provide these in the API for live data
+        document.getElementById('sys-uptime').textContent = data.uptime || '-';
+        document.getElementById('sys-storage').textContent = data.storage || '-';
+      });
+    }
+    setInterval(updateSystemHealth, 5000);
+    updateSystemHealth();
+
     // Initial load: fetch data and render tables
     async function initDashboard() {
       try {
@@ -381,6 +409,7 @@
       populateVideoCameraFilter();
       renderCameras();
       renderVideos();
+      updateSummaryCards();
     }
     window.addEventListener('DOMContentLoaded', initDashboard);
   </script>

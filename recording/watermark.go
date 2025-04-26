@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,15 +39,15 @@ func GetWatermark(venueCode string) (string, error) {
 
 	// Check if all files exist
 	cwd, _ := os.Getwd()
-	fmt.Println("Current working directory:", cwd)
+	log.Printf("Current working directory: %s", cwd)
 	allExist := true
 	for res, fname := range sizes {
 		if _, err := os.Stat(filepath.Join(folder, fname)); os.IsNotExist(err) && wanted[res] {
 			allExist = false
 		}
 	}
-	fmt.Println("Checking watermark files in folder:", folder)
-	fmt.Println("Does watermark files exist:", allExist)
+	log.Printf("Checking watermark files in folder: %s", folder)
+	log.Printf("Does watermark files exist: %t", allExist)
 
 	if !allExist {
 		// Download metadata JSON from API

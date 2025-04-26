@@ -65,5 +65,6 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/cameras", s.listCameras)
 		api.GET("/videos", s.listVideos)
 		api.GET("/system_health", s.getSystemHealth)
+		api.GET("/logs", s.getLogs)
 	}
 }

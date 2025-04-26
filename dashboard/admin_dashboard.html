@@ -397,6 +397,19 @@
     setInterval(updateSystemHealth, 5000);
     updateSystemHealth();
 
+    // Update logs
+    function updateLogs() {
+      fetch('/api/logs').then(res => res.text()).then(data => {
+        const logList = document.getElementById('log-list');
+        logList.innerHTML = data
+          .replace(/\n/g, '<br>')
+          .replace(/\033\[[0-9;]*m/g, ''); // strip ANSI colors if any
+        logList.scrollTop = logList.scrollHeight; // auto-scroll to bottom
+      });
+    }
+    setInterval(updateLogs, 5000);
+    updateLogs();
+
     // Initial load: fetch data and render tables
     async function initDashboard() {
       try {

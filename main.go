@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -19,6 +20,14 @@ import (
 )
 
 func main() {
+	logFile, err := os.OpenFile("server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		log.SetOutput(logFile)
+		defer logFile.Close()
+	} else {
+		log.Println("Failed to log to file, using default stderr")
+	}
+
 	// Parse command line arguments
 	configFile := flag.String("config", "", "Path to config file (optional)")
 	envFile := flag.String("env", ".env", "Path to .env file")

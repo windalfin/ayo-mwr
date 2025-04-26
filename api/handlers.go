@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -247,4 +249,34 @@ func (s *Server) getSystemHealth(c *gin.Context) {
 		"uptime": usage.Uptime,
 		"storage": usage.Storage,
 	})
+}
+
+// GET /api/logs
+func (s *Server) getLogs(c *gin.Context) {
+	logPath := "server.log"
+	data, err := readLastNLines(logPath, 100)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Data(200, "text/plain; charset=utf-8", []byte(data))
+}
+
+// readLastNLines reads the last N lines from a file
+func readLastNLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n"), scanner.Err()
 }

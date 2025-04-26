@@ -64,6 +64,77 @@ func (s *Server) getStream(c *gin.Context) {
 	})
 }
 
+// CameraInfo is the structure returned by /api/cameras
+// Add more fields as needed
+type CameraInfo struct {
+	Name    string `json:"name"`
+	IP      string `json:"ip"`
+	Port    string `json:"port"`
+	Path    string `json:"path"`
+	Status  string `json:"status"`    // "active" or "offline"
+	LastRec string `json:"lastRec"`   // e.g., "11:55"
+}
+
+// GET /api/cameras
+func (s *Server) listCameras(c *gin.Context) {
+	var cameras []CameraInfo
+	for _, cam := range s.config.Cameras {
+		cameras = append(cameras, CameraInfo{
+			Name:    cam.Name,
+			IP:      cam.IP,
+			Port:    cam.Port,
+			Path:    cam.Path,
+			Status:  "active", // TODO: Replace with real status check
+			LastRec: "",       // TODO: Replace with real last recording time
+		})
+	}
+	c.JSON(200, cameras)
+}
+
+// VideoInfo is the structure returned by /api/videos
+type VideoInfo struct {
+	ID        string `json:"id"`
+	Camera    string `json:"camera"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+	Duration  string `json:"duration"`
+	Size      string `json:"size"`
+	Cloud     bool   `json:"cloud"`
+	Error     string `json:"error"`
+	Action    string `json:"action"`
+}
+
+// GET /api/videos
+func (s *Server) listVideos(c *gin.Context) {
+	videos, _ := s.db.ListVideos(100, 0)
+	var out []VideoInfo
+	for _, v := range videos {
+		out = append(out, VideoInfo{
+			ID:        v.ID,
+			Camera:    v.CameraID,
+			Status:    string(v.Status),
+			CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"),
+			Duration:  fmt.Sprintf("%.0fs", v.Duration),
+			Size:      fmt.Sprintf("%.0fMB", float64(v.Size)/1024/1024),
+			Cloud:     v.R2HLSURL != "",
+			Error:     v.ErrorMessage,
+			Action:    getVideoAction(v.Status),
+		})
+	}
+	c.JSON(200, out)
+}
+
+func getVideoAction(status interface{}) string {
+	switch status {
+	case "ready":
+		return "view"
+	case "failed":
+		return "retry"
+	default:
+		return ""
+	}
+}
+
 // TranscodeRequest represents an HTTP request for transcoding
 type TranscodeRequest struct {
 	Timestamp  time.Time `json:"timestamp"`

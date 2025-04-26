@@ -50,6 +50,11 @@ func (s *Server) setupCORS(r *gin.Engine) {
 func (s *Server) setupRoutes(r *gin.Engine) {
 	// Static routes
 	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
+	// Serve dashboard static files
+	r.Static("/dashboard", filepath.Join("dashboard"))
+	r.GET("/dashboard", func(c *gin.Context) {
+		c.File(filepath.Join("dashboard", "admin_dashboard.html"))
+	})
 
 	// API routes
 	api := r.Group("/api")
@@ -57,5 +62,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/streams", s.listStreams)
 		api.GET("/streams/:id", s.getStream)
 		api.POST("/upload", s.handleUpload)
+		api.GET("/cameras", s.listCameras)
+		api.GET("/videos", s.listVideos)
 	}
 }

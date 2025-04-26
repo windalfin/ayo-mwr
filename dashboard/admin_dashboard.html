@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AYO Middleware Admin Dashboard</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f8f9fa;
+      margin: 0;
+      padding: 0;
+      color: #222;
+    }
+    header {
+      background: #273c75;
+      color: #fff;
+      padding: 1.2rem 2rem;
+      font-size: 1.5rem;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+    nav {
+      display: flex;
+      background: #dcdde1;
+      padding: 0.5rem 2rem;
+      gap: 2rem;
+    }
+    nav a {
+      color: #273c75;
+      text-decoration: none;
+      font-weight: 500;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    nav a.active, nav a:hover {
+      background: #f5f6fa;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    .summary-cards {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      padding: 1.2rem 2rem;
+      flex: 1 1 200px;
+      min-width: 180px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .card h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 2rem;
+      color: #273c75;
+    }
+    .card span {
+      font-size: 1rem;
+      color: #888;
+    }
+    h3 {
+      margin-top: 2rem;
+      margin-bottom: 1rem;
+      color: #273c75;
+      font-size: 1.3rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid #f1f1f1;
+    }
+    th {
+      background: #f5f6fa;
+      font-weight: 600;
+      color: #273c75;
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    .status {
+      font-weight: bold;
+      padding: 0.2em 0.8em;
+      border-radius: 12px;
+      font-size: 0.95em;
+      display: inline-block;
+    }
+    .status.active { background: #4cd137; color: #fff; }
+    .status.offline { background: #e84118; color: #fff; }
+    .status.processing { background: #fbc531; color: #222; }
+    .status.failed { background: #e84118; color: #fff; }
+    .status.uploading { background: #0097e6; color: #fff; }
+    .status.ready { background: #44bd32; color: #fff; }
+    .actions button {
+      background: #273c75;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.3em 1em;
+      margin-right: 0.5em;
+      cursor: pointer;
+      font-size: 0.95em;
+      transition: background 0.2s;
+    }
+    .actions button:hover { background: #353b48; }
+    .filters {
+      margin: 1rem 0 1.5rem 0;
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .filters input, .filters select {
+      padding: 0.4em 0.8em;
+      border: 1px solid #dcdde1;
+      border-radius: 6px;
+      font-size: 1em;
+      background: #fff;
+    }
+    .log-list {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+      padding: 1.2rem 2rem;
+      margin-bottom: 2rem;
+      font-family: monospace;
+      font-size: 1em;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    @media (max-width: 900px) {
+      .summary-cards { flex-direction: column; }
+      .container { padding: 0 0.5rem; }
+    }
+    @media (max-width: 600px) {
+      nav { flex-direction: column; gap: 0.5rem; }
+      .card { padding: 1rem; }
+      th, td { padding: 0.5rem 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>AYO Middleware Admin Dashboard</header>
+  <nav>
+    <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
+    <a href="#videos" data-tab="videos">Videos/Clips</a>
+    <a href="#system" data-tab="system">System Health</a>
+    <a href="#logs" data-tab="logs">Logs</a>
+  </nav>
+  <div class="container">
+    <!-- Summary Cards -->
+    <div class="summary-cards" id="summary-cards">
+      <div class="card">
+        <h2>4</h2>
+        <span>Cameras</span>
+      </div>
+      <div class="card">
+        <h2>3</h2>
+        <span>Active</span>
+      </div>
+      <div class="card">
+        <h2>2</h2>
+        <span>Failed Videos</span>
+      </div>
+      <div class="card">
+        <h2>12%</h2>
+        <span>CPU Usage</span>
+      </div>
+      <div class="card">
+        <h2>420MB</h2>
+        <span>Memory</span>
+      </div>
+    </div>
+
+    <!-- Cameras Table -->
+    <section class="tab-section" id="tab-cameras">
+      <h3>Cameras</h3>
+      <div class="filters">
+        <input type="text" placeholder="Search by name or IP" id="camera-search">
+        <select id="camera-status-filter">
+          <option value="all">Status: All</option>
+          <option value="active">Active</option>
+          <option value="offline">Offline</option>
+        </select>
+      </div>
+      <table id="cameras-table">
+        <thead>
+          <tr>
+            <th>Name</th><th>IP</th><th>Port</th><th>Path</th><th>Status</th><th>Last Rec.</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Camera rows will be populated by JS -->
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Videos Table -->
+    <section class="tab-section" id="tab-videos" style="display:none">
+      <h3>Videos / Clips</h3>
+      <div class="filters">
+        <select id="video-status-filter">
+          <option value="all">Status: All</option>
+          <option value="ready">Ready</option>
+          <option value="uploading">Uploading</option>
+          <option value="processing">Processing</option>
+          <option value="failed">Failed</option>
+        </select>
+        <select id="video-camera-filter">
+          <option value="all">Camera: All</option>
+        </select>
+        <input type="date" id="video-date-filter">
+        <input type="text" placeholder="Search by ID" id="video-id-search">
+      </div>
+      <table id="videos-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Camera</th><th>Status</th><th>Created At</th><th>Duration</th><th>Size</th><th>Cloud?</th><th>Error</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Video rows will be populated by JS -->
+        </tbody>
+      </table>
+    </section>
+
+    <!-- System Health -->
+    <section class="tab-section" id="tab-system" style="display:none">
+      <h3>System Health</h3>
+      <div class="summary-cards">
+        <div class="card">
+          <h2>12%</h2>
+          <span>CPU Usage</span>
+        </div>
+        <div class="card">
+          <h2>420MB / 2GB</h2>
+          <span>Memory Usage</span>
+        </div>
+        <div class="card">
+          <h2>32</h2>
+          <span>Goroutines</span>
+        </div>
+        <div class="card">
+          <h2>3d 2h 15m</h2>
+          <span>Uptime</span>
+        </div>
+        <div class="card">
+          <h2>120GB / 500GB</h2>
+          <span>Storage Used</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Logs -->
+    <section class="tab-section" id="tab-logs" style="display:none">
+      <h3>Recent Errors / Logs</h3>
+      <div class="log-list" id="log-list">
+        [2025-04-26 11:40] Cam2: Connection lost<br>
+        [2025-04-26 11:41] vid124: Processing failed<br>
+        ...
+      </div>
+      <button style="background:#273c75;color:#fff;border:none;padding:0.6em 1.5em;border-radius:6px;">Download Logs</button>
+    </section>
+  </div>
+  <script>
+    let cameras = null;
+    let videos = null;
+
+    // Fetch cameras from backend
+    async function fetchCameras() {
+      const res = await fetch('/api/cameras');
+      if (!res.ok) throw new Error('Failed to fetch cameras');
+      cameras = await res.json();
+    }
+    // Fetch videos from backend
+    async function fetchVideos() {
+      const res = await fetch('/api/videos');
+      if (!res.ok) throw new Error('Failed to fetch videos');
+      videos = await res.json();
+    }
+
+    // Tab navigation
+    document.querySelectorAll('nav a').forEach(tab => {
+      tab.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        const tabName = this.getAttribute('data-tab');
+        document.querySelectorAll('.tab-section').forEach(sec => sec.style.display = 'none');
+        document.getElementById('tab-' + tabName).style.display = '';
+      });
+    });
+
+    // Populate Cameras Table
+    function renderCameras() {
+      const search = document.getElementById('camera-search').value.toLowerCase();
+      const status = document.getElementById('camera-status-filter').value;
+      const tbody = document.querySelector('#cameras-table tbody');
+      tbody.innerHTML = '';
+      if (!Array.isArray(cameras)) return;
+      cameras.forEach(cam => {
+        if ((status === 'all' || cam.status === status) &&
+            (cam.name.toLowerCase().includes(search) || cam.ip.includes(search))) {
+          tbody.innerHTML += `<tr>
+            <td>${cam.name}</td><td>${cam.ip}</td><td>${cam.port}</td><td>${cam.path}</td>
+            <td><span class="status ${cam.status}">${cam.status.toUpperCase()}</span></td>
+            <td>${cam.lastRec || ''}</td>
+            <td class="actions"><button>Logs</button></td>
+          </tr>`;
+        }
+      });
+    }
+    document.getElementById('camera-search').addEventListener('input', renderCameras);
+    document.getElementById('camera-status-filter').addEventListener('change', renderCameras);
+
+    // Populate Videos Table
+    function renderVideos() {
+      const status = document.getElementById('video-status-filter').value;
+      const camera = document.getElementById('video-camera-filter').value;
+      const date = document.getElementById('video-date-filter').value;
+      const idSearch = document.getElementById('video-id-search').value.toLowerCase();
+      const tbody = document.querySelector('#videos-table tbody');
+      tbody.innerHTML = '';
+      if (!Array.isArray(videos)) return;
+      videos.forEach(v => {
+        if ((status === 'all' || v.status === status)
+          && (camera === 'all' || v.camera === camera)
+          && (idSearch === '' || v.id.toLowerCase().includes(idSearch))
+          && (date === '' || v.createdAt.startsWith(date))) {
+          tbody.innerHTML += `<tr>
+            <td>${v.id}</td><td>${v.camera}</td><td><span class="status ${v.status}">${v.status}</span></td>
+            <td>${v.createdAt}</td><td>${v.duration}</td><td>${v.size}</td><td>${v.cloud ? 'Yes' : 'No'}</td><td>${v.error}</td>
+            <td class="actions">${v.action === 'view' ? '<button>View</button>' : v.action === 'retry' ? '<button>Retry</button>' : ''}</td>
+          </tr>`;
+        }
+      });
+    }
+    document.getElementById('video-status-filter').addEventListener('change', renderVideos);
+    document.getElementById('video-camera-filter').addEventListener('change', renderVideos);
+    document.getElementById('video-date-filter').addEventListener('change', renderVideos);
+    document.getElementById('video-id-search').addEventListener('input', renderVideos);
+
+    // Populate camera filter for videos
+    function populateVideoCameraFilter() {
+      const camFilter = document.getElementById('video-camera-filter');
+      camFilter.innerHTML = '<option value="all">Camera: All</option>';
+      if (!Array.isArray(cameras)) return;
+      cameras.forEach(cam => {
+        const opt = document.createElement('option');
+        opt.value = cam.name;
+        opt.textContent = cam.name;
+        camFilter.appendChild(opt);
+      });
+    }
+
+    // Initial load: fetch data and render tables
+    async function initDashboard() {
+      try {
+        await fetchCameras();
+        await fetchVideos();
+      } catch (e) {
+        alert('Failed to load dashboard data: ' + e.message);
+        return;
+      }
+      populateVideoCameraFilter();
+      renderCameras();
+      renderVideos();
+    }
+    window.addEventListener('DOMContentLoaded', initDashboard);
+  </script>
+</body>
+</html>

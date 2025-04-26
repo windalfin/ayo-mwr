@@ -24,8 +24,9 @@ func GetWatermark(venueCode string) (string, error) {
 	}
 	ayoindoAPIToken := os.Getenv("AYOINDO_API_TOKEN")
 	folder := filepath.Join("..", "recording", "watermark", venueCode)
-	os.MkdirAll(folder, 0755)
-
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
+	}
 	// Define watermark sizes and filenames
 	sizes := map[string]string{
 		"360":  "watermark_360.png",

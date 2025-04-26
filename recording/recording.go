@@ -73,6 +73,44 @@ func CaptureMultipleRTSPStreams(cfg config.Config) error {
 	return nil
 }
 
+// TestRTSPConnection tests the RTSP connection for a given camera and URL. Returns true if successful, false otherwise, and the error (if any).
+func TestRTSPConnection(cameraName, rtspURL string) (bool, error) {
+	var testOutput bytes.Buffer
+	testCmd := exec.Command("ffmpeg",
+		"-rtsp_transport", "tcp",
+		"-i", rtspURL,
+		"-t", "1",
+		"-f", "null",
+		"-")
+	testCmd.Stderr = &testOutput
+
+	log.Printf("[%s] Testing RTSP connection: %s", cameraName, rtspURL)
+
+	done := make(chan error, 1)
+	if err := testCmd.Start(); err != nil {
+		log.Printf("[%s] Error starting RTSP test: %v", cameraName, err)
+		return false, err
+	}
+	go func() {
+		done <- testCmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("[%s] Error connecting to RTSP: %v", cameraName, err)
+			log.Printf("[%s] FFmpeg output: %s", cameraName, testOutput.String())
+			return false, err
+		}
+		log.Printf("[%s] RTSP connection successful", cameraName)
+		return true, nil
+	case <-time.After(15 * time.Second):
+		log.Printf("[%s] RTSP connection test timed out after 15 seconds", cameraName)
+		testCmd.Process.Kill()
+		return false, fmt.Errorf("timeout")
+	}
+}
+
 // captureRTSPStreamForCamera handles a single camera's RTSP stream
 func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, cameraID int) {
 	// Construct the RTSP URL
@@ -111,48 +149,14 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 
 		log.Printf("[%s] Creating new video segment: %s\n", cameraName, outputFilename)
 
-		// Test the connection with a timeout
-		testCmd := exec.Command("ffmpeg",
-			"-rtsp_transport", "tcp", // Use TCP for testing too
-			"-i", rtspURL,
-			"-t", "1",
-			"-f", "null",
-			"-")
-
-		var testOutput bytes.Buffer
-		testCmd.Stderr = &testOutput
-
-		// Create a channel to signal completion
-		done := make(chan error, 1)
-
-		log.Printf("[%s] Testing RTSP connection: %s", cameraName, rtspURL)
-
-		// Start the command
-		if err := testCmd.Start(); err != nil {
-			log.Printf("[%s] Error starting RTSP test: %v", cameraName, err)
+		ok, err := TestRTSPConnection(cameraName, rtspURL)
+		if !ok {
+			log.Printf("[%s] Skipping recording due to failed RTSP connection", cameraName)
 			time.Sleep(10 * time.Second)
 			continue
 		}
-
-		// Wait for command in a goroutine with timeout
-		go func() {
-			done <- testCmd.Wait()
-		}()
-
-		// Wait with timeout
-		select {
-		case err := <-done:
-			if err != nil {
-				log.Printf("[%s] Error connecting to RTSP: %v", cameraName, err)
-				log.Printf("[%s] FFmpeg output: %s", cameraName, testOutput.String())
-				time.Sleep(10 * time.Second)
-				continue
-			}
-			log.Printf("[%s] RTSP connection successful", cameraName)
-		case <-time.After(15 * time.Second):
-			// Kill the process if it takes too long
-			log.Printf("[%s] RTSP connection test timed out after 15 seconds", cameraName)
-			testCmd.Process.Kill()
+		if err != nil {
+			log.Printf("[%s] Error testing RTSP connection: %v", cameraName, err)
 			time.Sleep(10 * time.Second)
 			continue
 		}

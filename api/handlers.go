@@ -65,27 +65,36 @@ func (s *Server) getStream(c *gin.Context) {
 }
 
 // CameraInfo is the structure returned by /api/cameras
-// Add more fields as needed
+// LastChecked is the last time the camera connection was tested (ISO8601 string)
 type CameraInfo struct {
-	Name    string `json:"name"`
-	IP      string `json:"ip"`
-	Port    string `json:"port"`
-	Path    string `json:"path"`
-	Status  string `json:"status"`    // "active" or "offline"
-	LastRec string `json:"lastRec"`   // e.g., "11:55"
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	Port        string `json:"port"`
+	Path        string `json:"path"`
+	Status      string `json:"status"`
+	LastChecked string `json:"last_checked"`
 }
 
 // GET /api/cameras
 func (s *Server) listCameras(c *gin.Context) {
 	var cameras []CameraInfo
 	for _, cam := range s.config.Cameras {
+		status := "offline"
+		lastChecked := ""
+		// Attempt to check RTSP connection (non-blocking, short timeout)
+		fullURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s", cam.Username, cam.Password, cam.IP, cam.Port, cam.Path)
+		ok, _ := recording.TestRTSPConnection(cam.Name, fullURL)
+		if ok {
+			status = "online"
+		}
+		lastChecked = time.Now().Format(time.RFC3339)
 		cameras = append(cameras, CameraInfo{
-			Name:    cam.Name,
-			IP:      cam.IP,
-			Port:    cam.Port,
-			Path:    cam.Path,
-			Status:  "active", // TODO: Replace with real status check
-			LastRec: "",       // TODO: Replace with real last recording time
+			Name:        cam.Name,
+			IP:          cam.IP,
+			Port:        cam.Port,
+			Path:        cam.Path,
+			Status:      status,
+			LastChecked: lastChecked,
 		})
 	}
 	c.JSON(200, cameras)

@@ -252,8 +252,59 @@ func CaptureRTSPSegments(cfg config.Config) error {
 	return fmt.Errorf("no cameras configured")
 }
 
-// MergeSessionVideos is a stub. It will merge MP4 segments in inputPath between startTime and endTime into outputPath.
+// MergeSessionVideos merges MP4 segments in inputPath between startTime and endTime into outputPath.
 func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string) error {
-	// TODO: Implement merging logic
+
+	// find segment in range of the startTime and endTime
+	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
+	if err != nil {
+		return fmt.Errorf("failed to find segments: %w", err)
+	}
+	if len(segments) == 0 {
+		return fmt.Errorf("no video segments found in the specified range")
+	}
+
+	// Ensure output directory exists
+	outDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Create concat list file in project folder (next to output)
+	concatListPath := filepath.Join(outDir, "segments_concat_list.txt")
+	tmpFile, err := os.Create(concatListPath)
+	if err != nil {
+		return fmt.Errorf("failed to create concat list file: %w", err)
+	}
+	defer os.Remove(concatListPath)
+
+	for _, seg := range segments {
+		absSeg, err := filepath.Abs(seg)
+		if err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to get absolute path for segment: %w", err)
+		}
+		line := fmt.Sprintf("file '%s'\n", absSeg)
+		if _, err := tmpFile.WriteString(line); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to concat list: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	// Run FFmpeg concat command from project root
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get project root: %w", err)
+	}
+	cmd := exec.Command(
+		"ffmpeg", "-y", "-f", "concat", "-safe", "0",
+		"-i", concatListPath, "-c", "copy", outputPath,
+	)
+	cmd.Dir = projectRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg concat failed: %v\nOutput: %s", err, string(output))
+	}
 	return nil
 }

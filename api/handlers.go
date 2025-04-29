@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
 	"ayo-mwr/signaling"
 	"ayo-mwr/transcode"
@@ -62,6 +65,86 @@ func (s *Server) getStream(c *gin.Context) {
 		"usingCloud": video.R2HLSURL != "",
 		"hlsUrl":     video.R2HLSURL,
 	})
+}
+
+// CameraInfo is the structure returned by /api/cameras
+// LastChecked is the last time the camera connection was tested (ISO8601 string)
+type CameraInfo struct {
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	Port        string `json:"port"`
+	Path        string `json:"path"`
+	Status      string `json:"status"`
+	LastChecked string `json:"last_checked"`
+}
+
+// GET /api/cameras
+func (s *Server) listCameras(c *gin.Context) {
+	var cameras []CameraInfo
+	for _, cam := range s.config.Cameras {
+		status := "offline"
+		lastChecked := ""
+		// Attempt to check RTSP connection (non-blocking, short timeout)
+		fullURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s", cam.Username, cam.Password, cam.IP, cam.Port, cam.Path)
+		ok, _ := recording.TestRTSPConnection(cam.Name, fullURL)
+		if ok {
+			status = "online"
+		}
+		lastChecked = time.Now().Format(time.RFC3339)
+		cameras = append(cameras, CameraInfo{
+			Name:        cam.Name,
+			IP:          cam.IP,
+			Port:        cam.Port,
+			Path:        cam.Path,
+			Status:      status,
+			LastChecked: lastChecked,
+		})
+	}
+	c.JSON(200, cameras)
+}
+
+// VideoInfo is the structure returned by /api/videos
+type VideoInfo struct {
+	ID        string `json:"id"`
+	Camera    string `json:"camera"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+	Duration  string `json:"duration"`
+	Size      string `json:"size"`
+	Cloud     bool   `json:"cloud"`
+	Error     string `json:"error"`
+	Action    string `json:"action"`
+}
+
+// GET /api/videos
+func (s *Server) listVideos(c *gin.Context) {
+	videos, _ := s.db.ListVideos(100, 0)
+	var out []VideoInfo
+	for _, v := range videos {
+		out = append(out, VideoInfo{
+			ID:        v.ID,
+			Camera:    v.CameraID,
+			Status:    string(v.Status),
+			CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"),
+			Duration:  fmt.Sprintf("%.0fs", v.Duration),
+			Size:      fmt.Sprintf("%.0fMB", float64(v.Size)/1024/1024),
+			Cloud:     v.R2HLSURL != "",
+			Error:     v.ErrorMessage,
+			Action:    getVideoAction(v.Status),
+		})
+	}
+	c.JSON(200, out)
+}
+
+func getVideoAction(status interface{}) string {
+	switch status {
+	case "ready":
+		return "view"
+	case "failed":
+		return "retry"
+	default:
+		return ""
+	}
 }
 
 // TranscodeRequest represents an HTTP request for transcoding
@@ -148,4 +231,52 @@ func (s *Server) handleUpload(c *gin.Context) {
 	} else {
 		fmt.Println("R2 storage is nil, skipping upload.")
 	}
+}
+
+// GET /api/system_health
+func (s *Server) getSystemHealth(c *gin.Context) {
+	usage, err := monitoring.GetCurrentResourceUsage(s.config.StoragePath)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"cpu": usage.CPUPercent,
+		"memory_used": usage.MemoryUsedMB,
+		"memory_total": usage.MemoryTotalMB,
+		"memory_percent": usage.MemoryPercent,
+		"goroutines": usage.NumGoroutines,
+		"uptime": usage.Uptime,
+		"storage": usage.Storage,
+	})
+}
+
+// GET /api/logs
+func (s *Server) getLogs(c *gin.Context) {
+	logPath := "server.log"
+	data, err := readLastNLines(logPath, 100)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Data(200, "text/plain; charset=utf-8", []byte(data))
+}
+
+// readLastNLines reads the last N lines from a file
+func readLastNLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n"), scanner.Err()
 }

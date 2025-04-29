@@ -43,8 +43,11 @@ func TestMergeSessionVideos(t *testing.T) {
 	inputPath := filepath.Join("..", "test", "videos", "uploads")
 	// for testing we will create a temp folder called "merged_videos"
 	outputPath := filepath.Join("..", "test", "videos", "merged_videos", "merged_test_output.mp4")
-	// defer os.Remove(outputPath)
-
+	defer func() {
+		if err := os.Remove(outputPath); err != nil {
+			t.Logf("Failed to remove temporary file %s: %v", outputPath, err)
+		}
+	}()
 	// Define a time window that should include the test video
 	startTime, _ := time.Parse("20060102_150405", "20250414_120500")
 	endTime, _ := time.Parse("20060102_150405", "20250414_120540")

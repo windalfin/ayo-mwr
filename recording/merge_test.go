@@ -41,12 +41,13 @@ func TestFindSegmentsInRange(t *testing.T) {
 func TestMergeSessionVideos(t *testing.T) {
 	// Prepare test input
 	inputPath := filepath.Join("..", "test", "videos", "uploads")
-	outputPath := filepath.Join(os.TempDir(), "merged_test_output.mp4")
-	defer os.Remove(outputPath)
+	// for testing we will create a temp folder called "merged_videos"
+	outputPath := filepath.Join("..", "test", "videos", "merged_videos", "merged_test_output.mp4")
+	// defer os.Remove(outputPath)
 
 	// Define a time window that should include the test video
-	startTime, _ := time.Parse("20060102_150405", "20250304_120000")
-	endTime, _ := time.Parse("20060102_150405", "20250304_130000")
+	startTime, _ := time.Parse("20060102_150405", "20250414_120500")
+	endTime, _ := time.Parse("20060102_150405", "20250414_120540")
 
 	// Call the function under test (to be implemented)
 	err := MergeSessionVideos(inputPath, startTime, endTime, outputPath)

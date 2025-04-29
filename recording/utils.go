@@ -21,6 +21,7 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
+	// loop through files to find the segments in the time range
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".mp4") {
 			continue

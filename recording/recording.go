@@ -251,3 +251,9 @@ func CaptureRTSPSegments(cfg config.Config) error {
 	}
 	return fmt.Errorf("no cameras configured")
 }
+
+// MergeSessionVideos is a stub. It will merge MP4 segments in inputPath between startTime and endTime into outputPath.
+func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string) error {
+	// TODO: Implement merging logic
+	return nil
+}

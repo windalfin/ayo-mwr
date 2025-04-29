@@ -13,6 +13,7 @@ import (
 	// Update these imports to match your local module path
 	"ayo-mwr/api"
 	"ayo-mwr/config"
+	"ayo-mwr/cron"
 	"ayo-mwr/database"
 	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
@@ -92,6 +93,9 @@ func main() {
 
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
+
+	// Start camera status cron job (every 5 minutes)
+	cron.StartCameraStatusCron(cfg)
 
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{

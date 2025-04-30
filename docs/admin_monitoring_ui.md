@@ -4,6 +4,17 @@ This document outlines the features and data sources for the local admin monitor
 
 ---
 
+## Development Notes: Camera RTSP to HLS Streaming
+- The backend must transcode RTSP streams from cameras to HLS (HTTP Live Streaming) format for browser playback.
+- Use ffmpeg to convert RTSP to HLS, outputting .m3u8 and .ts files to a directory per camera.
+- Serve the HLS output directory via HTTP so the frontend can load the HLS playlist (e.g., /transcode/camera1/stream.m3u8).
+- Example ffmpeg command:
+  ```bash
+  ffmpeg -i rtsp://camera-ip/stream -c:v libx264 -f hls -hls_time 2 -hls_list_size 3 -hls_flags delete_segments /transcode/camera1/stream.m3u8
+  ```
+- The frontend video player should use hls.js to play the stream, with support for fullscreen mode.
+- For each camera, expose the HLS URL in the API or config so the UI can display the stream on demand.
+
 ## 1. Camera Monitoring
 - **Camera List:** Show all configured cameras (`config.Cameras`), with:
   - Name, IP, Port, RTSP Path, Enabled status

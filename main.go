@@ -2,8 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -17,6 +19,7 @@ import (
 	"ayo-mwr/service"
 	"ayo-mwr/signaling"
 	"ayo-mwr/storage"
+	"ayo-mwr/transcode"
 )
 
 func main() {
@@ -56,6 +59,29 @@ func main() {
 
 	// Ensure required paths exist
 	config.EnsurePaths(cfg)
+
+	// --- RTSP Camera HLS Streaming Startup ---
+	for _, cam := range cfg.Cameras {
+		if !cam.Enabled {
+			continue
+		}
+		// Construct RTSP URL
+		rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s", cam.Username, cam.Password, cam.IP, cam.Port, cam.Path)
+		// Output dir: ./videos/recordings/<camera_name>/hls
+		outDir := filepath.Join("videos", "recordings", cam.Name, "hls")
+		_, err := transcode.StartCameraHLS(rtspURL, outDir)
+		if err != nil {
+			log.Printf("Failed to start HLS for %s: %v", cam.Name, err)
+		} else {
+			log.Printf("Started HLS for %s at /hls/%s/hls/stream.m3u8", cam.Name, cam.Name)
+		}
+	}
+	// Serve HLS directory at /hls/
+	go func() {
+		if err := transcode.ServeHLSDir(filepath.Join("videos", "recordings"), ":8080"); err != nil {
+			log.Fatalf("Failed to serve HLS: %v", err)
+		}
+	}()
 
 	// Initialize SQLite database
 	db, err := database.NewSQLiteDB(cfg.DatabasePath)

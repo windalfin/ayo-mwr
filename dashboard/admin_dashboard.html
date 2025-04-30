@@ -209,6 +209,15 @@
           <!-- Camera rows will be populated by JS -->
         </tbody>
       </table>
+      <!-- Camera Stream Player -->
+      <div id="camera-stream-container" style="margin:1.5rem 0 0.5rem 0; display:none; max-width:520px;">
+        <div style="display:flex; align-items:center; gap:12px; justify-content:space-between;">
+          <span id="camera-stream-title" style="font-weight:500; color:#273c75;"></span>
+          <button id="camera-stream-close" style="background:#e84118;color:#fff;border:none;padding:0.2em 0.8em;border-radius:6px;font-size:1.1em;cursor:pointer;">&times;</button>
+        </div>
+        <video id="camera-stream-player" controls style="width:100%; max-width:500px; margin-top:0.5rem; border-radius:10px; background:#000; aspect-ratio:16/9;"></video>
+        <button id="camera-stream-fullscreen" style="margin-top:0.5rem; background:#273c75; color:#fff; border:none; padding:0.5em 1.2em; border-radius:6px; cursor:pointer; float:right;">Fullscreen</button>
+      </div>
     </section>
 
     <!-- Videos Table -->
@@ -278,6 +287,7 @@
       <button style="background:#273c75;color:#fff;border:none;padding:0.6em 1.5em;border-radius:6px;">Download Logs</button>
     </section>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
     let cameras = null;
     let videos = null;
@@ -321,7 +331,7 @@
             <td>${cam.name}</td><td>${cam.ip}</td><td>${cam.port}</td><td>${cam.path}</td>
             <td><span class="status ${cam.status}">${cam.status.toUpperCase()}</span></td>
             <td>${cam.last_checked ? new Date(cam.last_checked).toLocaleString() : ''}</td>
-            <td class="actions"><button>Logs</button></td>
+            <td class="actions"><button class="stream-btn" data-hls="${cam.hls_url}" data-camname="${cam.name}">Stream</button> <button>Logs</button></td>
           </tr>`;
         }
       });
@@ -409,6 +419,50 @@
     }
     setInterval(updateLogs, 5000);
     updateLogs();
+
+    // Camera Stream Logic
+    function playCameraStream(hlsUrl, camName) {
+      const container = document.getElementById('camera-stream-container');
+      const video = document.getElementById('camera-stream-player');
+      const fsBtn = document.getElementById('camera-stream-fullscreen');
+      const title = document.getElementById('camera-stream-title');
+      container.style.display = 'block';
+      title.textContent = camName ? `Live Stream: ${camName}` : 'Live Stream';
+      if (window.Hls && Hls.isSupported()) {
+        if (window.hlsInstance) { window.hlsInstance.destroy(); }
+        window.hlsInstance = new Hls();
+        window.hlsInstance.loadSource(hlsUrl);
+        window.hlsInstance.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = hlsUrl;
+      } else {
+        video.src = '';
+        alert('HLS not supported in this browser');
+        return;
+      }
+      video.play();
+      fsBtn.onclick = () => {
+        if (video.requestFullscreen) video.requestFullscreen();
+        else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
+        else if (video.msRequestFullscreen) video.msRequestFullscreen();
+      };
+    }
+    // Attach stream button events dynamically
+    document.addEventListener('click', function(e) {
+      if (e.target.classList.contains('stream-btn')) {
+        const hlsUrl = e.target.dataset.hls;
+        const camName = e.target.dataset.camname;
+        playCameraStream(hlsUrl, camName);
+      }
+      if (e.target.id === 'camera-stream-close') {
+        const container = document.getElementById('camera-stream-container');
+        const video = document.getElementById('camera-stream-player');
+        container.style.display = 'none';
+        if (window.hlsInstance) { window.hlsInstance.destroy(); window.hlsInstance = null; }
+        video.pause();
+        video.src = '';
+      }
+    });
 
     // Initial load: fetch data and render tables
     async function initDashboard() {

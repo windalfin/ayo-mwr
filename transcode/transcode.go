@@ -8,7 +8,37 @@ import (
 	"time"
 
 	"ayo-mwr/config"
+	"net/http"
 )
+
+// StartCameraHLS starts an ffmpeg process to transcode RTSP to HLS for live streaming
+func StartCameraHLS(rtspURL, outDir string) (*exec.Cmd, error) {
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create HLS output dir: %v", err)
+	}
+	cmd := exec.Command("ffmpeg",
+		"-i", rtspURL,
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-tune", "zerolatency",
+		"-f", "hls",
+		"-hls_time", "2",
+		"-hls_list_size", "3",
+		"-hls_flags", "delete_segments",
+		filepath.Join(outDir, "stream.m3u8"),
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd, cmd.Start()
+}
+
+// ServeHLSDir serves the HLS output directory over HTTP at /hls/
+func ServeHLSDir(hlsRoot string, addr string) error {
+	fs := http.FileServer(http.Dir(hlsRoot))
+	http.Handle("/hls/", http.StripPrefix("/hls/", fs))
+	fmt.Printf("Serving HLS at http://%s/hls/\n", addr)
+	return http.ListenAndServe(addr, nil)
+}
 
 // QualityPreset defines parameters for a specific video quality
 type QualityPreset struct {

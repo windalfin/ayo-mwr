@@ -76,6 +76,7 @@ type CameraInfo struct {
 	Path        string `json:"path"`
 	Status      string `json:"status"`
 	LastChecked string `json:"last_checked"`
+	HLSUrl      string `json:"hls_url"`
 }
 
 // GET /api/cameras
@@ -91,6 +92,7 @@ func (s *Server) listCameras(c *gin.Context) {
 			status = "online"
 		}
 		lastChecked = time.Now().Format(time.RFC3339)
+		hlsUrl := fmt.Sprintf("/hls/%s/hls/stream.m3u8", cam.Name)
 		cameras = append(cameras, CameraInfo{
 			Name:        cam.Name,
 			IP:          cam.IP,
@@ -98,6 +100,7 @@ func (s *Server) listCameras(c *gin.Context) {
 			Path:        cam.Path,
 			Status:      status,
 			LastChecked: lastChecked,
+			HLSUrl:      hlsUrl,
 		})
 	}
 	c.JSON(200, cameras)

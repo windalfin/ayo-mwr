@@ -195,7 +195,7 @@ func (c *AyoIndoClient) GetWatermark() (map[string]interface{}, error) {
 	params["signature"] = signature
 	
 	// Build the URL with query parameters
-	endpoint := fmt.Sprintf("%s/v1/watermark", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/watermark", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -266,7 +266,7 @@ func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error)
 	params["signature"] = signature
 	
 	// Build the URL with query parameters
-	endpoint := fmt.Sprintf("%s/v1/bookings", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/bookings", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -344,7 +344,7 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 	}
 	
 	// Build the URL
-	endpoint := fmt.Sprintf("%s/v1/save-video-available", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/save-video-available", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	
 	// Print full URL and payload for debugging/Postman testing
@@ -403,7 +403,7 @@ func (c *AyoIndoClient) GetVideoRequests() (map[string]interface{}, error) {
 	params["signature"] = signature
 	
 	// Build the URL with query parameters
-	endpoint := fmt.Sprintf("%s/v1/video-requests", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/video-requests", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -487,7 +487,7 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, uniqueID, videoType
 	}
 	
 	// Build the URL
-	endpoint := fmt.Sprintf("%s/v1/save-video", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/save-video", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	
 	// Print full URL and payload for debugging/Postman testing
@@ -555,7 +555,7 @@ func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[st
 	}
 	
 	// Build the URL
-	endpoint := fmt.Sprintf("%s/v1/save-camera-status", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/save-camera-status", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	
 	// Print full URL and payload for debugging/Postman testing

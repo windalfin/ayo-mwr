@@ -341,8 +341,8 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	// Set explicit credentials for testing
 	os.Setenv("AYOINDO_API_BASE_ENDPOINT", "http://iot-api.ayodev.xyz:6060")
 	os.Setenv("AYOINDO_API_TOKEN", "RtYNF7Abg6xFpYJLqdJy")
-	os.Setenv("VENUE_CODE", "JXP72RM48B6rBxpzgMHvfqfUV4LAzzu4A9qLswrM")
-	os.Setenv("VENUE_SECRET_KEY", "eohcbaWbVH")
+	os.Setenv("VENUE_CODE", "eohcbaWbVH")
+	os.Setenv("VENUE_SECRET_KEY", "JXP72RM48B6rBxpzgMHvfqfUV4LAzzu4A9qLswrM") 
 
 	// Create client
 	client, err := NewAyoIndoClient()
@@ -378,7 +378,7 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	t.Run("GetBookings", func(t *testing.T) {
 		var bookingDate string
 		if useSpecificDate {
-			bookingDate = "2025-02-02" // Tanggal spesifik untuk pengujian
+			bookingDate = "2025-04-30" // Tanggal spesifik untuk pengujian
 		} else {
 			bookingDate = time.Now().Format("2006-01-02") // Tanggal hari ini
 		}

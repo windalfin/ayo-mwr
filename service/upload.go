@@ -178,8 +178,8 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
-			// Upload HLS stream
-			hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
+			// Upload HLS stream - sekarang mengembalikan r2Path, r2URL, error
+			_, hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
 			if err != nil {
 				log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
 				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("HLS upload error: %v", err))
@@ -206,15 +206,87 @@ func (s *UploadService) StartUploadWorker() {
 			if err != nil {
 				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
 			}
-
-			// Update status back to ready and remove from queue
-			err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
-			if err != nil {
-				log.Printf("Error updating video status back to ready: %v", err)
+			
+			// Verifikasi dan pastikan field-field penting tidak kosong
+			if video.CameraName == "" || video.LocalPath == "" || video.UniqueID == "" || 
+			   video.OrderDetailID == "" || video.BookingID == "" {
+				// Ambil data lengkap dari database
+				fullVideo, err := s.db.GetVideo(video.ID)
+				if err != nil {
+					log.Printf("Error fetching complete data for video %s: %v", video.ID, err)
+				} else if fullVideo != nil {
+					// Update field yang kosong
+					updateNeeded := false
+					
+					if video.CameraName == "" && fullVideo.CameraName != "" {
+						video.CameraName = fullVideo.CameraName
+						updateNeeded = true
+					}
+					if video.LocalPath == "" && fullVideo.LocalPath != "" {
+						video.LocalPath = fullVideo.LocalPath
+						updateNeeded = true
+					}
+					if video.UniqueID == "" && fullVideo.UniqueID != "" {
+						video.UniqueID = fullVideo.UniqueID
+						updateNeeded = true
+					}
+					if video.OrderDetailID == "" && fullVideo.OrderDetailID != "" {
+						video.OrderDetailID = fullVideo.OrderDetailID
+						updateNeeded = true
+					}
+					if video.BookingID == "" && fullVideo.BookingID != "" {
+						video.BookingID = fullVideo.BookingID
+						updateNeeded = true
+					}
+					
+					// Update jika ada field yang perlu diperbarui
+					if updateNeeded {
+						// Gunakan dereferensi pointer (*video) untuk mengakses nilai
+						err = s.db.UpdateVideo(*video)
+						if err != nil {
+							log.Printf("Error updating missing fields for video %s: %v", video.ID, err)
+						} else {
+							log.Printf("Successfully updated missing fields for video %s", video.ID)
+						}
+					}
+				}
 			}
 
+			// Persiapkan data untuk update status
+			now := time.Now()
+			
+			// Ambil data video lengkap
+			fullVideoData, err := s.db.GetVideo(video.ID)
+			if err != nil {
+				log.Printf("Error getting complete video data: %v", err)
+				
+				// Fallback ke UpdateVideoStatus standar jika gagal mendapatkan data lengkap
+				err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
+				if err != nil {
+					log.Printf("Error updating video status back to ready: %v", err)
+				}
+			} else {
+				// Set status dan timestamp
+				fullVideoData.Status = database.StatusReady
+				fullVideoData.ErrorMessage = ""
+				fullVideoData.FinishedAt = &now
+				
+				// Pastikan UploadedAt juga diset
+				if fullVideoData.UploadedAt == nil {
+					fullVideoData.UploadedAt = &now
+				}
+				
+				// Update video dengan semua data
+				err = s.db.UpdateVideo(*fullVideoData)
+				if err != nil {
+					log.Printf("Error updating video to ready status with full data: %v", err)
+				} else {
+					log.Printf("Successfully updated video %s to ready status with complete data", video.ID)
+				}
+			}
+			
+			log.Printf("Video %s successfully uploaded to R2 storage at %s", video.ID, now.Format(time.RFC3339))
 			s.removeFromQueue(video.ID)
-			log.Printf("Successfully uploaded video %s to R2 storage", video.ID)
 		}
 	}()
 }
@@ -301,16 +373,16 @@ func (s *UploadService) UploadVideo(videoID string) error {
 		return fmt.Errorf("HLS directory %s does not exist", video.HLSPath)
 	}
 
-	// Upload HLS stream
-	hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
+	// Upload HLS stream - sekarang dengan 3 nilai return (r2Path, r2URL, error)
+	r2HLSPath, r2HLSURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
 	if err != nil {
 		s.db.UpdateVideoStatus(video.ID, database.StatusFailed, fmt.Sprintf("HLS upload error: %v", err))
 		return fmt.Errorf("error uploading HLS stream: %v", err)
 	}
 
 	// Update video metadata with R2 information
-	video.R2HLSURL = hlsURL
-	video.R2HLSPath = fmt.Sprintf("hls/%s", video.ID)
+	video.R2HLSURL = r2HLSURL
+	video.R2HLSPath = r2HLSPath
 	video.Status = database.StatusReady
 
 	// Update the complete video metadata
@@ -343,7 +415,7 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 		Status:    database.StatusProcessing,
 		Size:      fileInfo.Size(),
 		LocalPath: filePath,
-		CameraID:  "camera_A", // Could be parameterized
+		CameraName:  "camera_A", // Could be parameterized
 	}
 
 	// Add to database

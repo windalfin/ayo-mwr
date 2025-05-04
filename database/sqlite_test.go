@@ -61,7 +61,7 @@ func testCreateAndGetVideo(t *testing.T, db *SQLiteDB) {
 		DASHPath:   "/path/to/dash",
 		HLSURL:     "http://example.com/hls/test",
 		DASHURL:    "http://example.com/dash/test",
-		CameraID:   "camera-1",
+		CameraName:   "camera-1",
 		R2HLSPath:  "",
 		R2DASHPath: "",
 		R2HLSURL:   "",
@@ -90,8 +90,8 @@ func testCreateAndGetVideo(t *testing.T, db *SQLiteDB) {
 	if retrieved.Status != metadata.Status {
 		t.Errorf("Expected status %s, got %s", metadata.Status, retrieved.Status)
 	}
-	if retrieved.CameraID != metadata.CameraID {
-		t.Errorf("Expected camera ID %s, got %s", metadata.CameraID, retrieved.CameraID)
+	if retrieved.CameraName != metadata.CameraName {
+		t.Errorf("Expected camera name %s, got %s", metadata.CameraName, retrieved.CameraName)
 	}
 	if retrieved.LocalPath != metadata.LocalPath {
 		t.Errorf("Expected local path %s, got %s", metadata.LocalPath, retrieved.LocalPath)
@@ -152,7 +152,7 @@ func testListVideos(t *testing.T, db *SQLiteDB) {
 			DASHPath:  "/path/to/dash" + strconv.Itoa(i+'0'),
 			HLSURL:    "http://example.com/hls/test" + strconv.Itoa(i+'0'),
 			DASHURL:   "http://example.com/dash/test" + strconv.Itoa(i+'0'),
-			CameraID:  "camera-1",
+			CameraName:  "camera-1",
 		}
 
 		err := db.CreateVideo(metadata)
@@ -202,7 +202,7 @@ func testGetVideosByStatus(t *testing.T, db *SQLiteDB) {
 			ID:        "status-test-" + strconv.Itoa(i+'0'),
 			CreatedAt: time.Now(),
 			Status:    status,
-			CameraID:  "camera-1",
+			CameraName:  "camera-1",
 		}
 
 		err := db.CreateVideo(metadata)
@@ -239,7 +239,7 @@ func testUpdateVideoStatus(t *testing.T, db *SQLiteDB) {
 		ID:        "status-update-test",
 		CreatedAt: time.Now(),
 		Status:    StatusProcessing,
-		CameraID:  "camera-1",
+		CameraName:  "camera-1",
 	}
 
 	err := db.CreateVideo(metadata)
@@ -293,7 +293,7 @@ func testUpdateVideoR2Paths(t *testing.T, db *SQLiteDB) {
 		ID:        "r2-path-test",
 		CreatedAt: time.Now(),
 		Status:    StatusReady,
-		CameraID:  "camera-1",
+		CameraName:  "camera-1",
 	}
 
 	err := db.CreateVideo(metadata)
@@ -329,7 +329,7 @@ func testUpdateVideoR2URLs(t *testing.T, db *SQLiteDB) {
 		ID:        "r2-url-test",
 		CreatedAt: time.Now(),
 		Status:    StatusReady,
-		CameraID:  "camera-1",
+		CameraName:  "camera-1",
 	}
 
 	err := db.CreateVideo(metadata)
@@ -365,7 +365,7 @@ func testDeleteVideo(t *testing.T, db *SQLiteDB) {
 		ID:        "delete-test",
 		CreatedAt: time.Now(),
 		Status:    StatusReady,
-		CameraID:  "camera-1",
+		CameraName:  "camera-1",
 	}
 
 	err := db.CreateVideo(metadata)

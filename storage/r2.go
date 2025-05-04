@@ -23,6 +23,7 @@ type R2Config struct {
 	Bucket    string
 	Endpoint  string
 	Region    string
+	BaseURL   string // URL publik untuk akses file, contoh: https://media.beligem.com
 }
 
 // R2Storage handles operations with Cloudflare R2
@@ -115,7 +116,13 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 		return "", fmt.Errorf("failed to upload file to R2: %v", err)
 	}
 
-	return result.Location, nil
+	// Generate public URL using the configured BaseURL instead of AWS S3 location
+	publicURL := fmt.Sprintf("%s/%s", r.GetBaseURL(), remotePath)
+
+	// Log the URL difference for debugging
+	log.Printf("AWS S3 URL: %s, Custom URL: %s", result.Location, publicURL)
+	
+	return publicURL, nil
 }
 
 // UploadDirectory uploads all files in a directory to R2
@@ -160,13 +167,16 @@ func (r *R2Storage) UploadDirectory(localDir, remotePrefix string) ([]string, er
 }
 
 // UploadHLSStream uploads an HLS stream directory to R2
-func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, error) {
+func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, string, error) {
 	remotePrefix := fmt.Sprintf("hls/%s", videoID)
 	_, err := r.UploadDirectory(hlsDir, remotePrefix)
 	if err != nil {
-		return "", fmt.Errorf("failed to upload HLS stream: %v", err)
+		return "", "", fmt.Errorf("failed to upload HLS stream: %v", err)
 	}
-	return fmt.Sprintf("%s/%s/playlist.m3u8", r.config.Endpoint, remotePrefix), nil
+	// Kembalikan path dan URL
+	r2Path := remotePrefix
+	r2URL := fmt.Sprintf("%s/%s/playlist.m3u8", r.GetBaseURL(), remotePrefix)
+	return r2Path, r2URL, nil
 }
 
 // Upload MP4 to R2
@@ -176,12 +186,15 @@ func (r *R2Storage) UploadMP4(mp4Dir, videoID string) (string, error) {
 	log.Printf("Uploading MP4 %s to R2 bucket %s with key %s", mp4Dir, r.config.Bucket, remotePrefix)
 
 	// Use UploadFile instead of UploadDirectory since we're uploading a single file
-	location, err := r.UploadFile(mp4Dir, remotePrefix)
+	_, err := r.UploadFile(mp4Dir, remotePrefix)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload MP4: %v", err)
 	}
 
-	return location, nil
+	// Gunakan GetBaseURL() untuk mendapatkan URL publik yang benar
+	publicURL := fmt.Sprintf("%s/%s", r.GetBaseURL(), remotePrefix)
+	log.Printf("MP4 URL: %s", publicURL)
+	return publicURL, nil
 }
 
 // ListObjects lists objects in the R2 bucket with a given prefix
@@ -213,3 +226,17 @@ func (r *R2Storage) DeleteObject(key string) error {
 
 	return nil
 }
+
+// GetBaseURL returns the base URL for the R2 bucket
+func (r *R2Storage) GetBaseURL() string {
+	// Gunakan BaseURL jika ada, jika tidak gunakan endpoint + bucket
+	if r.config.BaseURL != "" {
+		return r.config.BaseURL
+	}
+	
+	// Fallback ke endpoint/bucket jika BaseURL tidak tersedia
+	return fmt.Sprintf("%s/%s", r.config.Endpoint, r.config.Bucket)
+}
+
+
+

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -177,8 +178,8 @@ func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string
 	return signature, nil
 }
 
-// GetWatermark retrieves watermark information from AYO API
-func (c *AyoIndoClient) GetWatermark() (map[string]interface{}, error) {
+// GetWatermarkMetadata retrieves watermark information from AYO API
+func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":       c.apiToken,
@@ -526,6 +527,157 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, uniqueID, videoType
 	}
 	
 	return result, nil
+}
+
+// GetWatermark retrieves the watermark image path for the current venue
+func (c *AyoIndoClient) GetWatermark() (string, error) {
+	// Create watermark directory if it doesn't exist
+	venueCode := c.venueCode
+	folder := filepath.Join("watermark", venueCode)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
+	}
+
+	// Test watermark URL for development/testing purposes
+	testWatermarkURL := "https://www.pngall.com/wp-content/uploads/8/Sample-PNG-Image.png"
+
+	// Define watermark sizes and filenames
+	sizes := map[string]string{
+		"360":  "watermark_360.png",
+		"480":  "watermark_480.png",
+		"720":  "watermark_720.png",
+		"1080": "watermark_1080.png",
+	}
+	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
+
+	// Check if any watermark files already exist
+	allExist := false
+	var existingWatermarkPath string
+	for res, fname := range sizes {
+		path := filepath.Join(folder, fname)
+		if _, err := os.Stat(path); err == nil && wanted[res] {
+			allExist = true
+			existingWatermarkPath = path
+			break
+		}
+	}
+
+	if allExist && existingWatermarkPath != "" {
+		return existingWatermarkPath, nil
+	}
+
+	// Download metadata JSON from API
+	response, err := c.GetWatermarkMetadata()
+	if err != nil {
+		log.Printf("Warning: Failed to get watermark metadata: %v", err)
+		log.Printf("Using test watermark instead")
+		
+		// Simpan watermark dari URL test ke file
+		fallbackPath := filepath.Join(folder, "watermark_test.png")
+		resp, err := http.Get(testWatermarkURL)
+		if err != nil {
+			return "", fmt.Errorf("failed to download test watermark: %v", err)
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to download test watermark, status code: %d", resp.StatusCode)
+		}
+		
+		f, err := os.Create(fallbackPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to create test watermark file: %v", err)
+		}
+		
+		_, err = io.Copy(f, resp.Body)
+		f.Close()
+		if err != nil {
+			return "", fmt.Errorf("failed to save test watermark file: %v", err)
+		}
+		
+		return fallbackPath, nil
+	}
+
+	// Process the API response
+	data, ok := response["data"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid response format from API")
+	}
+
+	// Download images for required resolutions
+	for _, entry := range data {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		resolution, _ := entryMap["resolution"].(string)
+		watermarkURL, _ := entryMap["path"].(string)
+
+		if wanted[resolution] && watermarkURL != "" {
+			fname, ok := sizes[resolution]
+			if !ok {
+				continue
+			}
+
+			path := filepath.Join(folder, fname)
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				// Download watermark image
+				resp, err := http.Get(watermarkURL)
+				if err != nil {
+					continue // try next resolution
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					continue // try next resolution
+				}
+
+				f, err := os.Create(path)
+				if err != nil {
+					continue // try next resolution
+				}
+
+				_, err = io.Copy(f, resp.Body)
+				f.Close()
+				if err == nil {
+					// Successfully downloaded and saved this watermark
+					return path, nil
+				}
+			} else {
+				// File already exists
+				return path, nil
+			}
+		}
+	}
+
+	// Jika tidak ada watermark yang ditemukan, gunakan test watermark URL
+	log.Printf("No watermark found from API, using test watermark URL")
+	
+	// Simpan watermark dari URL test ke file
+	fallbackPath := filepath.Join(folder, "watermark_test.png")
+	resp, err := http.Get(testWatermarkURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download test watermark: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download test watermark, status code: %d", resp.StatusCode)
+	}
+	
+	f, err := os.Create(fallbackPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create test watermark file: %v", err)
+	}
+	
+	_, err = io.Copy(f, resp.Body)
+	f.Close()
+	if err != nil {
+		return "", fmt.Errorf("failed to save test watermark file: %v", err)
+	}
+	
+	return fallbackPath, nil
 }
 
 // SaveCameraStatus updates camera status to AYO API

@@ -123,7 +123,7 @@ func (s *Server) listVideos(c *gin.Context) {
 	for _, v := range videos {
 		out = append(out, VideoInfo{
 			ID:        v.ID,
-			Camera:    v.CameraID,
+			Camera:    v.CameraName,
 			Status:    string(v.Status),
 			CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"),
 			Duration:  fmt.Sprintf("%.0fs", v.Duration),
@@ -215,7 +215,7 @@ func (s *Server) handleUpload(c *gin.Context) {
 	// --- R2 Upload Integration ---
 	// After successful transcoding, upload HLS and MP4 to R2
 	if s.r2Storage != nil {
-		hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
+		_, hlsURL, err := s.r2Storage.UploadHLSStream(hlsDir, videoID)
 		if err != nil {
 			fmt.Printf("[R2] Failed to upload HLS: %v\n", err)
 		} else {

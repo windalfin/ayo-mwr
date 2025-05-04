@@ -65,6 +65,7 @@ type Config struct {
 	R2Bucket     string
 	R2Region     string
 	R2Endpoint   string
+	R2BaseURL    string // URL publik untuk akses file (mis. https://media.beligem.com)
 	R2Enabled    bool
 	R2TokenValue string
 
@@ -130,6 +131,7 @@ func LoadConfig() Config {
 		R2AccountID:  getEnv("R2_ACCOUNT_ID", ""),
 		R2Bucket:     getEnv("R2_BUCKET", ""),
 		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
+		R2BaseURL:    getEnv("R2_BASE_URL", ""),
 		R2Region:     getEnv("R2_REGION", "auto"),
 	}
 

@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -27,6 +30,16 @@ type R2Config struct {
 }
 
 // R2Storage handles operations with Cloudflare R2
+// Constants for multipart uploads
+const (
+	// 5MB is the minimum chunk size for multipart uploads in R2/S3
+	minPartSize = 5 * 1024 * 1024 // 5MB
+	// Files larger than this will use multipart upload
+	multipartThreshold = 100 * 1024 * 1024 // 100MB 
+	// Use this number of goroutines for concurrent chunk uploads
+	maxUploadConcurrency = 10
+)
+
 type R2Storage struct {
 	config   R2Config
 	session  *session.Session
@@ -72,7 +85,7 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 	}, nil
 }
 
-// UploadFile uploads a file to R2 storage
+// UploadFile uploads a file to R2 storage using chunked uploads for large files
 func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 	file, err := os.Open(localPath)
 	if err != nil {
@@ -95,34 +108,209 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 		contentType = "video/MP2T"
 	case ".m3u8":
 		contentType = "application/vnd.apple.mpegurl"
+	case ".png":
+		contentType = "image/png"
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
 	}
 
-	// Upload file
-	log.Printf("Uploading %s to R2 bucket %s with key %s", localPath, r.config.Bucket, remotePath)
-
-	result, err := r.uploader.Upload(&s3manager.UploadInput{
-		Bucket:      aws.String(r.config.Bucket),
-		Key:         aws.String(remotePath),
-		Body:        file,
-		ContentType: aws.String(contentType),
-		Metadata: map[string]*string{
-			"OriginalFileName": aws.String(filepath.Base(localPath)),
-			"UploadedAt":       aws.String(time.Now().Format(time.RFC3339)),
-			"FileSize":         aws.String(fmt.Sprintf("%d", fileInfo.Size())),
-		},
-	})
-
-	if err != nil {
-		return "", fmt.Errorf("failed to upload file to R2: %v", err)
+	// Common metadata for all upload methods
+	metadata := map[string]*string{
+		"OriginalFileName": aws.String(filepath.Base(localPath)),
+		"UploadedAt":       aws.String(time.Now().Format(time.RFC3339)),
+		"FileSize":         aws.String(fmt.Sprintf("%d", fileInfo.Size())),
 	}
 
-	// Generate public URL using the configured BaseURL instead of AWS S3 location
+	// Use multipart upload for large files
+	if fileInfo.Size() > multipartThreshold {
+		log.Printf("Using multipart upload for large file (%.2f MB): %s", float64(fileInfo.Size())/1024/1024, localPath)
+		// Reset file pointer to the beginning
+		if _, err := file.Seek(0, 0); err != nil {
+			return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
+		}
+		
+		// Upload large file in chunks
+		_, err = r.uploadLargeFile(file, remotePath, contentType, metadata, fileInfo.Size())
+		if err != nil {
+			return "", fmt.Errorf("multipart upload failed: %v", err)
+		}
+	} else {
+		// Use standard upload for smaller files
+		log.Printf("Using standard upload for file (%.2f MB): %s", float64(fileInfo.Size())/1024/1024, localPath)
+		
+		// Reset file pointer to the beginning
+		if _, err := file.Seek(0, 0); err != nil {
+			return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
+		}
+		
+		_, uploadErr := r.uploader.Upload(&s3manager.UploadInput{
+			Bucket:      aws.String(r.config.Bucket),
+			Key:         aws.String(remotePath),
+			Body:        file,
+			ContentType: aws.String(contentType),
+			Metadata:    metadata,
+		})
+
+		if uploadErr != nil {
+			return "", fmt.Errorf("failed to upload file to R2: %v", uploadErr)
+		}
+	}
+
+	// Generate public URL
 	publicURL := fmt.Sprintf("%s/%s", r.GetBaseURL(), remotePath)
-
-	// Log the URL difference for debugging
-	log.Printf("AWS S3 URL: %s, Custom URL: %s", result.Location, publicURL)
+	log.Printf("File uploaded successfully, public URL: %s", publicURL)
 	
 	return publicURL, nil
+}
+
+// uploadLargeFile handles multipart upload for large files
+func (r *R2Storage) uploadLargeFile(file *os.File, remotePath, contentType string, metadata map[string]*string, fileSize int64) (string, error) {
+	// Calculate optimal part size (ensure it's at least 5MB)
+	// Try to use approximately 10000 parts maximum (R2/S3 limit is 10,000 parts)
+	partSize := max(minPartSize, fileSize/10000)
+	
+	log.Printf("Starting multipart upload with part size: %.2f MB", float64(partSize)/1024/1024)
+	
+	// Create the multipart upload
+	createResp, err := r.client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(r.config.Bucket),
+		Key:         aws.String(remotePath),
+		ContentType: aws.String(contentType),
+		Metadata:    metadata,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create multipart upload: %v", err)
+	}
+	
+	uploadID := *createResp.UploadId
+	log.Printf("Created multipart upload ID: %s", uploadID)
+	
+	// Calculate total number of parts
+	numParts := (fileSize + partSize - 1) / partSize // Ceiling division
+	
+	// Use a wait group to track completion of all upload parts
+	var wg sync.WaitGroup
+	
+	// Setup a semaphore to limit concurrency
+	sem := make(chan struct{}, maxUploadConcurrency)
+	
+	// Channel to collect results
+	completedParts := make([]*s3.CompletedPart, int(numParts))
+	errChan := make(chan error, 1)
+	
+	// Channel closed flag to prevent sending on closed channels
+	var errChanClosed bool
+	var errChanMutex sync.Mutex
+	
+	// Function to safely send errors
+	sendError := func(err error) {
+		errChanMutex.Lock()
+		defer errChanMutex.Unlock()
+		if !errChanClosed {
+			errChan <- err
+			close(errChan)
+			errChanClosed = true
+		}
+	}
+	
+	log.Printf("Uploading %d parts concurrently (max concurrency: %d)", numParts, maxUploadConcurrency)
+	
+	// Start uploading parts
+	for partNum := int64(1); partNum <= numParts; partNum++ {
+		wg.Add(1)
+		
+		// Acquire semaphore slot
+		sem <- struct{}{}
+		
+		go func(partNum int64) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore slot
+			
+			// Calculate part boundaries
+			start := (partNum - 1) * partSize
+			end := min(partNum*partSize, fileSize)
+			size := end - start
+			
+			// Create a buffer for this part
+			partBuffer := make([]byte, size)
+			
+			// Position reader at the start of this part
+			if _, err := file.Seek(start, 0); err != nil {
+				sendError(fmt.Errorf("failed to seek to position %d: %v", start, err))
+				return
+			}
+			
+			// Read the part data
+			if _, err := io.ReadFull(file, partBuffer); err != nil {
+				sendError(fmt.Errorf("failed to read part %d: %v", partNum, err))
+				return
+			}
+			
+			// Upload the part
+			resp, err := r.client.UploadPart(&s3.UploadPartInput{
+				Body:          bytes.NewReader(partBuffer),
+				Bucket:        aws.String(r.config.Bucket),
+				Key:           aws.String(remotePath),
+				PartNumber:    aws.Int64(partNum),
+				UploadId:      aws.String(uploadID),
+				ContentLength: aws.Int64(size),
+			})
+			
+			if err != nil {
+				sendError(fmt.Errorf("failed to upload part %d: %v", partNum, err))
+				return
+			}
+			
+			// Store the completed part info
+			completedParts[partNum-1] = &s3.CompletedPart{
+				ETag:       resp.ETag,
+				PartNumber: aws.Int64(partNum),
+			}
+			
+			log.Printf("Uploaded part %d/%d (%.2f MB)", partNum, numParts, float64(size)/1024/1024)
+		}(partNum)
+	}
+	
+	// Wait for all part uploads to complete
+	wg.Wait()
+	close(sem)
+	
+	// Check if any errors occurred
+	select {
+	case err := <-errChan:
+		// Attempt to abort the upload
+		_, abortErr := r.client.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(r.config.Bucket),
+			Key:      aws.String(remotePath),
+			UploadId: aws.String(uploadID),
+		})
+		
+		if abortErr != nil {
+			log.Printf("Failed to abort multipart upload: %v", abortErr)
+		}
+		
+		return "", err
+	default:
+		// No errors, proceed with completing the upload
+	}
+	
+	// Complete the multipart upload
+	completeInput := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(r.config.Bucket),
+		Key:      aws.String(remotePath),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	}
+	
+	completeResp, err := r.client.CompleteMultipartUpload(completeInput)
+	if err != nil {
+		return "", fmt.Errorf("failed to complete multipart upload: %v", err)
+	}
+	
+	log.Printf("Multipart upload completed successfully")
+	return *completeResp.Location, nil
 }
 
 // UploadDirectory uploads all files in a directory to R2
@@ -238,5 +426,18 @@ func (r *R2Storage) GetBaseURL() string {
 	return fmt.Sprintf("%s/%s", r.config.Endpoint, r.config.Bucket)
 }
 
+// min returns the smaller of two int64 values
+func min(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
 
-
+// max returns the larger of two int64 values
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}

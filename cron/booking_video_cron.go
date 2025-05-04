@@ -139,8 +139,8 @@ func processBookings(cfg config.Config, db database.Database, ayoClient *api.Ayo
 		date, _ := booking["date"].(string)
 		// date := "2025-05-10T00:00:00Z"
 		startTimeStr, _ := booking["start_time"].(string)
-		// endTimeStr, _ := booking["end_time"].(string)
-		endTimeStr := "15:00:00"
+		endTimeStr, _ := booking["end_time"].(string)
+		// endTimeStr := "15:00:00"
 
 		log.Printf("Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
 		

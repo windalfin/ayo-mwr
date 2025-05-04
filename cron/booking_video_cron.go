@@ -103,8 +103,8 @@ func processBookings(cfg config.Config, db database.Database, ayoClient *api.Ayo
 	log.Println("Running booking video processing task...")
 
 	// Use fixed date for testing
-	// today := time.Now().Format("2006-01-02")
-	today := "2025-04-30" // Fixed date for testing purposes
+	today := time.Now().Format("2006-01-02")
+	// today := "2025-04-30" // Fixed date for testing purposes
 
 	// Get bookings from AYO API
 	response, err := ayoClient.GetBookings(today)
@@ -137,10 +137,11 @@ func processBookings(cfg config.Config, db database.Database, ayoClient *api.Ayo
 		orderDetailID, _ := booking["order_detail_id"].(float64)
 		bookingID, _ := booking["booking_id"].(string)
 		date, _ := booking["date"].(string)
-		// date := "2025-05-10T00:00:00Z"
 		startTimeStr, _ := booking["start_time"].(string)
 		endTimeStr, _ := booking["end_time"].(string)
+		// date := "2025-05-10T00:00:00Z"
 		// endTimeStr := "15:00:00"
+		// startTimeStr := "14:00:00"
 
 		log.Printf("Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
 		

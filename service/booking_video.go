@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -434,13 +435,12 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 		return fmt.Errorf("failed to get video duration: %v", err)
 	}
 
-	// Convert duration to minutes for interval selection
-	durationMinutes := int(duration / 60)
-	log.Printf("Creating preview for video with duration: %v minutes (%v seconds)", durationMinutes, duration)
+	// Using duration directly in seconds for more accurate interval selection
+	log.Printf("Creating preview for video with duration: %.2f minutes (%v seconds)", duration/60, duration)
 
-	// Define intervals based on video duration (in seconds)
+	// Define intervals based on video duration directly in seconds
 	// Each interval is a time range to extract (start_time, end_time)
-	intervals := determineIntervals(durationMinutes)
+	intervals := determineIntervals(int(duration))
 
 	// Create a temporary directory for clip segments
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("preview_clips_%d", time.Now().UnixNano()))
@@ -510,8 +510,8 @@ type timeInterval struct {
 	end   string
 }
 
-// determineIntervals returns the appropriate time intervals for clipping based on video duration
-func determineIntervals(durationMinutes int) []timeInterval {
+// determineIntervals returns the appropriate time intervals for clipping based on video duration in seconds
+func determineIntervals(durationSeconds int) []timeInterval {
 	
 	// Helper function to create an interval
 	makeInterval := func(timeStr string) timeInterval {
@@ -544,25 +544,39 @@ func determineIntervals(durationMinutes int) []timeInterval {
 	
 	// Always include the first interval at 0:00:00
 	intervals = append(intervals, makeInterval("0:00:00"))
-	
-	if durationMinutes < 1 {
-		// Videos less than 1 minute
+	log.Printf("Duration in seconds: %d", durationSeconds)
+	log.Printf("Duration in minutes: %.2f", float64(durationSeconds)/60)
+	if durationSeconds < 20 {
+		// Videos less than 20 seconds
 		return []timeInterval{makeInterval("0:00:00")}
-	} else if durationMinutes == 1 {
+	} else if durationSeconds < 30 {
+		// Videos between 20-30 seconds
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:00:20"),
+		}
+	} else if durationSeconds < 60 {
+		// Videos between 30-60 seconds
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:00:20"),
+			makeInterval("0:00:40"),
+		}
+	} else if durationSeconds >= 60 && durationSeconds < 120 {
 		// 1 minute
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:00:20"),
 			makeInterval("0:00:40"),
 		}
-	} else if durationMinutes <= 30 {
+	} else if durationSeconds <= 1800 {
 		// 30 minutes
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:10:00"),
 			makeInterval("0:20:00"),
 		}
-	} else if durationMinutes <= 60 {
+	} else if durationSeconds <= 3600 {
 		// 1 hour
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -571,7 +585,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("0:36:00"),
 			makeInterval("0:48:00"),
 		}
-	} else if durationMinutes <= 120 {
+	} else if durationSeconds <= 7200 {
 		// 2 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -580,7 +594,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("1:12:00"),
 			makeInterval("1:36:00"),
 		}
-	} else if durationMinutes <= 180 {
+	} else if durationSeconds <= 10800 {
 		// 3 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -589,7 +603,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("1:48:00"),
 			makeInterval("2:24:00"),
 		}
-	} else if durationMinutes <= 240 {
+	} else if durationSeconds <= 14400 {
 		// 4 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -598,7 +612,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("2:24:00"),
 			makeInterval("3:12:00"),
 		}
-	} else if durationMinutes <= 300 {
+	} else if durationSeconds <= 18000 {
 		// 5 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -607,7 +621,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("3:00:00"),
 			makeInterval("4:00:00"),
 		}
-	} else if durationMinutes <= 360 {
+	} else if durationSeconds <= 21600 {
 		// 6 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -616,7 +630,7 @@ func determineIntervals(durationMinutes int) []timeInterval {
 			makeInterval("3:36:00"),
 			makeInterval("4:48:00"),
 		}
-	} else if durationMinutes <= 420 {
+	} else if durationSeconds <= 25200 {
 		// 7 hours
 		return []timeInterval{
 			makeInterval("0:00:00"),
@@ -793,4 +807,14 @@ func (s *BookingVideoService) CombineDateTime(date time.Time, timeStr string) (t
 		0, 
 		date.Location(),
 	), nil
+}
+
+// GetBookingJSON converts a booking map to a JSON string
+func (s *BookingVideoService) GetBookingJSON(booking map[string]interface{}) string {
+	jsonBytes, err := json.Marshal(booking)
+	if err != nil {
+		log.Printf("Error marshaling booking to JSON: %v", err)
+		return ""
+	}
+	return string(jsonBytes)
 }

@@ -21,6 +21,7 @@ type CameraConfig struct {
 	Width     int    `json:"width"`      // Video width
 	Height    int    `json:"height"`     // Video height
 	FrameRate int    `json:"frame_rate"` // Video frame rate
+	Field     string `json:"field"`      // Camera field ID
 }
 
 // Config contains all configuration for the application
@@ -137,6 +138,7 @@ func LoadConfig() Config {
 
 	// Load multiple cameras configuration
 	camerasJSON := getEnv("CAMERAS_CONFIG", "")
+	log.Printf("Raw CAMERAS_CONFIG: %s", camerasJSON) // Debug: Print raw JSON
 	if camerasJSON != "" {
 		var cameras []CameraConfig
 		if err := json.Unmarshal([]byte(camerasJSON), &cameras); err != nil {
@@ -144,6 +146,9 @@ func LoadConfig() Config {
 		} else {
 			cfg.Cameras = cameras
 			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(cameras))
+			for i, cam := range cameras {
+				log.Printf("Debug Camera %d: %+v", i, cam) // Debug: Print each camera after unmarshaling
+			}
 		}
 	}
 

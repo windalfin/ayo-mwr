@@ -426,25 +426,215 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) 
 	return nil
 }
 
-// CreateVideoPreview creates a low-resolution preview video using ffmpeg
+// CreateVideoPreview creates a preview video using interval-based clipping based on video duration
 func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) error {
-	// Use ffmpeg to create a low-res preview of the video
+	// Get video duration to determine which interval pattern to use
+	duration, err := s.GetVideoDuration(inputPath)
+	if err != nil {
+		return fmt.Errorf("failed to get video duration: %v", err)
+	}
+
+	// Convert duration to minutes for interval selection
+	durationMinutes := int(duration / 60)
+	log.Printf("Creating preview for video with duration: %v minutes (%v seconds)", durationMinutes, duration)
+
+	// Define intervals based on video duration (in seconds)
+	// Each interval is a time range to extract (start_time, end_time)
+	intervals := determineIntervals(durationMinutes)
+
+	// Create a temporary directory for clip segments
+	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("preview_clips_%d", time.Now().UnixNano()))
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir) // Clean up temp directory when done
+
+	// File to store the list of clips for concatenation
+	clipListPath := filepath.Join(tmpDir, "clips.txt")
+	clipListFile, err := os.Create(clipListPath)
+	if err != nil {
+		return fmt.Errorf("failed to create clip list file: %v", err)
+	}
+	defer clipListFile.Close()
+
+	// Extract each interval segment
+	for i, interval := range intervals {
+		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
+		
+		// Extract the clip using ffmpeg
+		cmd := exec.Command(
+			"ffmpeg", "-y", 
+			"-i", inputPath,
+			"-ss", interval.start, // Start time
+			"-to", interval.end,   // End time
+			"-c:v", "libx264", "-c:a", "aac",
+			"-vf", "scale=480:-2", // 480p width, maintain aspect ratio
+			"-crf", "28",         // Higher CRF = lower quality
+			"-preset", "fast",
+			clipPath,
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to extract clip %d: %v, output: %s", i, err, string(out))
+		}
+
+		// Add clip to the list for concatenation
+		fmt.Fprintf(clipListFile, "file '%s'\n", clipPath)
+	}
+
+	// Close the clip list file before using it
+	clipListFile.Close()
+
+	// Concatenate all clips into the final preview video
 	cmd := exec.Command(
-		"ffmpeg", "-y", "-i", inputPath,
-		"-vf", "scale=480:-2", // 480p width, maintain aspect ratio
-		"-crf", "28", // Higher CRF = lower quality (range 0-51)
-		"-preset", "fast",
-		"-c:v", "libx264",
-		"-c:a", "aac", "-b:a", "64k", // Lower audio bitrate
+		"ffmpeg", "-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", clipListPath,
+		"-c", "copy",
 		outputPath,
 	)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ffmpeg preview creation failed: %v, output: %s", err, string(out))
+		return fmt.Errorf("failed to concatenate clips: %v, output: %s", err, string(out))
 	}
 
 	return nil
+}
+
+// timeInterval represents a start and end time for video clipping
+type timeInterval struct {
+	start string
+	end   string
+}
+
+// determineIntervals returns the appropriate time intervals for clipping based on video duration
+func determineIntervals(durationMinutes int) []timeInterval {
+	
+	// Helper function to create an interval
+	makeInterval := func(timeStr string) timeInterval {
+		// Parse the time string (format: H:MM:SS)
+		parts := strings.Split(timeStr, ":")
+		
+		// Create the end time (add 2 seconds)
+		minuteStr := parts[1]
+		secondStr := parts[2]
+		
+		// Calculate seconds for end time
+		second, _ := strconv.Atoi(secondStr)
+		second += 2
+		
+		// Handle overflow
+		if second >= 60 {
+			second -= 60
+			minute, _ := strconv.Atoi(minuteStr)
+			minute++
+			minuteStr = fmt.Sprintf("%02d", minute)
+		}
+		
+		endTime := fmt.Sprintf("%s:%s:%02d", parts[0], minuteStr, second)
+		
+		return timeInterval{start: timeStr, end: endTime}
+	}
+
+	// Determine intervals based on video duration
+	intervals := []timeInterval{}
+	
+	// Always include the first interval at 0:00:00
+	intervals = append(intervals, makeInterval("0:00:00"))
+	
+	if durationMinutes < 1 {
+		// Videos less than 1 minute
+		return []timeInterval{makeInterval("0:00:00")}
+	} else if durationMinutes == 1 {
+		// 1 minute
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:00:20"),
+			makeInterval("0:00:40"),
+		}
+	} else if durationMinutes <= 30 {
+		// 30 minutes
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:10:00"),
+			makeInterval("0:20:00"),
+		}
+	} else if durationMinutes <= 60 {
+		// 1 hour
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:12:00"),
+			makeInterval("0:24:00"),
+			makeInterval("0:36:00"),
+			makeInterval("0:48:00"),
+		}
+	} else if durationMinutes <= 120 {
+		// 2 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:24:00"),
+			makeInterval("0:48:00"),
+			makeInterval("1:12:00"),
+			makeInterval("1:36:00"),
+		}
+	} else if durationMinutes <= 180 {
+		// 3 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:36:00"),
+			makeInterval("1:12:00"),
+			makeInterval("1:48:00"),
+			makeInterval("2:24:00"),
+		}
+	} else if durationMinutes <= 240 {
+		// 4 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("0:48:00"),
+			makeInterval("1:36:00"),
+			makeInterval("2:24:00"),
+			makeInterval("3:12:00"),
+		}
+	} else if durationMinutes <= 300 {
+		// 5 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("1:00:00"),
+			makeInterval("2:00:00"),
+			makeInterval("3:00:00"),
+			makeInterval("4:00:00"),
+		}
+	} else if durationMinutes <= 360 {
+		// 6 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("1:12:00"),
+			makeInterval("2:24:00"),
+			makeInterval("3:36:00"),
+			makeInterval("4:48:00"),
+		}
+	} else if durationMinutes <= 420 {
+		// 7 hours
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("1:24:00"),
+			makeInterval("2:48:00"),
+			makeInterval("4:12:00"),
+			makeInterval("5:36:00"),
+		}
+	} else {
+		// 8 hours or more
+		return []timeInterval{
+			makeInterval("0:00:00"),
+			makeInterval("1:36:00"),
+			makeInterval("3:12:00"),
+			makeInterval("4:48:00"),
+			makeInterval("6:24:00"),
+		}
+	}
 }
 
 // CreateThumbnail extracts a frame from the middle of the video as a thumbnail

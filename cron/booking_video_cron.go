@@ -139,9 +139,9 @@ func processBookings(cfg config.Config, db database.Database, ayoClient *api.Ayo
 		date, _ := booking["date"].(string)
 		startTimeStr, _ := booking["start_time"].(string)
 		endTimeStr, _ := booking["end_time"].(string)
-		// date := "2025-05-10T00:00:00Z"
-		// endTimeStr := "15:00:00"
-		// startTimeStr := "14:00:00"
+		// date := "2025-05-05T00:00:00Z"
+		// endTimeStr := "06:00:00"
+		// startTimeStr := "05:00:00"
 
 		log.Printf("Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
 		
@@ -191,12 +191,31 @@ func processBookings(cfg config.Config, db database.Database, ayoClient *api.Ayo
 		}
 		
 		// 1. Check if current time is after booking end time
-		now := time.Now()
-		if now.Before(endTime) {
-			log.Printf("Skipping booking %s: booking end time (%s) is in the future", bookingID, endTime.Format("2006-01-02 15:04:05"))
+		// Calculate timezone offset dynamically
+		localNow := time.Now()
+		_, localOffset := localNow.Zone()
+		localOffsetHours := time.Duration(localOffset) * time.Second
+		
+		// Get current time in UTC and add the local timezone offset
+		now := time.Now().UTC().Add(localOffsetHours)
+		
+		// Print raw times with zones for debugging
+		log.Printf("DEBUG - Comparing times - Now: %s (%s) vs EndTime: %s (%s)", 
+			now.Format("2006-01-02 15:04:05"), now.Location(), 
+			endTime.Format("2006-01-02 15:04:05"), endTime.Location())
+		
+		// Direct comparison without conversion
+		if now.After(endTime) {
+			log.Printf("Booking %s end time (%s) is in the past, proceeding with processing. Current time: %s", 
+				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
+		} else {
+			// Skip bookings that haven't ended yet
+			log.Printf("Skipping booking %s: booking end time (%s) is in the future, because now is %s", 
+				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
-		log.Printf("Booking %s end time (%s) is in the past, proceeding with processing", bookingID, endTime.Format("2006-01-02 15:04:05"))
+
+		// The log message was moved to the condition above
 
 		// Venue code tidak digunakan lagi karena sudah diakses melalui service
 

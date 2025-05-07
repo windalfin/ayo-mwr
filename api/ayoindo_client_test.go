@@ -146,34 +146,63 @@ func TestGetWatermark(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Update baseURL to point to test server
+	// Save original API base URL
+	originalBaseURL := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+	// Point client to test server
 	os.Setenv("AYOINDO_API_BASE_ENDPOINT", server.URL)
+	defer os.Setenv("AYOINDO_API_BASE_ENDPOINT", originalBaseURL)
 
+	// Create client with updated baseURL
 	client, err := NewAyoIndoClient()
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	result, err := client.GetWatermark()
+	// Call the API
+	result, err := client.GetWatermarkMetadata()
 	if err != nil {
-		t.Fatalf("Failed to get watermark: %v", err)
+		t.Fatalf("GetWatermarkMetadata failed: %v", err)
 	}
 
 	// Check response
-	if result["error"] != false {
-		t.Errorf("Expected error to be false, got %v", result["error"])
+	errorValue, ok := result["error"]
+	if !ok {
+		t.Errorf("Response missing 'error' field")
+	} else if errorValue != false {
+		t.Errorf("Expected error to be false, got %v", errorValue)
 	}
-	if result["status_code"] != float64(200) {
-		t.Errorf("Expected status_code to be 200, got %v", result["status_code"])
+	
+	statusCode, ok := result["status_code"]
+	if !ok {
+		t.Errorf("Response missing 'status_code' field")
+	} else if statusCode != float64(200) {
+		t.Errorf("Expected status_code to be 200, got %v", statusCode)
 	}
 
 	// Check data
-	data, ok := result["data"].([]interface{})
+	dataValue, exists := result["data"]
+	if !exists {
+		t.Fatalf("Response missing 'data' field")
+	}
+	
+	data, ok := dataValue.([]interface{})
 	if !ok {
-		t.Fatalf("Expected data to be an array, got %T", result["data"])
+		t.Fatalf("Expected data to be an array, got %T", dataValue)
 	}
 	if len(data) != 3 {
 		t.Errorf("Expected 3 items in data, got %d", len(data))
+	}
+
+	// Check first item in data
+	item, ok := data[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected data item to be an object")
+	}
+	if item["resolution"] != "480" {
+		t.Errorf("Expected resolution to be '480', got %v", item["resolution"])
+	}
+	if item["path"] != "https://asset.ayo.co.id/venue-a-watermark-480.png" {
+		t.Errorf("Expected path to be 'https://asset.ayo.co.id/venue-a-watermark-480.png', got %v", item["path"])
 	}
 }
 
@@ -201,11 +230,19 @@ func TestGetBookings(t *testing.T) {
 		if query.Get("venue_code") != "TEST123456" {
 			t.Errorf("Expected venue_code to be 'TEST123456', got %s", query.Get("venue_code"))
 		}
-		if query.Get("date") != "2025-04-24" {
-			t.Errorf("Expected date to be '2025-04-24', got %s", query.Get("date"))
+		if query.Get("date") != "2023-03-04" {
+			t.Errorf("Expected date to be '2023-03-04', got %s", query.Get("date"))
 		}
 		if query.Get("signature") == "" {
 			t.Error("Expected signature to be present")
+		}
+
+		// Check headers
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept header to be 'application/json', got %s", r.Header.Get("Accept"))
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type header to be 'application/json', got %s", r.Header.Get("Content-Type"))
 		}
 
 		// Send response
@@ -216,47 +253,78 @@ func TestGetBookings(t *testing.T) {
 			"status_code": 200,
 			"data": [
 				{
-					"order_detail_id": 186926,
-					"booking_id": "MN/0042/230409/0000088",
-					"field_id": 50,
-					"date": "2025-04-24",
+					"booking_id": "BK/0042/230304/0000001",
 					"start_time": "10:00:00",
+					"end_time": "11:00:00",
+					"court_name": "Court A",
+					"date": "2023-03-04"
+				},
+				{
+					"booking_id": "BK/0042/230304/0000002",
+					"start_time": "11:00:00",
 					"end_time": "12:00:00",
-					"booking_source": "reservation"
+					"court_name": "Court B",
+					"date": "2023-03-04"
 				}
 			]
 		}`)
 	}))
 	defer server.Close()
 
-	// Update baseURL to point to test server
+	// Save original API base URL
+	originalBaseURL := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+	// Point client to test server
 	os.Setenv("AYOINDO_API_BASE_ENDPOINT", server.URL)
+	defer os.Setenv("AYOINDO_API_BASE_ENDPOINT", originalBaseURL)
 
+	// Create client with updated baseURL
 	client, err := NewAyoIndoClient()
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	result, err := client.GetBookings("2025-04-24")
+	// Call the API
+	result, err := client.GetBookings("2023-03-04")
 	if err != nil {
-		t.Fatalf("Failed to get bookings: %v", err)
+		t.Fatalf("GetBookings failed: %v", err)
 	}
 
 	// Check response
-	if result["error"] != false {
-		t.Errorf("Expected error to be false, got %v", result["error"])
+	errorValue, ok := result["error"]
+	if !ok {
+		t.Errorf("Response missing 'error' field")
+	} else if errorValue != false {
+		t.Errorf("Expected error to be false, got %v", errorValue)
 	}
-	if result["status_code"] != float64(200) {
-		t.Errorf("Expected status_code to be 200, got %v", result["status_code"])
+	
+	statusCode, ok := result["status_code"]
+	if !ok {
+		t.Errorf("Response missing 'status_code' field")
+	} else if statusCode != float64(200) {
+		t.Errorf("Expected status_code to be 200, got %v", statusCode)
 	}
 
 	// Check data
-	data, ok := result["data"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected data to be an array, got %T", result["data"])
+	dataValue, exists := result["data"]
+	if !exists {
+		t.Fatalf("Response missing 'data' field")
 	}
-	if len(data) != 1 {
-		t.Errorf("Expected 1 item in data, got %d", len(data))
+	
+	data, ok := dataValue.([]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an array, got %T", dataValue)
+	}
+	if len(data) != 2 {
+		t.Errorf("Expected 2 items in data, got %d", len(data))
+	}
+
+	// Check first booking
+	booking, ok := data[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected booking to be an object")
+	}
+	if booking["booking_id"] != "BK/0042/230304/0000001" {
+		t.Errorf("Expected booking_id to be 'BK/0042/230304/0000001', got %v", booking["booking_id"])
 	}
 }
 
@@ -284,50 +352,74 @@ func TestSaveVideoAvailable(t *testing.T) {
 			t.Errorf("Expected Content-Type header to be 'application/json', got %s", r.Header.Get("Content-Type"))
 		}
 
+		// Read and check request body
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("Failed to parse request body: %v", err)
+		}
+		if body["token"] != "test-token" {
+			t.Errorf("Expected token to be 'test-token', got %v", body["token"])
+		}
+		if body["venue_code"] != "TEST123456" {
+			t.Errorf("Expected venue_code to be 'TEST123456', got %v", body["venue_code"])
+		}
+		if body["booking_id"] != "BK/0042/230304/0000001" {
+			t.Errorf("Expected booking_id to be 'BK/0042/230304/0000001', got %v", body["booking_id"])
+		}
+		if body["signature"] == nil {
+			t.Error("Expected signature to be present")
+		}
+
 		// Send response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{
 			"error": false,
-			"message": "Video Preview saved",
-			"status_code": 200
+			"status_code": 200,
+			"data": {
+				"id": 1,
+				"booking_id": "BK/0042/230304/0000001",
+				"preview_path": "https://asset.ayo.co.id/preview-123456.mp4",
+				"image_path": "https://asset.ayo.co.id/image-123456.png"
+			}
 		}`)
 	}))
 	defer server.Close()
 
-	// Update baseURL to point to test server
+	// Save original API base URL
+	originalBaseURL := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+	// Point client to test server
 	os.Setenv("AYOINDO_API_BASE_ENDPOINT", server.URL)
+	defer os.Setenv("AYOINDO_API_BASE_ENDPOINT", originalBaseURL)
 
+	// Create client with updated baseURL
 	client, err := NewAyoIndoClient()
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	// Create test data
-	now := time.Now().Format(time.RFC3339)
-	// Test parameters
-	bookingID := "BX/20230406/001"
-	videoType := "clip"
-	previewPath := "https://asset.ayo.co.id/apng-preview-123456.mp4"
-	imagePath := "https://asset.ayo.co.id/png-preview-123456.png"
-	uniqueID := "XXXYSFEADAFEEB"
-	startTime, _ := time.Parse(time.RFC3339, now)
-	endTime, _ := time.Parse(time.RFC3339, now)
-
-	result, err := client.SaveVideoAvailable(bookingID, videoType, previewPath, imagePath, uniqueID, startTime, endTime)
+	// Call the API
+	startTime := time.Date(2023, 3, 4, 10, 0, 0, 0, time.UTC)
+	endTime := time.Date(2023, 3, 4, 11, 0, 0, 0, time.UTC)
+	result, err := client.SaveVideoAvailable(
+		"BK/0042/230304/0000001",
+		"clip",
+		"https://asset.ayo.co.id/preview-123456.mp4",
+		"https://asset.ayo.co.id/image-123456.png",
+		"TEST_UNIQUE_ID",
+		startTime,
+		endTime,
+	)
 	if err != nil {
-		t.Fatalf("Failed to save video available: %v", err)
+		t.Fatalf("SaveVideoAvailable failed: %v", err)
 	}
 
 	// Check response
-	if result["error"] != false {
-		t.Errorf("Expected error to be false, got %v", result["error"])
-	}
-	if result["status_code"] != float64(200) {
-		t.Errorf("Expected status_code to be 200, got %v", result["status_code"])
-	}
-	if result["message"] != "Video Preview saved" {
-		t.Errorf("Expected message to be 'Video Preview saved', got %v", result["message"])
+	errorValue, ok := result["error"]
+	if !ok {
+		t.Errorf("Response missing 'error' field")
+	} else if errorValue != false {
+		t.Errorf("Expected error to be false, got %v", errorValue)
 	}
 }
 
@@ -359,15 +451,15 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 
 	// Test GetWatermark
 	t.Run("GetWatermark", func(t *testing.T) {
-		result, err := client.GetWatermark()
+		watermarkPath, err := client.GetWatermark()
 		if err != nil {
 			t.Fatalf("GetWatermark failed: %v", err)
 		}
-		t.Logf("GetWatermark response: %+v", result)
+		t.Logf("GetWatermark path: %s", watermarkPath)
 
 		// Basic validation of response
-		if result["error"] != false {
-			t.Errorf("Expected 'error' to be false, got %v", result["error"])
+		if watermarkPath == "" {
+			t.Errorf("Expected non-empty watermark path")
 		}
 	})
 
@@ -392,8 +484,11 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 		t.Logf("GetBookings response: %+v", result)
 
 		// Basic validation of response
-		if result["error"] != false {
-			t.Errorf("Expected 'error' to be false, got %v", result["error"])
+		errorValue, ok := result["error"]
+		if !ok {
+			t.Errorf("Response missing 'error' field")
+		} else if errorValue != false {
+			t.Errorf("Expected 'error' to be false, got %v", errorValue)
 		}
 	})
 
@@ -406,8 +501,11 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 		t.Logf("GetVideoRequests response: %+v", result)
 
 		// Basic validation of response
-		if result["error"] != false {
-			t.Errorf("Expected 'error' to be false, got %v", result["error"])
+		errorValue, ok := result["error"]
+		if !ok {
+			t.Errorf("Response missing 'error' field")
+		} else if errorValue != false {
+			t.Errorf("Expected 'error' to be false, got %v", errorValue)
 		}
 	})
 

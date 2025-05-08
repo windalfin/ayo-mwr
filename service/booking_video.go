@@ -381,7 +381,7 @@ func (s *BookingVideoService) NotifyAyoAPI(
 ) error {
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
-		"mp4", // videoType
+		"clip", // videoType
 		previewURL, // previewPath
 		thumbnailURL, // imagePath
 		uniqueID, // uniqueID

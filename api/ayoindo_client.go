@@ -169,7 +169,7 @@ func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string
 		}
 	}
 	queryString := values.Encode()
-
+	fmt.Println("QueryString:", queryString)
 	// 3. Generate HMAC-SHA512 signature
 	h := hmac.New(sha512.New, []byte(c.secretKey))
 	h.Write([]byte(queryString))
@@ -683,12 +683,15 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 // SaveCameraStatus updates camera status to AYO API
 func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[string]interface{}, error) {
 	// Prepare the parameters
+	strIsonline := "INACTIVE"
+	if isOnline {
+		strIsonline = "ACTIVE"
+	}
 	params := map[string]interface{}{
 		"token":       c.apiToken,
 		"venue_code":  c.venueCode,
 		"camera_id":   cameraID,
-		"is_online":   isOnline,
-		"timestamp":   time.Now().Format(time.RFC3339),
+		"status":   strIsonline,
 	}
 	
 	// Generate signature
@@ -707,7 +710,7 @@ func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[st
 	}
 	
 	// Build the URL
-	endpoint := fmt.Sprintf("%s/api/v1/save-camera-status", c.baseURL)
+	endpoint := fmt.Sprintf("%s/api/v1/update-camera-status", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	
 	// Print full URL and payload for debugging/Postman testing

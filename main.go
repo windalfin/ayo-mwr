@@ -100,6 +100,9 @@ func main() {
 	// Start booking video processing cron job (every 30 minutes)
 	cron.StartBookingVideoCron(cfg)
 
+	// Start video request processing cron job (every 30 minutes)
+	cron.StartVideoRequestCron(cfg)
+
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{
 		AccessKey: cfg.R2AccessKey,

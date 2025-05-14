@@ -600,6 +600,70 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 	return videos, nil
 }
 
+// GetVideoByUniqueID returns a video with the specified unique ID
+func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
+	var video VideoMetadata
+	var createdAt, finishedAt, uploadedAt sql.NullTime
+	var status string
+	var orderDetailID sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT 
+			id, camera_name, local_path, hls_path, hls_url, 
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
+			size, duration
+		FROM videos 
+		WHERE unique_id = ?
+	`, uniqueID).Scan(
+		&video.ID, &video.CameraName, &video.LocalPath, &video.HLSPath, &video.HLSURL,
+		&video.R2HLSPath, &video.R2MP4Path, &video.R2HLSURL, &video.R2MP4URL,
+		&video.R2PreviewMP4Path, &video.R2PreviewMP4URL, &video.R2PreviewPNGPath, &video.R2PreviewPNGURL,
+		&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
+		&createdAt, &finishedAt, &uploadedAt,
+		&video.Size, &video.Duration,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No video found with this unique ID
+		}
+		return nil, err
+	}
+
+	// Convert string status to VideoStatus enum
+	switch status {
+	case "pending":
+		video.Status = StatusPending
+	case "processing":
+		video.Status = StatusProcessing
+	case "uploading":
+		video.Status = StatusUploading
+	case "ready":
+		video.Status = StatusReady
+	case "failed":
+		video.Status = StatusFailed
+	default:
+		video.Status = StatusPending
+	}
+
+	if createdAt.Valid {
+		video.CreatedAt = createdAt.Time
+	}
+	if finishedAt.Valid {
+		video.FinishedAt = &finishedAt.Time
+	}
+	if uploadedAt.Valid {
+		video.UploadedAt = &uploadedAt.Time
+	}
+	if orderDetailID.Valid {
+		video.OrderDetailID = orderDetailID.String
+	}
+
+	return &video, nil
+}
+
 // Close closes the database connection
 func (s *SQLiteDB) Close() error {
 	return s.db.Close()

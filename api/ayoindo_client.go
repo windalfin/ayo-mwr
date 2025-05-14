@@ -142,6 +142,7 @@ func NewAyoIndoClient() (*AyoIndoClient, error) {
 // GenerateSignature creates an HMAC-SHA512 signature as specified in AYO API documentation
 func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string, error) {
 	// 1. Sort the data by key in ascending order
+	fmt.Println("Params:", params)
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
@@ -168,6 +169,12 @@ func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string
 			values.Add(k, string(jsonVal))
 		}
 	}
+	// var queryString string
+	// if values.Get("video") != "" {
+	// 	queryString = "booking_id=BK%2F0003%2F250106%2F0000003&end_timestamp=2025-05-08T11%3A46%3A04%2B07%3A00&start_timestamp=2025-05-08T11%3A45%3A18%2B07%3A00&token=RtYNF7Abg6xFpYJLqdJy&type=clip&venue_code=eohcbaWbVH&video=download_path%3Ahttps%3A%2F%2Fmedia.beligem.com%2Fmp4%2FBK-0003-250106-0000001_camera_3_20250508114511.mp4%2Cresolution%3A%2Cstream_path%3Ahttps%3A%2F%2Fmedia.beligem.com%2Fhls%2FBK-0003-250106-0000001_camera_3_20250508114511%2Fplaylist.m3u8&video_request_id=sample-request-video-id-1"
+	// } else {
+	// 	queryString = values.Encode()
+	// }
 	queryString := values.Encode()
 	fmt.Println("QueryString:", queryString)
 	// 3. Generate HMAC-SHA512 signature
@@ -460,12 +467,13 @@ func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, e
 }
 
 // SaveVideo saves video path information to AYO API
-func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, uniqueID, videoType, streamPath, downloadPath string, startTime, endTime time.Time) (map[string]interface{}, error) {
+func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPath, downloadPath string, startTime, endTime time.Time) (map[string]interface{}, error) {
 	// Prepare video object according to documentation
-	videoObj := map[string]interface{}{
-		"stream_path":   streamPath,
-		"download_path": downloadPath,
-	}
+
+	// value videoObj as string = "download_path:https://media.beligem.com/mp4/BK-0003-250106-0000001_camera_3_20250508114511.mp4," +
+	//             "resolution:," +
+	//             "stream_path:https://media.beligem.com/hls/BK-0003-250106-0000001_camera_3_20250508114511/playlist.m3u8",
+	videoObj := "download_path:" + downloadPath + "," + "resolution:," + "stream_path:" + streamPath
 
 	// Prepare the parameters
 	params := map[string]interface{}{
@@ -473,9 +481,8 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, uniqueID, videoType
 		"venue_code":       c.venueCode,
 		"video_request_id": videoRequestID,
 		"booking_id":       bookingID,
-		"unique_id":        uniqueID,
 		"type":             videoType,
-		"video":            []map[string]interface{}{videoObj}, // Menggunakan "video" (bukan "videos") dan format array objek
+		"video":            videoObj, // Menggunakan "video" (bukan "videos") dan format single objek
 		"start_timestamp":  startTime.Format(time.RFC3339),
 		"end_timestamp":    endTime.Format(time.RFC3339),
 	}
@@ -485,10 +492,14 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, uniqueID, videoType
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+	videoObjPost := map[string]interface{}{
+		"stream_path":   streamPath,
+		"download_path": downloadPath,
+		"resolution":    "", // Assuming 1080p, adjust if needed
+	}
 	// Add signature to parameters
 	params["signature"] = signature
-	
+	params["video"] = []map[string]interface{}{videoObjPost}
 	// Convert parameters to JSON
 	payload, err := json.Marshal(params)
 	if err != nil {

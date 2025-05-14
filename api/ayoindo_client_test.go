@@ -494,7 +494,8 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 
 	// Test GetVideoRequests
 	t.Run("GetVideoRequests", func(t *testing.T) {
-		result, err := client.GetVideoRequests()
+		// Use a specific date that works with the API
+		result, err := client.GetVideoRequests("")
 		if err != nil {
 			t.Fatalf("GetVideoRequests failed: %v", err)
 		}
@@ -597,7 +598,7 @@ func ExampleAyoIndoClient() {
 
 	// Get video requests
 	fmt.Println("Testing GetVideoRequests...")
-	videoRequests, err := client.GetVideoRequests()
+	videoRequests, err := client.GetVideoRequests("2025-04-28")
 	if err != nil {
 		fmt.Printf("Error getting video requests: %v\n", err)
 	} else {

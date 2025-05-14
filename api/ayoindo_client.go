@@ -387,12 +387,20 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 }
 
 // GetVideoRequests retrieves video requests from AYO API
-func (c *AyoIndoClient) GetVideoRequests() (map[string]interface{}, error) {
+func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":      c.apiToken,
 		"venue_code": c.venueCode,
 	}
+	
+	// If date is provided, add it to parameters
+	// if date != "" {
+	// 	params["date"] = date
+	// } else {
+	// 	// If date is empty, use today's date as default
+	// 	params["date"] = time.Now().Format("2006-01-02")
+	// }
 	
 	// Generate signature
 	signature, err := c.GenerateSignature(params)

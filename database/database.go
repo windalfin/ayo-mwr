@@ -61,6 +61,7 @@ type Database interface {
 
 	// Booking operations
 	GetVideosByBookingID(bookingID string) ([]VideoMetadata, error)
+	GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error)
 
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error

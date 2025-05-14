@@ -185,7 +185,6 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 		result, err := ayoClient.SaveVideo(
 			videoRequestID,
 			bookingID,
-			uniqueID,
 			"clip", // Assuming "clip" as video type, adjust if needed
 			videoData[0].StreamPath,
 			videoData[0].DownloadPath,

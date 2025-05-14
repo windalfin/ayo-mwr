@@ -530,14 +530,14 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	t.Run("SaveVideo", func(t *testing.T) {
 		videoRequestID := "sample-request-video-id"
 		bookingID := "BX/20230406/001"
-		uniqueID := "TEST_UNIQUE_ID_" + time.Now().Format("20060102150405")
+
 		videoType := "clip"
 		streamPath := "https://asset.ayo.co.id/stream-123456.m3u8"
 		downloadPath := "https://asset.ayo.co.id/download-123456.mp4"
 		startTime := time.Now()
 		endTime := startTime.Add(10 * time.Minute)
 
-		result, err := client.SaveVideo(videoRequestID, bookingID, uniqueID, videoType, streamPath, downloadPath, startTime, endTime)
+		result, err := client.SaveVideo(videoRequestID, bookingID, videoType, streamPath, downloadPath, startTime, endTime)
 		// Error is expected without actual video files, but URL and body should be printed
 		t.Logf("SaveVideo attempted, got: %v, err: %v", result, err)
 	})

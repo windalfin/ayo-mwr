@@ -160,8 +160,8 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	startTime := endTime.Add(-1 * time.Minute)
 
 	// Get today's date for booking lookup
-	// today := endTime.Format("2006-01-02")
-	today := "2025-04-30"
+	today := endTime.Format("2006-01-02")
+	// today := "2025-04-30"
 	// Get bookings from AYO API
 	response, err := ayoClient.GetBookings(today)
 	if err != nil {
@@ -239,8 +239,8 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 			break
 		}
-		matchingBooking = booking
-		orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
+		// matchingBooking = booking
+		// orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 	}
 	
 	// Check if matching booking was found

@@ -21,6 +21,7 @@ type CameraConfig struct {
 	Width     int    `json:"width"`      // Video width
 	Height    int    `json:"height"`     // Video height
 	FrameRate int    `json:"frame_rate"` // Video frame rate
+	Field     string `json:"field"`      // Camera field ID
 }
 
 // Config contains all configuration for the application
@@ -65,6 +66,7 @@ type Config struct {
 	R2Bucket     string
 	R2Region     string
 	R2Endpoint   string
+	R2BaseURL    string // URL publik untuk akses file (mis. https://media.beligem.com)
 	R2Enabled    bool
 	R2TokenValue string
 
@@ -130,11 +132,13 @@ func LoadConfig() Config {
 		R2AccountID:  getEnv("R2_ACCOUNT_ID", ""),
 		R2Bucket:     getEnv("R2_BUCKET", ""),
 		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
+		R2BaseURL:    getEnv("R2_BASE_URL", ""),
 		R2Region:     getEnv("R2_REGION", "auto"),
 	}
 
 	// Load multiple cameras configuration
 	camerasJSON := getEnv("CAMERAS_CONFIG", "")
+	log.Printf("Raw CAMERAS_CONFIG: %s", camerasJSON) // Debug: Print raw JSON
 	if camerasJSON != "" {
 		var cameras []CameraConfig
 		if err := json.Unmarshal([]byte(camerasJSON), &cameras); err != nil {
@@ -142,6 +146,9 @@ func LoadConfig() Config {
 		} else {
 			cfg.Cameras = cameras
 			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(cameras))
+			for i, cam := range cameras {
+				log.Printf("Debug Camera %d: %+v", i, cam) // Debug: Print each camera after unmarshaling
+			}
 		}
 	}
 

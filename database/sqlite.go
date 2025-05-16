@@ -45,6 +45,14 @@ func initTables(db *sql.DB) error {
 			r2_mp4_path TEXT,
 			r2_hls_url TEXT,
 			r2_mp4_url TEXT,
+			r2_preview_mp4_path TEXT,
+			r2_preview_mp4_url TEXT,
+			r2_preview_png_path TEXT,
+			r2_preview_png_url TEXT,
+			unique_id TEXT,
+			order_detail_id TEXT,
+			booking_id TEXT,
+			raw_json TEXT,
 			status TEXT,
 			error TEXT,
 			created_at DATETIME,
@@ -54,6 +62,31 @@ func initTables(db *sql.DB) error {
 	`)
 	if err != nil {
 		return err
+	}
+	
+	// Migrasi: Coba tambahkan kolom-kolom yang mungkin belum ada
+	// Ini akan gagal dengan error tetapi tidak kritis jika kolom sudah ada
+	_, migrationErr := db.Exec("ALTER TABLE videos ADD COLUMN camera_name TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for camera_name: %v (bisa abaikan jika kolom sudah ada)", migrationErr)
+	} else {
+		log.Printf("Success: Menambahkan kolom camera_name ke tabel videos")
+	}
+	
+	// Tambahkan kolom size jika belum ada
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN size INTEGER")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for size: %v (bisa abaikan jika kolom sudah ada)", migrationErr)
+	} else {
+		log.Printf("Success: Menambahkan kolom size ke tabel videos")
+	}
+	
+	// Tambahkan kolom duration jika belum ada
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN duration REAL")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for duration: %v (bisa abaikan jika kolom sudah ada)", migrationErr)
+	} else {
+		log.Printf("Success: Menambahkan kolom duration ke tabel videos")
 	}
 
 	// Create index on status
@@ -74,10 +107,12 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 		INSERT INTO videos (
 			id, camera_name, local_path, hls_path, hls_url, 
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
-			status, error, created_at, finished_at, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
+			size, duration
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metadata.ID,
-		metadata.CameraID,
+		metadata.CameraName,
 		metadata.LocalPath,
 		metadata.HLSPath,
 		metadata.HLSURL,
@@ -85,11 +120,21 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 		metadata.R2MP4Path,
 		metadata.R2HLSURL,
 		metadata.R2MP4URL,
+		metadata.R2PreviewMP4Path,
+		metadata.R2PreviewMP4URL,
+		metadata.R2PreviewPNGPath,
+		metadata.R2PreviewPNGURL,
+		metadata.UniqueID,
+		metadata.OrderDetailID,
+		metadata.BookingID,
+		metadata.RawJSON,
 		metadata.Status,
 		metadata.ErrorMessage,
 		metadata.CreatedAt,
 		metadata.FinishedAt,
-		nil,
+		metadata.UploadedAt,
+		metadata.Size,
+		metadata.Duration,
 	)
 	return err
 }
@@ -98,12 +143,14 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	var video VideoMetadata
 	var finishedAt, uploadedAt sql.NullTime
-	var cameraName sql.NullString
+	var cameraName, uniqueID, orderDetailID, bookingID, rawJSON sql.NullString
 
 	err := s.db.QueryRow(`
 		SELECT id, camera_name, local_path, hls_path, hls_url,
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
-			status, error, created_at, finished_at, uploaded_at
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
+			size, duration
 		FROM videos WHERE id = ?`, id).Scan(
 		&video.ID,
 		&cameraName,
@@ -114,11 +161,21 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		&video.R2MP4Path,
 		&video.R2HLSURL,
 		&video.R2MP4URL,
+		&video.R2PreviewMP4Path,
+		&video.R2PreviewMP4URL,
+		&video.R2PreviewPNGPath,
+		&video.R2PreviewPNGURL,
+		&uniqueID,
+		&orderDetailID,
+		&bookingID,
+		&rawJSON,
 		&video.Status,
 		&video.ErrorMessage,
 		&video.CreatedAt,
 		&finishedAt,
 		&uploadedAt,
+		&video.Size,
+		&video.Duration,
 	)
 
 	if err == sql.ErrNoRows {
@@ -129,10 +186,26 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	}
 
 	if cameraName.Valid {
-		video.CameraID = cameraName.String
+		video.CameraName = cameraName.String
 	}
 	if finishedAt.Valid {
 		video.FinishedAt = &finishedAt.Time
+	}
+	
+	if uploadedAt.Valid {
+		video.UploadedAt = &uploadedAt.Time
+	}
+	if uniqueID.Valid {
+		video.UniqueID = uniqueID.String
+	}
+	if orderDetailID.Valid {
+		video.OrderDetailID = orderDetailID.String
+	}
+	if bookingID.Valid {
+		video.BookingID = bookingID.String
+	}
+	if rawJSON.Valid {
+		video.RawJSON = rawJSON.String
 	}
 
 	return &video, nil
@@ -150,11 +223,22 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 			r2_mp4_path = ?,
 			r2_hls_url = ?,
 			r2_mp4_url = ?,
+			r2_preview_mp4_path = ?,
+			r2_preview_mp4_url = ?,
+			r2_preview_png_path = ?,
+			r2_preview_png_url = ?,
+			unique_id = ?,
+			order_detail_id = ?,
+			booking_id = ?,
+			raw_json = ?,
 			status = ?,
 			error = ?,
-			finished_at = ?
+			finished_at = ?,
+			uploaded_at = ?,
+			size = ?,
+			duration = ?
 		WHERE id = ?`,
-		metadata.CameraID,
+		metadata.CameraName,
 		metadata.LocalPath,
 		metadata.HLSPath,
 		metadata.HLSURL,
@@ -162,9 +246,20 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 		metadata.R2MP4Path,
 		metadata.R2HLSURL,
 		metadata.R2MP4URL,
+		metadata.R2PreviewMP4Path,
+		metadata.R2PreviewMP4URL,
+		metadata.R2PreviewPNGPath,
+		metadata.R2PreviewPNGURL,
+		metadata.UniqueID,
+		metadata.OrderDetailID,
+		metadata.BookingID,
+		metadata.RawJSON,
 		metadata.Status,
 		metadata.ErrorMessage,
 		metadata.FinishedAt,
+		metadata.UploadedAt,
+		metadata.Size,
+		metadata.Duration,
 		metadata.ID,
 	)
 	return err
@@ -172,22 +267,36 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 
 // UpdateVideoR2Paths updates the R2 paths for a video
 func (s *SQLiteDB) UpdateVideoR2Paths(id, hlsPath, mp4Path string) error {
-	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET r2_hls_path = ?, r2_mp4_path = ?
-		WHERE id = ?`,
-		hlsPath, mp4Path, id)
-	return err
+	// Dapatkan data saat ini untuk memastikan field-field lainnya tidak hilang
+	currentVideo, err := s.GetVideo(id)
+	if err != nil {
+		return fmt.Errorf("failed to get video data for R2 path update: %v", err)
+	}
+	
+	// Update hanya path R2 tanpa mengubah field lain
+	currentVideo.R2HLSPath = hlsPath
+	currentVideo.R2MP4Path = mp4Path
+	
+	// Gunakan UpdateVideo untuk memastikan semua field tetap terjaga
+	return s.UpdateVideo(*currentVideo)
 }
 
 // UpdateVideoR2URLs updates the R2 URLs for a video
 func (s *SQLiteDB) UpdateVideoR2URLs(id, hlsURL, mp4URL string) error {
-	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET r2_hls_url = ?, r2_mp4_url = ?
-		WHERE id = ?`,
-		hlsURL, mp4URL, id)
-	return err
+	// Dapatkan data saat ini untuk memastikan field-field lainnya tidak hilang
+	currentVideo, err := s.GetVideo(id)
+	if err != nil {
+		return fmt.Errorf("failed to get video data for R2 URL update: %v", err)
+	}
+	
+	// Update URL R2 dan timestamp upload
+	now := time.Now()
+	currentVideo.R2HLSURL = hlsURL
+	currentVideo.R2MP4URL = mp4URL
+	currentVideo.UploadedAt = &now
+	
+	// Gunakan UpdateVideo untuk memastikan semua field tetap terjaga
+	return s.UpdateVideo(*currentVideo)
 }
 
 // ListVideos retrieves a list of videos with pagination
@@ -196,7 +305,8 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 		SELECT 
 			id, camera_name, local_path, hls_path, hls_url,
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
-			status, error, created_at, finished_at, uploaded_at
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at
 		FROM videos 
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -211,7 +321,7 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 	for rows.Next() {
 		var video VideoMetadata
 		var finishedAt, uploadedAt sql.NullTime
-		var cameraName sql.NullString
+		var cameraName, uniqueID, orderDetailID, bookingID, rawJSON sql.NullString
 
 		err := rows.Scan(
 			&video.ID,
@@ -223,6 +333,14 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 			&video.R2MP4Path,
 			&video.R2HLSURL,
 			&video.R2MP4URL,
+			&video.R2PreviewMP4Path,
+			&video.R2PreviewMP4URL,
+			&video.R2PreviewPNGPath,
+			&video.R2PreviewPNGURL,
+			&uniqueID,
+			&orderDetailID,
+			&bookingID,
+			&rawJSON,
 			&video.Status,
 			&video.ErrorMessage,
 			&video.CreatedAt,
@@ -235,10 +353,22 @@ func (s *SQLiteDB) ListVideos(limit, offset int) ([]VideoMetadata, error) {
 		}
 
 		if cameraName.Valid {
-			video.CameraID = cameraName.String
+			video.CameraName = cameraName.String
 		}
 		if finishedAt.Valid {
 			video.FinishedAt = &finishedAt.Time
+		}
+		if uniqueID.Valid {
+			video.UniqueID = uniqueID.String
+		}
+		if orderDetailID.Valid {
+			video.OrderDetailID = orderDetailID.String
+		}
+		if bookingID.Valid {
+			video.BookingID = bookingID.String
+		}
+		if rawJSON.Valid {
+			video.RawJSON = rawJSON.String
 		}
 
 		videos = append(videos, video)
@@ -257,7 +387,8 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 		SELECT 
 			id, camera_name, local_path, hls_path, hls_url,
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
-			status, error, created_at, finished_at, uploaded_at
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at
 		FROM videos 
 		WHERE status = ?
 		ORDER BY created_at DESC
@@ -273,7 +404,7 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 	for rows.Next() {
 		var video VideoMetadata
 		var finishedAt, uploadedAt sql.NullTime
-		var cameraName sql.NullString
+		var cameraName, uniqueID, orderDetailID, bookingID, rawJSON sql.NullString
 
 		err := rows.Scan(
 			&video.ID,
@@ -285,6 +416,14 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 			&video.R2MP4Path,
 			&video.R2HLSURL,
 			&video.R2MP4URL,
+			&video.R2PreviewMP4Path,
+			&video.R2PreviewMP4URL,
+			&video.R2PreviewPNGPath,
+			&video.R2PreviewPNGURL,
+			&uniqueID,
+			&orderDetailID,
+			&bookingID,
+			&rawJSON,
 			&video.Status,
 			&video.ErrorMessage,
 			&video.CreatedAt,
@@ -297,10 +436,25 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 		}
 
 		if cameraName.Valid {
-			video.CameraID = cameraName.String
+			video.CameraName = cameraName.String
 		}
 		if finishedAt.Valid {
 			video.FinishedAt = &finishedAt.Time
+		}
+		if uploadedAt.Valid {
+			video.UploadedAt = &uploadedAt.Time 
+		}
+		if uniqueID.Valid {
+			video.UniqueID = uniqueID.String
+		}
+		if orderDetailID.Valid {
+			video.OrderDetailID = orderDetailID.String
+		}
+		if bookingID.Valid {
+			video.BookingID = bookingID.String
+		}
+		if rawJSON.Valid {
+			video.RawJSON = rawJSON.String
 		}
 
 		videos = append(videos, video)
@@ -315,25 +469,45 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 
 // UpdateVideoStatus updates the status and optional error message of a video
 func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error {
-	var finishedAt *time.Time
-
-	// If status is ready or failed, set finished_at to current time
+	// Pertama, cek apakah kita perlu mendapatkan data lama untuk dipertahankan
 	if status == StatusReady || status == StatusFailed {
+		// Dapatkan data video saat ini
+		currentVideo, err := s.GetVideo(id)
+		if err != nil {
+			return fmt.Errorf("failed to get current video data: %v", err)
+		}
+
+		// Pastikan field-field penting dari video tetap terisi
+		// dengan mempertahankan nilai yang sudah ada
 		now := time.Now()
-		finishedAt = &now
-	}
+		
+		// Update data video yang ada dengan status baru dan finished_at
+		currentVideo.Status = status
+		currentVideo.ErrorMessage = errorMsg
+		currentVideo.FinishedAt = &now
+		
+		// Periksa apakah field-field penting kosong
+		if currentVideo.CameraName == "" || currentVideo.LocalPath == "" || 
+		   currentVideo.UniqueID == "" || currentVideo.OrderDetailID == "" || 
+		   currentVideo.BookingID == "" {
+			log.Printf("Warning: Some important fields are empty for video %s. This might cause issues.", id)
+		}
+		
+		// Update video menggunakan UpdateVideo untuk memastikan semua field terjaga
+		return s.UpdateVideo(*currentVideo)
+	} else {
+		// Untuk status selain ready dan failed, cukup perbarui status dan error
+		_, err := s.db.Exec(`
+			UPDATE videos 
+			SET 
+				status = ?,
+				error = ?
+			WHERE id = ?
+		`, status, errorMsg, id)
 
-	_, err := s.db.Exec(`
-		UPDATE videos 
-		SET 
-			status = ?,
-			error = ?,
-			finished_at = ?
-		WHERE id = ?
-	`, status, errorMsg, finishedAt, id)
-
-	if err != nil {
-		return fmt.Errorf("failed to update video status: %v", err)
+		if err != nil {
+			return fmt.Errorf("failed to update video status: %v", err)
+		}
 	}
 
 	log.Printf("Updated video %s status to %s", id, status)
@@ -348,6 +522,146 @@ func (s *SQLiteDB) DeleteVideo(id string) error {
 	}
 
 	return nil
+}
+
+// GetVideosByBookingID returns all videos for a specific booking ID
+func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, error) {
+	rows, err := s.db.Query(`
+		SELECT 
+			id, camera_name, local_path, hls_path, hls_url, 
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
+			size, duration
+		FROM videos 
+		WHERE booking_id = ?
+		ORDER BY created_at DESC
+	`, bookingID)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var videos []VideoMetadata
+	for rows.Next() {
+		var video VideoMetadata
+		var createdAt, finishedAt, uploadedAt sql.NullTime
+		var status string
+		var orderDetailID sql.NullString
+
+		err := rows.Scan(
+			&video.ID, &video.CameraName, &video.LocalPath, &video.HLSPath, &video.HLSURL,
+			&video.R2HLSPath, &video.R2MP4Path, &video.R2HLSURL, &video.R2MP4URL,
+			&video.R2PreviewMP4Path, &video.R2PreviewMP4URL, &video.R2PreviewPNGPath, &video.R2PreviewPNGURL,
+			&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
+			&createdAt, &finishedAt, &uploadedAt,
+			&video.Size, &video.Duration,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert string status to VideoStatus enum
+		switch status {
+		case "pending":
+			video.Status = StatusPending
+		case "processing":
+			video.Status = StatusProcessing
+		case "uploading":
+			video.Status = StatusUploading
+		case "ready":
+			video.Status = StatusReady
+		case "failed":
+			video.Status = StatusFailed
+		default:
+			video.Status = StatusPending
+		}
+		if createdAt.Valid {
+			video.CreatedAt = createdAt.Time
+		}
+		if finishedAt.Valid {
+			video.FinishedAt = &finishedAt.Time
+		}
+		if uploadedAt.Valid {
+			video.UploadedAt = &uploadedAt.Time
+		}
+		if orderDetailID.Valid {
+			video.OrderDetailID = orderDetailID.String
+		}
+
+		videos = append(videos, video)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return videos, nil
+}
+
+// GetVideoByUniqueID returns a video with the specified unique ID
+func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
+	var video VideoMetadata
+	var createdAt, finishedAt, uploadedAt sql.NullTime
+	var status string
+	var orderDetailID sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT 
+			id, camera_name, local_path, hls_path, hls_url, 
+			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
+			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
+			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
+			size, duration
+		FROM videos 
+		WHERE unique_id = ?
+	`, uniqueID).Scan(
+		&video.ID, &video.CameraName, &video.LocalPath, &video.HLSPath, &video.HLSURL,
+		&video.R2HLSPath, &video.R2MP4Path, &video.R2HLSURL, &video.R2MP4URL,
+		&video.R2PreviewMP4Path, &video.R2PreviewMP4URL, &video.R2PreviewPNGPath, &video.R2PreviewPNGURL,
+		&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
+		&createdAt, &finishedAt, &uploadedAt,
+		&video.Size, &video.Duration,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No video found with this unique ID
+		}
+		return nil, err
+	}
+
+	// Convert string status to VideoStatus enum
+	switch status {
+	case "pending":
+		video.Status = StatusPending
+	case "processing":
+		video.Status = StatusProcessing
+	case "uploading":
+		video.Status = StatusUploading
+	case "ready":
+		video.Status = StatusReady
+	case "failed":
+		video.Status = StatusFailed
+	default:
+		video.Status = StatusPending
+	}
+
+	if createdAt.Valid {
+		video.CreatedAt = createdAt.Time
+	}
+	if finishedAt.Valid {
+		video.FinishedAt = &finishedAt.Time
+	}
+	if uploadedAt.Valid {
+		video.UploadedAt = &uploadedAt.Time
+	}
+	if orderDetailID.Valid {
+		video.OrderDetailID = orderDetailID.String
+	}
+
+	return &video, nil
 }
 
 // Close closes the database connection

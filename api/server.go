@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"ayo-mwr/config"
@@ -16,14 +17,19 @@ type Server struct {
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
+	videoRequestHandler  *BookingVideoRequestHandler
 }
 
 func NewServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
+	// Initialize video request handler
+	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
+
 	return &Server{
 		config:        cfg,
 		db:            db,
 		r2Storage:     r2Storage,
 		uploadService: uploadService,
+		videoRequestHandler:  videoRequestHandler,
 	}
 }
 
@@ -31,7 +37,9 @@ func (s *Server) Start() {
 	r := gin.Default()
 	s.setupCORS(r)
 	s.setupRoutes(r)
-	r.Run()
+	portAddr := ":" + s.config.ServerPort
+	fmt.Printf("Starting API server on %s\n", portAddr)
+	r.Run(portAddr)
 }
 
 func (s *Server) setupCORS(r *gin.Engine) {
@@ -66,5 +74,6 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/videos", s.listVideos)
 		api.GET("/system_health", s.getSystemHealth)
 		api.GET("/logs", s.getLogs)
+		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 	}
 }

@@ -222,7 +222,7 @@ func TestGetWatermark(t *testing.T) {
 	// Debug environment variable
 	t.Logf("AYOINDO_API_BASE_ENDPOINT: %s", os.Getenv("AYOINDO_API_BASE_ENDPOINT"))
 
-	imgPath, err := getWatermark(venueCode)
+	imgPath, err := GetWatermark(venueCode)
 	if err != nil {
 		t.Fatalf("getWatermark failed: %v", err)
 	}

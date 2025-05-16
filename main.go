@@ -11,6 +11,7 @@ import (
 	// Update these imports to match your local module path
 	"ayo-mwr/api"
 	"ayo-mwr/config"
+	"ayo-mwr/cron"
 	"ayo-mwr/database"
 	"ayo-mwr/monitoring"
 	"ayo-mwr/recording"
@@ -67,6 +68,15 @@ func main() {
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
 
+	// Start camera status cron job (every 5 minutes)
+	cron.StartCameraStatusCron(cfg)
+
+	// Start booking video processing cron job (every 30 minutes)
+	cron.StartBookingVideoCron(cfg)
+
+	// Start video request processing cron job (every 30 minutes)
+	cron.StartVideoRequestCron(cfg)
+
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{
 		AccessKey: cfg.R2AccessKey,
@@ -75,6 +85,7 @@ func main() {
 		Bucket:    cfg.R2Bucket,
 		Region:    cfg.R2Region,
 		Endpoint:  cfg.R2Endpoint,
+		BaseURL:   cfg.R2BaseURL, // Menggunakan R2_BASE_URL dari environment
 	}
 	r2Storage, err := storage.NewR2Storage(r2Config)
 	if err != nil {

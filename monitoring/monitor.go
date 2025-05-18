@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
-	"path/filepath"
-	"syscall"
+
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -93,6 +94,8 @@ func GetUptime() string {
 
 func GetStorageUsage(path string) (string, error) {
 	var totalSize int64
+
+	// Calculate total size of files in path
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -102,20 +105,20 @@ func GetStorageUsage(path string) (string, error) {
 		}
 		return nil
 	})
+
 	if err != nil {
 		return "-", err
 	}
-	disk := "/"
-	if path != "" {
-		disk = path
-	}
-	stat := &syscall.Statfs_t{}
-	err = syscall.Statfs(disk, stat)
+
+	// Get disk usage information for the path
+	diskUsage, err := disk.Usage(path)
 	if err != nil {
 		return fmt.Sprintf("%s / -", formatBytes(totalSize)), nil
 	}
-	totalDisk := stat.Blocks * uint64(stat.Bsize)
-	return fmt.Sprintf("%s / %s", formatBytes(totalSize), formatBytes(int64(totalDisk))), nil
+
+	return fmt.Sprintf("%s / %s", 
+		formatBytes(totalSize), 
+		formatBytes(int64(diskUsage.Total))), nil
 }
 
 func formatBytes(b int64) string {

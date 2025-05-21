@@ -8,16 +8,18 @@ import (
 	"ayo-mwr/database"
 	"ayo-mwr/service"
 	"ayo-mwr/storage"
+	"ayo-mwr/streaming"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
-	config        config.Config
-	db            database.Database
-	r2Storage     *storage.R2Storage
-	uploadService *service.UploadService
-	videoRequestHandler  *BookingVideoRequestHandler
+	config              config.Config
+	db                  database.Database
+	r2Storage           *storage.R2Storage
+	uploadService       *service.UploadService
+	videoRequestHandler *BookingVideoRequestHandler
+	streamManager       *streaming.StreamManager
 }
 
 func NewServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
@@ -25,11 +27,12 @@ func NewServer(cfg config.Config, db database.Database, r2Storage *storage.R2Sto
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 
 	return &Server{
-		config:        cfg,
-		db:            db,
-		r2Storage:     r2Storage,
-		uploadService: uploadService,
-		videoRequestHandler:  videoRequestHandler,
+		config:              cfg,
+		db:                  db,
+		r2Storage:           r2Storage,
+		uploadService:       uploadService,
+		videoRequestHandler: videoRequestHandler,
+		streamManager:       streaming.NewStreamManager(),
 	}
 }
 
@@ -57,9 +60,9 @@ func (s *Server) setupCORS(r *gin.Engine) {
 
 func (s *Server) setupRoutes(r *gin.Engine) {
 	// Static routes
-	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
+	r.Static("/videos", "/Users/windalfinculmen/Projects/ayo-mwr/videos")
 	// Serve dashboard static files
-	r.Static("/dashboard", filepath.Join("dashboard"))
+	r.Static("/dashboard", "dashboard")
 	r.GET("/dashboard", func(c *gin.Context) {
 		c.File(filepath.Join("dashboard", "admin_dashboard.html"))
 	})
@@ -67,6 +70,12 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	// API routes
 	api := r.Group("/api")
 	{
+		// Stream management
+		api.POST("/stream/:camera/start", s.startLiveStream)
+		api.POST("/stream/:camera/stop", s.stopLiveStream)
+		api.GET("/stream/:camera/*path", s.serveLiveStream)
+
+		// Existing routes
 		api.GET("/streams", s.listStreams)
 		api.GET("/streams/:id", s.getStream)
 		api.POST("/upload", s.handleUpload)

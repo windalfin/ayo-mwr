@@ -92,16 +92,16 @@ func (s *Server) listCameras(c *gin.Context) {
 			status = "online"
 		}
 		lastChecked = time.Now().Format(time.RFC3339)
-		hlsUrl := fmt.Sprintf("/hls/%s/hls/stream.m3u8", cam.Name)
-		cameras = append(cameras, CameraInfo{
+		info := CameraInfo{
 			Name:        cam.Name,
 			IP:          cam.IP,
 			Port:        cam.Port,
 			Path:        cam.Path,
 			Status:      status,
 			LastChecked: lastChecked,
-			HLSUrl:      hlsUrl,
-		})
+			HLSUrl:      fmt.Sprintf("/videos/recordings/%s/hls/stream.m3u8", cam.Name),
+		}
+		cameras = append(cameras, info)
 	}
 	c.JSON(200, cameras)
 }

@@ -3,6 +3,7 @@ package signaling
 import (
 	"bufio"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/tarm/serial"
@@ -60,18 +61,32 @@ func (a *ArduinoSignal) Connect() error {
 
 // listen continuously reads from the serial port
 func (a *ArduinoSignal) listen() {
-	scanner := bufio.NewScanner(a.port)
-	for scanner.Scan() {
-		signal := scanner.Text()
-		if a.callback != nil {
-			if err := a.callback(signal); err != nil {
-				fmt.Printf("Error handling signal: %v\n", err)
-			}
+	reader := bufio.NewReader(a.port)
+	var buffer strings.Builder
+	
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			fmt.Printf("Error reading from serial port: %v\n", err)
+			break
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Scanner error: %v\n", err)
+		
+		// The Arduino code sends each character followed by a semicolon
+		if b == ';' {
+			// End of character marker, process what we have if not empty
+			if buffer.Len() > 0 {
+				signal := buffer.String()
+				if a.callback != nil {
+					if err := a.callback(signal); err != nil {
+						fmt.Printf("Error handling signal: %v\n", err)
+					}
+				}
+				buffer.Reset()
+			}
+		} else {
+			// Add character to our buffer
+			buffer.WriteByte(b)
+		}
 	}
 }
 

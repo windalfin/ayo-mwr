@@ -699,6 +699,71 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 	return fallbackPath, nil
 }
 
+// GetVideoConfiguration retrieves video configuration from AYO API
+func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) {
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
+	}
+	
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+	
+	// Add signature to parameters
+	params["signature"] = signature
+	
+	// Build the URL with query parameters
+	endpoint := fmt.Sprintf("%s/api/v1/video-configuration", c.baseURL)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Add query parameters
+	q := req.URL.Query()
+	for k, v := range params {
+		q.Add(k, fmt.Sprintf("%v", v))
+	}
+	req.URL.RawQuery = q.Encode()
+	
+	// Print full URL for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
+	
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read the response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
+	}
+	
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	return result, nil
+}
+
 // SaveCameraStatus updates camera status to AYO API
 func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[string]interface{}, error) {
 	// Prepare the parameters

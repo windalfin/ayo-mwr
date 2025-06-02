@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -441,6 +442,130 @@ func TestGetBookings(t *testing.T) {
 	}
 }
 
+func TestMarkVideoRequestsInvalid(t *testing.T) {
+	cleanup := setupTestEnv()
+	defer cleanup()
+
+	// Create a test server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check request method
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		// Check path
+		if r.URL.Path != "/api/v1/video-request-invalid" {
+			t.Errorf("Expected path to be '/api/v1/video-request-invalid', got %s", r.URL.Path)
+		}
+
+		// Check headers
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept header to be 'application/json', got %s", r.Header.Get("Accept"))
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type header to be 'application/json', got %s", r.Header.Get("Content-Type"))
+		}
+
+		// Read and validate body
+		body := make(map[string]interface{})
+		json.NewDecoder(r.Body).Decode(&body)
+
+		// Check parameters
+		token, ok := body["token"]
+		if !ok || token != "test-token" {
+			t.Errorf("Expected token to be 'test-token', got %v", token)
+		}
+		venueCode, ok := body["venue_code"]
+		if !ok || venueCode != "TEST123456" {
+			t.Errorf("Expected venue_code to be 'TEST123456', got %v", venueCode)
+		}
+		signature, ok := body["signature"]
+		if !ok || signature == "" {
+			t.Error("Expected signature to be present and non-empty")
+		}
+
+		// Check video_request_ids (as comma-separated string)
+		videoRequestIDs, ok := body["video_request_ids"]
+		if !ok {
+			t.Error("Expected video_request_ids to be present")
+		} else {
+			idsString, ok := videoRequestIDs.(string)
+			if !ok {
+				t.Errorf("Expected video_request_ids to be a string, got %T", videoRequestIDs)
+			} else {
+				expectedString := "video1,video2"
+				if idsString != expectedString {
+					t.Errorf("Expected video_request_ids to be '%s', got '%s'", expectedString, idsString)
+				}
+			}
+		}
+
+		// Send response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{
+			"error": false,
+			"message": "Video requests marked as invalid successfully",
+			"data": {
+				"processed": 2,
+				"success": 2,
+				"failed": 0
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	// Create a client that uses the test server
+	client, err := NewAyoIndoClient()
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	client.baseURL = server.URL
+
+	// Test the function
+	videoRequestIDs := []string{"video1", "video2"}
+	result, err := client.MarkVideoRequestsInvalid(videoRequestIDs)
+	if err != nil {
+		t.Fatalf("MarkVideoRequestsInvalid failed: %v", err)
+	}
+
+	// Check the result
+	errorValue, ok := result["error"]
+	if !ok || errorValue != false {
+		t.Errorf("Expected error to be false, got %v", errorValue)
+	}
+
+	message, ok := result["message"]
+	if !ok || message != "Video requests marked as invalid successfully" {
+		t.Errorf("Expected message to be 'Video requests marked as invalid successfully', got %v", message)
+	}
+
+	data, ok := result["data"]
+	if !ok {
+		t.Fatal("Expected data field to be present")
+	}
+
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be a map, got %T", data)
+	}
+
+	processed, ok := dataMap["processed"]
+	if !ok || processed != float64(2) {
+		t.Errorf("Expected processed to be 2, got %v", processed)
+	}
+
+	success, ok := dataMap["success"]
+	if !ok || success != float64(2) {
+		t.Errorf("Expected success to be 2, got %v", success)
+	}
+
+	failed, ok := dataMap["failed"]
+	if !ok || failed != float64(0) {
+		t.Errorf("Expected failed to be 0, got %v", failed)
+	}
+}
+
 func TestSaveVideoAvailable(t *testing.T) {
 	cleanup := setupTestEnv()
 	defer cleanup()
@@ -703,6 +828,61 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 		_, ok = dataValue.(map[string]interface{})
 		if !ok {
 			t.Fatalf("Expected data to be an object, got %T", dataValue)
+		}
+	})
+	
+	// Test MarkVideoRequestsInvalid
+	t.Run("MarkVideoRequestsInvalid", func(t *testing.T) {
+		// Use test video request IDs - we use a specific prefix for test IDs to avoid affecting real data
+		// In a real integration test with actual video requests, you would use real IDs
+		videoRequestIDs := []string{"TEST-VID-001", "TEST-VID-002"}
+		result, err := client.MarkVideoRequestsInvalid(videoRequestIDs)
+		
+		// Log request details
+		t.Logf("Attempting to mark %d video requests as invalid: %v", len(videoRequestIDs), videoRequestIDs)
+		
+		// Handle potential errors
+		if err != nil {
+			// Log error but don't fail the test - API might respond with error if IDs don't exist
+			t.Logf("MarkVideoRequestsInvalid returned error: %v", err)
+			// Continue with test to inspect error details
+		} else {
+			t.Logf("MarkVideoRequestsInvalid successful response: %+v", result)
+			
+			// Basic validation of response (only when no error)
+			errorValue, ok := result["error"]
+			if !ok {
+				t.Errorf("Response missing 'error' field")
+			} else {
+				t.Logf("Response error field: %v", errorValue)
+			}
+			
+			// Log message from response
+			if message, ok := result["message"]; ok {
+				t.Logf("API Response message: %v", message)
+			}
+			
+			// Check if data field exists and contains the expected structure
+			if dataValue, ok := result["data"]; ok {
+				t.Logf("Response data: %+v", dataValue)
+			}
+		}
+		
+		// Test with empty ID array - should fail with validation error
+		_, err = client.MarkVideoRequestsInvalid([]string{})
+		if err == nil {
+			t.Errorf("Expected error when passing empty video request IDs array, but got success")
+		} else {
+			t.Logf("Correctly got error for empty IDs array: %v", err)
+		}
+		
+		// Test with too many IDs - should fail with validation error
+		tooManyIDs := []string{"id1", "id2", "id3", "id4", "id5", "id6", "id7", "id8", "id9", "id10", "id11"}
+		_, err = client.MarkVideoRequestsInvalid(tooManyIDs)
+		if err == nil {
+			t.Errorf("Expected error when passing too many video request IDs, but got success")
+		} else {
+			t.Logf("Correctly got error for too many IDs: %v", err)
 		}
 	})
 }

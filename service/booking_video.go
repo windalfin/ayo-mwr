@@ -145,6 +145,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		OrderDetailID: orderDetailIDStr,
 		BookingID:     bookingID,
 		RawJSON:       rawJSON,
+		Resolution:    camera.Resolution,
 	}
 	
 	// Create database entry

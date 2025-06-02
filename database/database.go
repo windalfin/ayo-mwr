@@ -44,6 +44,7 @@ type VideoMetadata struct {
 	BookingID         string      `json:"bookingId"`         // Booking ID reference
 	RawJSON           string      `json:"rawJson"`           // Raw JSON data for additional metadata
 	ErrorMessage      string      `json:"errorMessage"`      // Error message if processing failed
+	Resolution        string      `json:"resolution"`        // Resolution of the video
 }
 
 // Database defines the interface for database operations

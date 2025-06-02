@@ -2,6 +2,7 @@ package cron
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -93,7 +94,7 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 	}
 
 	log.Printf("Found %d video requests", len(data))
-
+	videoRequestIDs := []string{}
 	// Process each video request
 	for _, item := range data {
 		request, ok := item.(map[string]interface{})
@@ -120,17 +121,20 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 		matchingVideo, err := db.GetVideoByUniqueID(uniqueID)
 		if err != nil {
 			log.Printf("Error checking database for unique ID %s: %v", uniqueID, err)
+			// videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
 		if matchingVideo == nil {
 			log.Printf("No matching video found for unique_id: %s", uniqueID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
 		// Check if video is ready
 		if matchingVideo.Status != database.StatusReady {
 			log.Printf("Video for unique_id %s is not ready yet (status: %s)", uniqueID, matchingVideo.Status)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
@@ -149,7 +153,7 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 			videoData = append(videoData, videoResolution{
 				StreamPath:   matchingVideo.R2HLSURL,
 				DownloadPath: matchingVideo.R2MP4URL,
-				Resolution:   "1080", // Assuming 1080p resolution, adjust as needed
+				Resolution:   matchingVideo.Resolution,
 			})
 		}
 
@@ -164,6 +168,7 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 
 		if len(videoData) == 0 {
 			log.Printf("No video URLs available for unique_id: %s", uniqueID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
@@ -179,6 +184,56 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 			endTime = time.Now() // Fallback: now
 		} else {
 			endTime = *matchingVideo.FinishedAt
+		}
+
+		// Check if the video URLs are accessible
+		urlsAccessible := true
+
+		// Function to check if a URL is accessible
+		checkURL := func(url string) bool {
+			if url == "" {
+				return false
+			}
+			
+			client := &http.Client{
+				Timeout: 5 * time.Second,
+			}
+			
+			// Use HEAD request to avoid downloading the entire file
+			req, err := http.NewRequest("HEAD", url, nil)
+			if err != nil {
+				log.Printf("Error creating request for URL %s: %v", url, err)
+				return false
+			}
+			
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("Error accessing URL %s: %v", url, err)
+				return false
+			}
+			defer resp.Body.Close()
+			
+			// Check if status code indicates success (2xx range)
+			return resp.StatusCode >= 200 && resp.StatusCode < 300
+		}
+		
+		// Check stream URL
+		if !checkURL(videoData[0].StreamPath) {
+			log.Printf("Stream URL not accessible: %s", videoData[0].StreamPath)
+			urlsAccessible = false
+		}
+		
+		// Check download URL
+		if !checkURL(videoData[0].DownloadPath) {
+			log.Printf("Download URL not accessible: %s", videoData[0].DownloadPath)
+			urlsAccessible = false
+		}
+		
+		// If either URL is not accessible, add to invalid requests and skip
+		if !urlsAccessible {
+			log.Printf("Video URLs not accessible for request ID: %s", videoRequestID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			continue
 		}
 
 		// Send video data to AYO API
@@ -209,4 +264,25 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 	}
 
 	log.Println("Video request processing task completed")
+
+	// Mark invalid video requests if any were found
+	if len(videoRequestIDs) > 0 {
+		log.Printf("Marking %d video requests as invalid: %v", len(videoRequestIDs), videoRequestIDs)
+		
+		// Process in batches of 10 if needed (API limit)
+		for i := 0; i < len(videoRequestIDs); i += 10 {
+			end := i + 10
+			if end > len(videoRequestIDs) {
+				end = len(videoRequestIDs)
+			}
+			
+			batch := videoRequestIDs[i:end]
+			result, err := ayoClient.MarkVideoRequestsInvalid(batch)
+			if err != nil {
+				log.Printf("Error marking video requests as invalid: %v", err)
+			} else {
+				log.Printf("Successfully marked batch of video requests as invalid: %v", result)
+			}
+		}
+	}
 }

@@ -764,6 +764,84 @@ func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) 
 	return result, nil
 }
 
+// MarkVideoRequestsInvalid marks multiple video requests as invalid
+func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[string]interface{}, error) {
+	// Validate input
+	if len(videoRequestIDs) == 0 {
+		return nil, fmt.Errorf("at least one video request ID must be provided")
+	}
+	if len(videoRequestIDs) > 10 {
+		return nil, fmt.Errorf("maximum 10 video request IDs are allowed, got %d", len(videoRequestIDs))
+	}
+
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":             c.apiToken,
+		"venue_code":        c.venueCode,
+		// Convert array to comma-separated string
+		"video_request_ids": strings.Join(videoRequestIDs, ","),
+	}
+
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+
+	// Add signature to parameters
+	params["signature"] = signature
+	params["video_request_ids"] = videoRequestIDs
+
+	// Prepare the request body
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Build the URL
+	endpoint := fmt.Sprintf("%s/api/v1/video-request-invalid", c.baseURL)
+
+	// Print full URL for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
+	fmt.Printf("[DEBUG] API Request Body: %s\n", string(body))
+
+	// Create the request
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result, nil
+}
+
 // SaveCameraStatus updates camera status to AYO API
 func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[string]interface{}, error) {
 	// Prepare the parameters

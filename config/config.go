@@ -22,6 +22,7 @@ type CameraConfig struct {
 	Height    int    `json:"height"`     // Video height
 	FrameRate int    `json:"frame_rate"` // Video frame rate
 	Field     string `json:"field"`      // Camera field ID
+	Resolution string `json:"resolution"` // Camera resolution
 }
 
 // Config contains all configuration for the application
@@ -46,6 +47,7 @@ type Config struct {
 	Width           int
 	Height          int
 	FrameRate       int
+	Resolution      string
 
 	// Storage Configuration
 	StoragePath   string
@@ -166,6 +168,7 @@ func LoadConfig() Config {
 			Width:     cfg.Width,
 			Height:    cfg.Height,
 			FrameRate: cfg.FrameRate,
+			Resolution: cfg.Resolution,
 		})
 	}
 
@@ -214,6 +217,7 @@ func LoadConfigFromFile(filePath string) (Config, error) {
 			Width:     config.Width,
 			Height:    config.Height,
 			FrameRate: config.FrameRate,
+			Resolution: config.Resolution,
 		})
 	}
 

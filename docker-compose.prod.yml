@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  ayo-mwr:
+    image: ayo-mwr
+    container_name: ayo-mwr-prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./videos:/app/videos
+      - ./recordings:/app/recordings
+      - ./data:/app/data
+    ports:
+      - "3000:3000"

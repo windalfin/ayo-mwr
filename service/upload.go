@@ -27,7 +27,7 @@ type QueuedVideo struct {
 type UploadService struct {
 	db           database.Database
 	r2Storage    *storage.R2Storage
-	config       config.Config
+	config       *config.Config
 	uploadQueue  []QueuedVideo
 	queueMutex   sync.Mutex
 	maxRetries   int
@@ -35,7 +35,7 @@ type UploadService struct {
 }
 
 // NewUploadService creates a new upload service
-func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg config.Config) *UploadService {
+func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *config.Config) *UploadService {
 	return &UploadService{
 		db:           db,
 		r2Storage:    r2Storage,

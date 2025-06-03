@@ -37,7 +37,7 @@ func getBookingJSON(booking map[string]interface{}) string {
 // 3. Add watermarks
 // 4. Upload to R2 storage
 // 5. Save to database
-func StartBookingVideoCron(cfg config.Config) {
+func StartBookingVideoCron(cfg *config.Config) {
 	go func() {
 		// Initialize database
 		dbPath := cfg.DatabasePath
@@ -99,7 +99,7 @@ func StartBookingVideoCron(cfg config.Config) {
 }
 
 // processBookings handles fetching bookings and processing them
-func processBookings(cfg config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService) {
+func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService) {
 	log.Println("Running booking video processing task...")
 
 	// Use fixed date for testing

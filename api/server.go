@@ -13,14 +13,14 @@ import (
 )
 
 type Server struct {
-	config        config.Config
+	config        *config.Config
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
 	videoRequestHandler  *BookingVideoRequestHandler
 }
 
-func NewServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
+func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
 	// Initialize video request handler
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 

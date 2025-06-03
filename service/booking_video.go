@@ -31,7 +31,7 @@ type BookingVideoService struct {
 	db        database.Database
 	ayoClient AyoAPIClient
 	r2Client  *storage.R2Storage
-	config    config.Config
+	config    *config.Config
 }
 
 // Tipe file sementara yang disimpan
@@ -61,7 +61,7 @@ func sanitizeID(id string) string {
 }
 
 // NewBookingVideoService creates a new booking video service
-func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Client *storage.R2Storage, cfg config.Config) *BookingVideoService {
+func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Client *storage.R2Storage, cfg *config.Config) *BookingVideoService {
 	return &BookingVideoService{
 		db:        db,
 		ayoClient: ayoClient,
@@ -146,6 +146,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		BookingID:     bookingID,
 		RawJSON:       rawJSON,
 		Resolution:    camera.Resolution,
+		HasRequest:    false, // Explicitly set default to false
 	}
 	
 	// Create database entry

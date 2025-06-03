@@ -44,14 +44,14 @@ func getBookingJSON(booking map[string]interface{}) string {
 
 // BookingVideoRequestHandler handles booking video processing requests
 type BookingVideoRequestHandler struct {
-	config        config.Config
+	config        *config.Config
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
 }
 
 // NewBookingVideoRequestHandler creates a new booking video request handler instance
-func NewBookingVideoRequestHandler(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
+func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
 	return &BookingVideoRequestHandler{
 		config:        cfg,
 		db:            db,

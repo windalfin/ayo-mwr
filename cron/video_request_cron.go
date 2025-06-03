@@ -18,7 +18,7 @@ import (
 // 1. Get pending video requests from AYO API
 // 2. Check if video exists in database by unique_id
 // 3. Send video info to AYO API if it exists
-func StartVideoRequestCron(cfg config.Config) {
+func StartVideoRequestCron(cfg *config.Config) {
 	go func() {
 		// Initialize database
 		dbPath := cfg.DatabasePath
@@ -76,7 +76,7 @@ func StartVideoRequestCron(cfg config.Config) {
 }
 
 // processVideoRequests handles fetching and processing video requests
-func processVideoRequests(cfg config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
+func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
 	log.Println("Running video request processing task...")
 
 	// Get video requests from AYO API

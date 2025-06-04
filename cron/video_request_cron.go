@@ -18,7 +18,9 @@ import (
 // 1. Get pending video requests from AYO API
 // 2. Check if video exists in database by unique_id
 // 3. Send video info to AYO API if it exists
-func StartVideoRequestCron(cfg config.Config) {
+func StartVideoRequestCron(configManager *config.ConfigManager) {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
 	go func() {
 		// Initialize database
 		dbPath := cfg.DatabasePath

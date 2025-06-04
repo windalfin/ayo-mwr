@@ -241,3 +241,26 @@ func EnsurePaths(config Config) {
 		log.Printf("Failed to create database directory %s: %v", dbDir, err)
 	}
 }
+
+// SaveConfigToFile saves the configuration to a JSON file
+func SaveConfigToFile(config Config, filePath string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Marshal to JSON with indentation for readability
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config to JSON: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	log.Printf("Configuration saved to %s", filePath)
+	return nil
+}

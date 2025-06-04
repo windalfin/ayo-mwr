@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AYO Middleware Admin Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
   <style>
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
@@ -36,6 +37,22 @@
     }
     nav a.active, nav a:hover {
       background: #f5f6fa;
+    }
+    .admin-link {
+      color: #fff;
+      text-decoration: none;
+      background-color: rgba(255, 255, 255, 0.2);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      transition: background-color 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .admin-link:hover {
+      background-color: rgba(255, 255, 255, 0.3);
+      color: #fff;
     }
     .container {
       max-width: 1200px;
@@ -156,7 +173,13 @@
   </style>
 </head>
 <body>
-  <header>AYO Middleware Admin Dashboard</header>
+  <header class="d-flex justify-content-between align-items-center">
+    <div>AYO Middleware Admin Dashboard</div>
+    <div>
+      <a href="/admin/cameras" class="admin-link" title="Camera Configuration"><i class="bi bi-camera-video"></i> Camera Config</a>
+      <a href="/admin" class="admin-link ms-2" title="System Settings"><i class="bi bi-gear-fill"></i> System Settings</a>
+    </div>
+  </header>
   <nav>
     <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
     <a href="#videos" data-tab="videos">Videos/Clips</a>

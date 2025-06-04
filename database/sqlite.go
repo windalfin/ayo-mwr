@@ -33,8 +33,20 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 
 // initTables creates the necessary tables if they don't exist
 func initTables(db *sql.DB) error {
-	// Create videos table
+	// Create config table
 	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS config (
+			key TEXT PRIMARY KEY,
+			value TEXT,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create config table: %v", err)
+	}
+
+	// Create videos table
+	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS videos (
 			id TEXT PRIMARY KEY,
 			camera_name TEXT,

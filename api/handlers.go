@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -80,12 +81,26 @@ type CameraInfo struct {
 
 // GET /api/cameras
 func (s *Server) listCameras(c *gin.Context) {
+	// Get current config from manager
+	currentConfig := s.configManager.GetConfig()
+	
 	var cameras []CameraInfo
-	for _, cam := range s.config.Cameras {
+	for _, cam := range currentConfig.Cameras {
 		status := "offline"
 		lastChecked := ""
+		
+		// Construct RTSP URL based on whether username/password are provided
+		var fullURL string
+		if cam.Username != "" && cam.Password != "" {
+			fullURL = fmt.Sprintf("rtsp://%s:%s@%s:%s%s", cam.Username, cam.Password, cam.IP, cam.Port, cam.Path)
+		} else {
+			fullURL = fmt.Sprintf("rtsp://%s:%s%s", cam.IP, cam.Port, cam.Path)
+		}
+		
+		// Log the constructed URL for debugging
+		log.Printf("Testing camera connection for %s: %s", cam.Name, fullURL)
+		
 		// Attempt to check RTSP connection (non-blocking, short timeout)
-		fullURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s", cam.Username, cam.Password, cam.IP, cam.Port, cam.Path)
 		ok, _ := recording.TestRTSPConnection(cam.Name, fullURL)
 		if ok {
 			status = "online"
@@ -162,8 +177,11 @@ func (s *Server) handleUpload(c *gin.Context) {
 
 	// TODO: Prevent concurrent requests for the same video/camera (locking)
 
+	// Get current config from manager
+	currentConfig := s.configManager.GetConfig()
+
 	// Find the closest video file
-	inputPath, err := signaling.FindClosestVideo(s.config.StoragePath, req.CameraName, req.Timestamp)
+	inputPath, err := signaling.FindClosestVideo(currentConfig.StoragePath, req.CameraName, req.Timestamp)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Failed to find video: %v", err)})
 		return
@@ -173,13 +191,13 @@ func (s *Server) handleUpload(c *gin.Context) {
 	videoID := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 
 	// getWatermark for that venue from config or env
-	venueCode := s.config.VenueCode
+	venueCode := currentConfig.VenueCode
 	recordingName := fmt.Sprintf("wm_%s.mp4", videoID)
 
 	// MP4 output: /recordings/[camera]/[recordingName]
-	mp4Path := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "mp4", recordingName)
+	mp4Path := filepath.Join(currentConfig.StoragePath, "recordings", req.CameraName, "mp4", recordingName)
 	// HLS output dir: /recordings/[camera]/hls/[videoId]
-	hlsDir := filepath.Join(s.config.StoragePath, "recordings", req.CameraName, "hls", videoID)
+	hlsDir := filepath.Join(currentConfig.StoragePath, "recordings", req.CameraName, "hls", videoID)
 
 	watermarkPath, err := recording.GetWatermark(venueCode)
 	if err != nil {
@@ -198,7 +216,7 @@ func (s *Server) handleUpload(c *gin.Context) {
 	}
 
 	// Transcode the watermarked video
-	urls, timings, err := transcode.TranscodeVideo(mp4Path, videoID, req.CameraName, s.config)
+	urls, timings, err := transcode.TranscodeVideo(mp4Path, videoID, req.CameraName, currentConfig)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Transcoding failed: %v", err)})
 		return
@@ -235,7 +253,10 @@ func (s *Server) handleUpload(c *gin.Context) {
 
 // GET /api/system_health
 func (s *Server) getSystemHealth(c *gin.Context) {
-	usage, err := monitoring.GetCurrentResourceUsage(s.config.StoragePath)
+	// Get current config from manager
+	currentConfig := s.configManager.GetConfig()
+	
+	usage, err := monitoring.GetCurrentResourceUsage(currentConfig.StoragePath)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

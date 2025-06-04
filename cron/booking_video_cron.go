@@ -37,7 +37,9 @@ func getBookingJSON(booking map[string]interface{}) string {
 // 3. Add watermarks
 // 4. Upload to R2 storage
 // 5. Save to database
-func StartBookingVideoCron(cfg config.Config) {
+func StartBookingVideoCron(configManager *config.ConfigManager) {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
 	go func() {
 		// Initialize database
 		dbPath := cfg.DatabasePath

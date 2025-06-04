@@ -12,7 +12,7 @@ import (
 
 // StartCameraStatusCron initializes a cron job that runs every 5 minutes to check camera status
 // and report to the AYO API using SaveCameraStatus
-func StartCameraStatusCron(cfg config.Config) {
+func StartCameraStatusCron(configManager *config.ConfigManager) {
 	go func() {
 		// Initialize AYO API client
 		ayoClient, err := api.NewAyoIndoClient()
@@ -25,21 +25,23 @@ func StartCameraStatusCron(cfg config.Config) {
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		checkAndReportCameraStatus(cfg, ayoClient)
+		checkAndReportCameraStatus(configManager, ayoClient)
 
 		// Then set up ticker for recurring checks every 5 minutes
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			checkAndReportCameraStatus(cfg, ayoClient)
+			checkAndReportCameraStatus(configManager, ayoClient)
 		}
 	}()
 	log.Println("Camera status cron job started - will check camera connections every 5 minutes")
 }
 
 // checkAndReportCameraStatus checks the status of all cameras and reports it to the AYO API
-func checkAndReportCameraStatus(cfg config.Config, ayoClient *api.AyoIndoClient) {
+func checkAndReportCameraStatus(configManager *config.ConfigManager, ayoClient *api.AyoIndoClient) {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
 	log.Println("Running camera status check...")
 
 	for _, cam := range cfg.Cameras {

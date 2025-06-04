@@ -47,6 +47,12 @@ type VideoMetadata struct {
 	Resolution        string      `json:"resolution"`        // Resolution of the video
 }
 
+// ConfigEntry represents a configuration key-value pair
+type ConfigEntry struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // Database defines the interface for database operations
 type Database interface {
 	// Video operations
@@ -67,6 +73,12 @@ type Database interface {
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
 	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
+
+	// Configuration operations
+	GetAllConfig() (map[string]string, error)
+	GetConfig(key string) (string, error)
+	SetConfig(key, value string) error
+	DeleteConfig(key string) error
 
 	// Helper operations
 	Close() error

@@ -13,19 +13,22 @@ import (
 )
 
 type Server struct {
-	config        config.Config
+	configManager *config.ConfigManager
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
 	videoRequestHandler  *BookingVideoRequestHandler
 }
 
-func NewServer(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
+func NewServer(configManager *config.ConfigManager, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
+	
 	// Initialize video request handler
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 
 	return &Server{
-		config:        cfg,
+		configManager: configManager,
 		db:            db,
 		r2Storage:     r2Storage,
 		uploadService: uploadService,
@@ -37,7 +40,10 @@ func (s *Server) Start() {
 	r := gin.Default()
 	s.setupCORS(r)
 	s.setupRoutes(r)
-	portAddr := ":" + s.config.ServerPort
+	// Get current config from manager
+	currentConfig := s.configManager.GetConfig()
+	
+	portAddr := ":" + currentConfig.ServerPort
 	fmt.Printf("Starting API server on %s\n", portAddr)
 	r.Run(portAddr)
 }
@@ -56,12 +62,21 @@ func (s *Server) setupCORS(r *gin.Engine) {
 }
 
 func (s *Server) setupRoutes(r *gin.Engine) {
+	// Get current config from manager
+	currentConfig := s.configManager.GetConfig()
+	
 	// Static routes
-	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
+	r.Static("/hls", filepath.Join(currentConfig.StoragePath, "hls"))
 	// Serve dashboard static files
 	r.Static("/dashboard", filepath.Join("dashboard"))
 	r.GET("/dashboard", func(c *gin.Context) {
 		c.File(filepath.Join("dashboard", "admin_dashboard.html"))
+	})
+	r.GET("/admin", func(c *gin.Context) {
+		c.File(filepath.Join("dashboard", "admin_config.html"))
+	})
+	r.GET("/admin/cameras", func(c *gin.Context) {
+		c.File(filepath.Join("dashboard", "admin_cameras.html"))
 	})
 
 	// API routes
@@ -75,5 +90,9 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/system_health", s.getSystemHealth)
 		api.GET("/logs", s.getLogs)
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
+		
+		// Config management endpoints
+		api.GET("/config", s.GetConfig)
+		api.POST("/config", s.UpdateConfig)
 	}
 }

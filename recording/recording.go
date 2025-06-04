@@ -36,7 +36,9 @@ func ExtractThumbnail(videoPath, outPath string) error {
 }
 
 // CaptureMultipleRTSPStreams captures video from multiple RTSP streams using FFmpeg and saves them in segments
-func CaptureMultipleRTSPStreams(cfg config.Config) error {
+func CaptureMultipleRTSPStreams(configManager *config.ConfigManager) error {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
 	// Create logs directory if it doesn't exist
 	logDir := filepath.Join(cfg.StoragePath, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -59,13 +61,19 @@ func CaptureMultipleRTSPStreams(cfg config.Config) error {
 			log.Printf("Camera %s is disabled, skipping", camera.Name)
 			continue
 		}
-
+		
+		// Log which camera we're starting to record
+		log.Printf("Starting recording goroutine for camera: %s (ID: %d)", camera.Name, i)
+		
+		// Important: Create local copies of the loop variables to avoid closure issues
+		currentCamera := camera
+		currentID := i
+		
 		wg.Add(1)
-		cameraID := i
-		go func(camera config.CameraConfig, id int) {
+		go func() {
 			defer wg.Done()
-			captureRTSPStreamForCamera(cfg, camera, id)
-		}(camera, cameraID)
+			captureRTSPStreamForCamera(configManager, currentCamera.Name, currentID)
+		}()
 	}
 
 	// Wait for all camera capture routines to complete (they shouldn't unless there's an error)
@@ -111,20 +119,40 @@ func TestRTSPConnection(cameraName, rtspURL string) (bool, error) {
 	}
 }
 
-// captureRTSPStreamForCamera handles a single camera's RTSP stream
-func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, cameraID int) {
-	// Construct the RTSP URL
-	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
-		camera.Username,
-		camera.Password,
-		camera.IP,
-		camera.Port,
-		camera.Path,
-	)
+// captureRTSPStreamForCamera captures RTSP stream for a specific camera
+func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName string, cameraID int) {
+	log.Printf("[%s] Starting continuous RTSP capture (ID: %d)", cameraName, cameraID)
+	// Get current config from manager
+	cfg := configManager.GetConfig()
 
-	cameraName := camera.Name
-	if cameraName == "" {
-		cameraName = fmt.Sprintf("camera_%d", cameraID)
+	// Function to get the latest camera configuration and build RTSP URL
+	getLatestRTSPURL := func() string {
+		// Get the latest camera config from the manager
+		currentCamera := configManager.GetCameraByName(cameraName)
+
+		if currentCamera == nil {
+			log.Printf("[%s] Camera configuration not found, using default", cameraName)
+			return ""
+		}
+
+		// Construct the RTSP URL with the latest camera config
+		rtspURL := ""
+		if currentCamera.Username != "" && currentCamera.Password != "" {
+			rtspURL = fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+				currentCamera.Username,
+				currentCamera.Password,
+				currentCamera.IP,
+				currentCamera.Port,
+				currentCamera.Path,
+			)
+		} else {
+			rtspURL = fmt.Sprintf("rtsp://%s:%s%s",
+				currentCamera.IP,
+				currentCamera.Port,
+				currentCamera.Path,
+			)
+		}
+		return rtspURL
 	}
 
 	// Create camera-specific directories and add MP4 folder
@@ -149,7 +177,10 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 
 		log.Printf("[%s] Creating new video segment: %s\n", cameraName, outputFilename)
 
-		ok, err := TestRTSPConnection(cameraName, rtspURL)
+		// Get the latest RTSP URL using current camera configuration
+		currentRTSPURL := getLatestRTSPURL()
+
+		ok, err := TestRTSPConnection(cameraName, currentRTSPURL)
 		if !ok {
 			log.Printf("[%s] Skipping recording due to failed RTSP connection", cameraName)
 			time.Sleep(10 * time.Second)
@@ -178,7 +209,7 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 
 		// Add input
 		ffmpegArgs = append(ffmpegArgs,
-			"-i", rtspURL,
+			"-i", currentRTSPURL,
 			"-t", fmt.Sprintf("%d", cfg.SegmentDuration),
 		)
 
@@ -187,9 +218,12 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 			"-c:v", "libx264", // Use H.264 codec
 			"-preset", "ultrafast", // Fastest encoding
 			"-tune", "zerolatency", // Reduce latency
-			"-profile:v", "baseline",
+			"-profile:v", "high", // Use high profile for better color
 			"-pix_fmt", "yuv420p", // Standard pixel format
-			"-color_range", "tv", // Explicitly set color range
+			"-colorspace", "bt709", // Standard colorspace
+			"-color_primaries", "bt709", // Standard color primaries
+			"-color_trc", "bt709", // Standard transfer characteristics
+			"-color_range", "tv",
 			"-b:v", "2M", // 2 Mbps video bitrate
 			"-bufsize", "4M",
 			"-c:a", "aac", // Use AAC audio codec
@@ -208,6 +242,7 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 		cmd.Stderr = logFile
 
 		log.Printf("[%s] Starting FFmpeg capture with command: ffmpeg %v", cameraName, ffmpegArgs)
+		log.Printf("[%s] Recording to file: %s", cameraName, outputPath)
 
 		// Create a channel for capture command completion
 		captureDone := make(chan error, 1)
@@ -243,10 +278,13 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 
 // CaptureRTSPSegments is the legacy single-camera capture function
 // Kept for backward compatibility
-func CaptureRTSPSegments(cfg config.Config) error {
+func CaptureRTSPSegments(configManager *config.ConfigManager) error {
+	// Get current config from manager
+	cfg := configManager.GetConfig()
+
 	if len(cfg.Cameras) > 0 {
 		camera := cfg.Cameras[0]
-		captureRTSPStreamForCamera(cfg, camera, 0)
+		captureRTSPStreamForCamera(configManager, camera.Name, 0)
 		return nil
 	}
 	return fmt.Errorf("no cameras configured")

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Configuration - AYO MWR</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f8f9fa;
+        }
+        .config-card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #6c757d;
+            color: white;
+            font-weight: bold;
+        }
+        .form-label {
+            font-weight: 500;
+        }
+        .btn-save {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        .btn-save:hover {
+            background-color: #218838;
+            border-color: #1e7e34;
+        }
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1050;
+        }
+        .sensitive-field {
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row mb-4">
+            <div class="col">
+                <h1><i class="bi bi-gear-fill me-2"></i>System Configuration</h1>
+                <p class="lead">Manage application settings and configuration</p>
+            </div>
+        </div>
+        
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-4">
+            <li class="nav-item">
+                <a class="nav-link active" href="/admin"><i class="bi bi-gear me-1"></i>System Config</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/admin/cameras"><i class="bi bi-camera-video me-1"></i>Camera Config</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/dashboard"><i class="bi bi-display me-1"></i>Dashboard</a>
+            </li>
+        </ul>
+
+        <div class="toast-container">
+            <div class="toast align-items-center text-white bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true" id="saveToast">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="bi bi-check-circle me-2"></i>Configuration saved successfully!
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+        </div>
+
+        <form id="configForm">
+            <!-- Server Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-hdd-rack me-2"></i>Server Configuration
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="venueCode" class="form-label">Venue Code</label>
+                            <input type="text" class="form-control" id="venueCode" name="venueCode">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="serverPort" class="form-label">Server Port</label>
+                            <input type="text" class="form-control" id="serverPort" name="serverPort">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="baseURL" class="form-label">Base URL</label>
+                            <input type="text" class="form-control" id="baseURL" name="baseURL">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-folder me-2"></i>Storage Configuration
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="storagePath" class="form-label">Storage Path</label>
+                            <input type="text" class="form-control" id="storagePath" name="storagePath">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="hardwareAccel" class="form-label">Hardware Acceleration</label>
+                            <input type="text" class="form-control" id="hardwareAccel" name="hardwareAccel">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="codec" class="form-label">Codec</label>
+                            <input type="text" class="form-control" id="codec" name="codec">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- R2 Storage Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-cloud me-2"></i>R2 Storage Configuration
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="r2Enabled" name="r2Enabled">
+                                <label class="form-check-label" for="r2Enabled">Enable R2 Storage</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="r2AccessKey" class="form-label">Access Key</label>
+                            <input type="password" class="form-control sensitive-field" id="r2AccessKey" name="r2AccessKey">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="r2SecretKey" class="form-label">Secret Key</label>
+                            <input type="password" class="form-control sensitive-field" id="r2SecretKey" name="r2SecretKey">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="r2AccountID" class="form-label">Account ID</label>
+                            <input type="text" class="form-control" id="r2AccountID" name="r2AccountID">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="r2Bucket" class="form-label">Bucket</label>
+                            <input type="text" class="form-control" id="r2Bucket" name="r2Bucket">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="r2Endpoint" class="form-label">Endpoint</label>
+                            <input type="text" class="form-control" id="r2Endpoint" name="r2Endpoint">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="r2Region" class="form-label">Region</label>
+                            <input type="text" class="form-control" id="r2Region" name="r2Region">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="r2BaseURL" class="form-label">Base URL</label>
+                            <input type="text" class="form-control" id="r2BaseURL" name="r2BaseURL">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recording Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-camera-video me-2"></i>Recording Configuration
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 mb-3">
+                            <label for="segmentDuration" class="form-label">Segment Duration</label>
+                            <input type="number" class="form-control" id="segmentDuration" name="segmentDuration">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="width" class="form-label">Width</label>
+                            <input type="number" class="form-control" id="width" name="width">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="height" class="form-label">Height</label>
+                            <input type="number" class="form-control" id="height" name="height">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="frameRate" class="form-label">Frame Rate</label>
+                            <input type="number" class="form-control" id="frameRate" name="frameRate">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Arduino Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-cpu me-2"></i>Arduino Configuration
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="arduinoCOMPort" class="form-label">COM Port</label>
+                            <input type="text" class="form-control" id="arduinoCOMPort" name="arduinoCOMPort">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="arduinoBaudRate" class="form-label">Baud Rate</label>
+                            <input type="number" class="form-control" id="arduinoBaudRate" name="arduinoBaudRate">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cameras Configuration -->
+            <div class="card config-card">
+                <div class="card-header">
+                    <i class="bi bi-camera me-2"></i>Cameras Configuration
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>Camera configuration is managed via the Cameras tab in the main dashboard.
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end mb-4">
+                <button type="button" class="btn btn-secondary me-md-2" id="resetBtn">
+                    <i class="bi bi-arrow-counterclockwise me-2"></i>Reset to Defaults
+                </button>
+                <button type="submit" class="btn btn-primary btn-save">
+                    <i class="bi bi-save me-2"></i>Save Configuration
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Initialize Bootstrap toasts
+        const toastElList = document.querySelectorAll('.toast');
+        const toastList = [...toastElList].map(toastEl => new bootstrap.Toast(toastEl));
+
+        // Load configuration on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+
+            // Form submission handler
+            document.getElementById('configForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveConfig();
+            });
+
+            // Reset button handler
+            document.getElementById('resetBtn').addEventListener('click', function() {
+                if (confirm('Are you sure you want to reset all settings to their default values?')) {
+                    loadConfig(); // Reload current config
+                }
+            });
+        });
+
+        // Load configuration from API
+        function loadConfig() {
+            console.log('Fetching configuration from API...');
+            fetch('/api/config')
+                .then(response => {
+                    console.log('API response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error('Failed to load configuration');
+                    }
+                    return response.json();
+                })
+                .then(config => {
+                    console.log('Received configuration:', config);
+                    
+                    // Populate form fields with config values
+                    document.getElementById('venueCode').value = config.VenueCode || '';
+                    document.getElementById('serverPort').value = config.ServerPort || '';
+                    document.getElementById('baseURL').value = config.BaseURL || '';
+                    document.getElementById('storagePath').value = config.StoragePath || '';
+                    document.getElementById('hardwareAccel').value = config.HardwareAccel || '';
+                    document.getElementById('codec').value = config.Codec || '';
+                    document.getElementById('r2Enabled').checked = config.R2Enabled || false;
+                    document.getElementById('r2AccessKey').value = config.R2AccessKey || '';
+                    document.getElementById('r2SecretKey').value = config.R2SecretKey || '';
+                    document.getElementById('r2AccountID').value = config.R2AccountID || '';
+                    document.getElementById('r2Bucket').value = config.R2Bucket || '';
+                    document.getElementById('r2Endpoint').value = config.R2Endpoint || '';
+                    document.getElementById('r2Region').value = config.R2Region || '';
+                    document.getElementById('r2BaseURL').value = config.R2BaseURL || '';
+                    document.getElementById('segmentDuration').value = config.SegmentDuration || '';
+                    document.getElementById('width').value = config.Width || '';
+                    document.getElementById('height').value = config.Height || '';
+                    document.getElementById('frameRate').value = config.FrameRate || '';
+                    document.getElementById('arduinoCOMPort').value = config.ArduinoCOMPort || '';
+                    document.getElementById('arduinoBaudRate').value = config.ArduinoBaudRate || '';
+                    
+                    // Log a sample value to confirm proper access
+                    console.log('Sample value check - Server Port:', config.ServerPort);
+                    
+                    console.log('Form fields populated successfully');
+                })
+                .catch(error => {
+                    console.error('Error loading configuration:', error);
+                    alert('Failed to load configuration: ' + error.message);
+                });
+        }
+
+        // Save configuration to API
+        function saveConfig() {
+            const config = {
+                VenueCode: document.getElementById('venueCode').value,
+                ServerPort: document.getElementById('serverPort').value,
+                BaseURL: document.getElementById('baseURL').value,
+                StoragePath: document.getElementById('storagePath').value,
+                HardwareAccel: document.getElementById('hardwareAccel').value,
+                Codec: document.getElementById('codec').value,
+                R2Enabled: document.getElementById('r2Enabled').checked,
+                R2AccessKey: document.getElementById('r2AccessKey').value,
+                R2SecretKey: document.getElementById('r2SecretKey').value,
+                R2AccountID: document.getElementById('r2AccountID').value,
+                R2Bucket: document.getElementById('r2Bucket').value,
+                R2Endpoint: document.getElementById('r2Endpoint').value,
+                R2Region: document.getElementById('r2Region').value,
+                R2BaseURL: document.getElementById('r2BaseURL').value,
+                SegmentDuration: parseInt(document.getElementById('segmentDuration').value) || 0,
+                Width: parseInt(document.getElementById('width').value) || 0,
+                Height: parseInt(document.getElementById('height').value) || 0,
+                FrameRate: parseInt(document.getElementById('frameRate').value) || 0,
+                ArduinoCOMPort: document.getElementById('arduinoCOMPort').value,
+                ArduinoBaudRate: parseInt(document.getElementById('arduinoBaudRate').value) || 0,
+                // Cameras are managed separately
+            };
+            
+            console.log('Saving configuration:', config);
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to save configuration');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Configuration saved successfully:', data);
+                // Show success toast
+                const toast = bootstrap.Toast.getOrCreateInstance(document.getElementById('saveToast'));
+                toast.show();
+            })
+            .catch(error => {
+                console.error('Error saving configuration:', error);
+                alert('Failed to save configuration: ' + error.message);
+            });
+        }
+    </script>
+</body>
+</html>

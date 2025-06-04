@@ -55,11 +55,17 @@ func TestHandleUpload_HappyPath(t *testing.T) {
 		t.Fatalf("Failed to initialize R2 storage: %v", err)
 	}
 
+	// Create a config for testing
+	testConfig := config.Config{
+		StoragePath: storagePath,
+		VenueCode:   venueCode, // Hardcoded for testing
+	}
+	
+	// Create a config manager with the test config
+	configManager := config.NewConfigManager(testConfig)
+	
 	s := &Server{
-		config: config.Config{
-			StoragePath: storagePath,
-			VenueCode:   venueCode, // Hardcoded for testing
-		},
+		configManager: configManager,
 		r2Storage: r2Storage,
 	}
 

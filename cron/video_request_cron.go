@@ -1,15 +1,17 @@
 package cron
 
 import (
+	"fmt"
 	"log"
-	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/storage"
+	"ayo-mwr/transcode"
 
 	"github.com/robfig/cron/v3"
 )
@@ -27,7 +29,7 @@ func StartVideoRequestCron(cfg *config.Config) {
 			log.Printf("Error initializing database: %v", err)
 			return
 		}
-		defer db.Close()
+		// defer db.Close()
 
 		// Initialize AYO API client
 		ayoClient, err := api.NewAyoIndoClient()
@@ -63,7 +65,7 @@ func StartVideoRequestCron(cfg *config.Config) {
 		schedule := cron.New()
 
 		// Schedule the task every 30 minutes
-		_, err = schedule.AddFunc("@every 30m", func() {
+		_, err = schedule.AddFunc("@every 2m", func() {
 			processVideoRequests(cfg, db, ayoClient, r2Client)
 		})
 		if err != nil {
@@ -121,7 +123,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 		matchingVideo, err := db.GetVideoByUniqueID(uniqueID)
 		if err != nil {
 			log.Printf("Error checking database for unique ID %s: %v", uniqueID, err)
-			// videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
@@ -134,40 +136,6 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 		// Check if video is ready
 		if matchingVideo.Status != database.StatusReady {
 			log.Printf("Video for unique_id %s is not ready yet (status: %s)", uniqueID, matchingVideo.Status)
-			videoRequestIDs = append(videoRequestIDs, videoRequestID)
-			continue
-		}
-
-		// Prepare video data for API
-		type videoResolution struct {
-			StreamPath   string `json:"stream_path"`
-			DownloadPath string `json:"download_path"`
-			Resolution   string `json:"resolution"`
-		}
-
-		// Create slice of video resolutions
-		videoData := []videoResolution{}
-
-		// Add HLS and MP4 streams if available
-		if matchingVideo.R2HLSURL != "" && matchingVideo.R2MP4URL != "" {
-			videoData = append(videoData, videoResolution{
-				StreamPath:   matchingVideo.R2HLSURL,
-				DownloadPath: matchingVideo.R2MP4URL,
-				Resolution:   matchingVideo.Resolution,
-			})
-		}
-
-		// // Add preview if available
-		// if matchingVideo.R2PreviewMP4URL != "" {
-		// 	videoData = append(videoData, videoResolution{
-		// 		StreamPath:   matchingVideo.R2PreviewMP4URL,
-		// 		DownloadPath: matchingVideo.R2PreviewMP4URL,
-		// 		Resolution:   "720", // Assuming 720p for preview, adjust as needed
-		// 	})
-		// }
-
-		if len(videoData) == 0 {
-			log.Printf("No video URLs available for unique_id: %s", uniqueID)
 			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
@@ -186,54 +154,107 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			endTime = *matchingVideo.FinishedAt
 		}
 
-		// Check if the video URLs are accessible
-		urlsAccessible := true
-
-		// Function to check if a URL is accessible
-		checkURL := func(url string) bool {
-			if url == "" {
-				return false
-			}
-			
-			client := &http.Client{
-				Timeout: 5 * time.Second,
-			}
-			
-			// Use HEAD request to avoid downloading the entire file
-			req, err := http.NewRequest("HEAD", url, nil)
-			if err != nil {
-				log.Printf("Error creating request for URL %s: %v", url, err)
-				return false
-			}
-			
-			resp, err := client.Do(req)
-			if err != nil {
-				log.Printf("Error accessing URL %s: %v", url, err)
-				return false
-			}
-			defer resp.Body.Close()
-			
-			// Check if status code indicates success (2xx range)
-			return resp.StatusCode >= 200 && resp.StatusCode < 300
-		}
+		// Upload video files to R2 if they haven't been uploaded yet
+		var r2HlsURL, r2MP4URL string
 		
-		// Check stream URL
-		if !checkURL(videoData[0].StreamPath) {
-			log.Printf("Stream URL not accessible: %s", videoData[0].StreamPath)
-			urlsAccessible = false
-		}
-		
-		// Check download URL
-		if !checkURL(videoData[0].DownloadPath) {
-			log.Printf("Download URL not accessible: %s", videoData[0].DownloadPath)
-			urlsAccessible = false
-		}
-		
-		// If either URL is not accessible, add to invalid requests and skip
-		if !urlsAccessible {
-			log.Printf("Video URLs not accessible for request ID: %s", videoRequestID)
+		// Get the video path
+		videoPath := matchingVideo.LocalPath
+		if videoPath == "" {
+			log.Printf("No local video path found for unique_id: %s", uniqueID)
 			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
+		}
+
+		// Check if file exists
+		if _, err := os.Stat(videoPath); os.IsNotExist(err) {
+			log.Printf("Video file does not exist at path: %s", videoPath)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			continue
+		}
+
+		// Buat direktori HLS untuk video ini di folder hls
+		hlsParentDir := filepath.Join(cfg.StoragePath, "hls")
+		os.MkdirAll(hlsParentDir, 0755)
+		hlsDir := filepath.Join(hlsParentDir, uniqueID)
+		hlsURL := ""
+		r2HLSPath := fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
+		
+		// Buat HLS stream dari video menggunakan ffmpeg
+		log.Printf("Generating HLS stream in: %s", hlsDir)
+		if err := transcode.GenerateHLS(videoPath, hlsDir, uniqueID, cfg); err != nil {
+			log.Printf("Warning: Failed to create HLS stream: %v", err)
+			// Use existing R2 URL if HLS generation fails
+			r2HlsURL = matchingVideo.R2HLSURL
+		} else {
+			// Format HLS URL untuk server lokal yang sudah di-setup di api/server.go
+			baseURL := cfg.BaseURL
+			if baseURL == "" {
+				baseURL = "http://localhost:8080" // Fallback if not configured
+			}
+			hlsURL = fmt.Sprintf("%s/hls/%s/master.m3u8", baseURL, uniqueID)
+			log.Printf("HLS stream created at: %s", hlsDir)
+			log.Printf("HLS stream can be accessed at: %s", hlsURL)
+			
+			// Upload HLS ke R2
+			_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)
+			if err != nil {
+				log.Printf("Warning: Failed to upload HLS stream to R2: %v", err)
+				// Use existing R2 URL if upload fails
+				r2HlsURL = matchingVideo.R2HLSURL
+			} else {
+				r2HlsURL = r2HlsURLTemp
+				log.Printf("HLS stream uploaded to R2: %s", r2HlsURL)
+			}
+			
+			// Update database with HLS path and URL information
+			// First update the R2 paths
+			err = db.UpdateVideoR2Paths(matchingVideo.ID, r2HLSPath, matchingVideo.R2MP4Path)
+			if err != nil {
+				log.Printf("Warning: Failed to update HLS R2 paths in database: %v", err)
+			}
+			
+			// Then update the R2 URLs
+			err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, matchingVideo.R2MP4URL)
+			if err != nil {
+				log.Printf("Warning: Failed to update HLS R2 URLs in database: %v", err)
+			}
+			
+			// Update the full video metadata to include local HLS path
+			matchingVideo.HLSPath = hlsDir
+			matchingVideo.HLSURL = hlsURL
+			matchingVideo.R2HLSURL = r2HlsURL
+			matchingVideo.R2HLSPath = r2HLSPath
+			err = db.UpdateVideo(*matchingVideo)
+			if err != nil {
+				log.Printf("Warning: Failed to update video metadata in database: %v", err)
+			}
+		}
+
+		// Upload MP4 to R2 if local video exists
+		if matchingVideo.LocalPath != "" {
+			mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
+			_, err = r2Client.UploadFile(matchingVideo.LocalPath, mp4Path)
+			if err != nil {
+				log.Printf("Warning: Failed to upload video to R2: %v", err)
+				// Use existing R2 URL if upload fails
+				r2MP4URL = matchingVideo.R2MP4URL
+			} else {
+				// Generate URL using custom domain
+				r2MP4URL = fmt.Sprintf("%s/%s", r2Client.GetBaseURL(), mp4Path)
+				log.Printf("Video uploaded to custom URL: %s", r2MP4URL)
+			}
+		} else {
+			r2MP4URL = matchingVideo.R2MP4URL
+		}
+
+		// Update database with R2 URLs if they were uploaded successfully
+		if r2HlsURL != matchingVideo.R2HLSURL || r2MP4URL != matchingVideo.R2MP4URL {
+			err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, r2MP4URL)
+			if err != nil {
+				log.Printf("Warning: Failed to update video URLs in database: %v", err)
+			} else {
+				log.Printf("Updated video URLs in database for unique_id: %s", uniqueID)
+			}
 		}
 
 		// Send video data to AYO API
@@ -241,8 +262,8 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			videoRequestID,
 			bookingID,
 			"clip", // Assuming "clip" as video type, adjust if needed
-			videoData[0].StreamPath,
-			videoData[0].DownloadPath,
+			r2HlsURL,
+			r2MP4URL,
 			startTime,
 			endTime,
 		)

@@ -207,7 +207,7 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		&uploadedAt,
 		&video.Size,
 		&video.Duration,
-		&resolution,
+		&video.Resolution,
 		&video.HasRequest,
 		&lastCheckFile,
 	)

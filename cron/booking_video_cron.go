@@ -25,7 +25,7 @@ import (
 func getBookingJSON(booking map[string]interface{}) string {
 	jsonBytes, err := json.Marshal(booking)
 	if err != nil {
-		log.Printf("Error marshaling booking to JSON: %v", err)
+		log.Printf("processBookings : Error marshaling booking to JSON: %v", err)
 		return ""
 	}
 	return string(jsonBytes)
@@ -43,15 +43,15 @@ func StartBookingVideoCron(cfg *config.Config) {
 		dbPath := cfg.DatabasePath
 		db, err := database.NewSQLiteDB(dbPath)
 		if err != nil {
-			log.Printf("Error initializing database: %v", err)
+			log.Printf("processBookings : Error initializing database: %v", err)
 			return
 		}
-		defer db.Close()
+		// Removed defer db.Close() so database remains open for scheduled cron jobs
 
 		// Initialize AYO API client
 		ayoClient, err := api.NewAyoIndoClient()
 		if err != nil {
-			log.Printf("Error initializing AYO API client: %v", err)
+			log.Printf("processBookings : Error initializing AYO API client: %v", err)
 			return
 		}
 
@@ -68,7 +68,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 		r2Client, err := storage.NewR2Storage(r2Config)
 		if err != nil {
-			log.Printf("Error initializing R2 storage client: %v", err)
+			log.Printf("processBookings : Error initializing R2 storage client: %v", err)
 			return
 		}
 
@@ -86,7 +86,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 		// Schedule the task every minute for testing
 		// In production, you'd use a more reasonable interval like "@every 30m"
-		_, err = schedule.AddFunc("@every 30m", func() {
+		_, err = schedule.AddFunc("@every 2m", func() {
 			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService)
 		})
 		if err != nil {
@@ -94,13 +94,13 @@ func StartBookingVideoCron(cfg *config.Config) {
 		}
 
 		schedule.Start()
-		log.Println("Booking video processing cron job started - will run every 1 minute (testing mode)")
+		log.Println("processBookings : Booking video processing cron job started - will run every 1 minute (testing mode)")
 	}()
 }
 
 // processBookings handles fetching bookings and processing them
 func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService) {
-	log.Println("Running booking video processing task...")
+	log.Println("processBookings : Running booking video processing task...")
 
 	// Use fixed date for testing
 	today := time.Now().Format("2006-01-02")
@@ -109,18 +109,18 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 	// Get bookings from AYO API
 	response, err := ayoClient.GetBookings(today)
 	if err != nil {
-		log.Printf("Error fetching bookings from API: %v", err)
+		log.Printf("processBookings : Error fetching bookings from API: %v", err)
 		return
 	}
 
 	// Extract data from response
 	data, ok := response["data"].([]interface{})
 	if !ok || len(data) == 0 {
-		log.Println("No bookings found for today or invalid response format")
+		log.Println("processBookings : No bookings found for today or invalid response format")
 		return
 	}
 
-	log.Printf("Found %d bookings for today", len(data))
+	log.Printf("processBookings : Found %d bookings for today", len(data))
 
 	// Process each booking
 	for _, item := range data {
@@ -129,7 +129,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 		booking, ok := item.(map[string]interface{})
 		if !ok {
-			log.Printf("Invalid booking format: %v", item)
+			log.Printf("processBookings : Invalid booking format: %v", item)
 			continue
 		}
 		
@@ -143,14 +143,14 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// endTimeStr := "06:00:00"
 		// startTimeStr := "05:00:00"
 
-		log.Printf("Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
+		log.Printf("processBookings : Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
 		
 		// akan menggunakan kode parsing date di bawah untuk menghindari duplikasi
 		
 		// 2. Check if there's already a video with status 'ready' for this booking
 		existingVideos, err := db.GetVideosByBookingID(bookingID)
 		if err != nil {
-			log.Printf("Error checking existing videos for booking %s: %v", bookingID, err)
+			log.Printf("processBookings : Error checking existing videos for booking %s: %v", bookingID, err)
 		} else {
 			hasReadyVideo := false
 			for _, video := range existingVideos {
@@ -160,7 +160,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 			}
 			if hasReadyVideo {
-				log.Printf("Skipping booking %s: already has a video with 'ready' status", bookingID)
+				log.Printf("processBookings : Skipping booking %s: already has a video with 'ready' status", bookingID)
 				continue
 			}
 		}
@@ -172,7 +172,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			// Fall back to simple date format
 			bookingDate, err = time.Parse("2006-01-02", date)
 			if err != nil {
-				log.Printf("Invalid date format %s for booking %s: %v", date, bookingID, err)
+				log.Printf("processBookings : Invalid date format %s for booking %s: %v", date, bookingID, err)
 				continue
 			}
 		}
@@ -180,13 +180,13 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Combine date and time using service
 		startTime, err := bookingService.CombineDateTime(bookingDate, startTimeStr)
 		if err != nil {
-			log.Printf("Error parsing start time for booking %s: %v", bookingID, err)
+			log.Printf("processBookings : Error parsing start time for booking %s: %v", bookingID, err)
 			continue
 		}
 
 		endTime, err := bookingService.CombineDateTime(bookingDate, endTimeStr)
 		if err != nil {
-			log.Printf("Error parsing end time for booking %s: %v", bookingID, err)
+			log.Printf("processBookings : Error parsing end time for booking %s: %v", bookingID, err)
 			continue
 		}
 		
@@ -200,17 +200,17 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		now := time.Now().UTC().Add(localOffsetHours)
 		
 		// Print raw times with zones for debugging
-		log.Printf("DEBUG - Comparing times - Now: %s (%s) vs EndTime: %s (%s)", 
+		log.Printf("processBookings : DEBUG - Comparing times - Now: %s (%s) vs EndTime: %s (%s)", 
 			now.Format("2006-01-02 15:04:05"), now.Location(), 
 			endTime.Format("2006-01-02 15:04:05"), endTime.Location())
 		
 		// Direct comparison without conversion
 		if now.After(endTime) {
-			log.Printf("Booking %s end time (%s) is in the past, proceeding with processing. Current time: %s", 
+			log.Printf("processBookings : Booking %s end time (%s) is in the past, proceeding with processing. Current time: %s", 
 				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 		} else {
 			// Skip bookings that haven't ended yet
-			log.Printf("Skipping booking %s: booking end time (%s) is in the future, because now is %s", 
+			log.Printf("processBookings : Skipping booking %s: booking end time (%s) is in the future, because now is %s", 
 				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
@@ -220,7 +220,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Venue code tidak digunakan lagi karena sudah diakses melalui service
 
 		// Loop through all cameras for this booking
-		log.Printf("Processing booking %s in timeframe %s to %s for all cameras", 
+		log.Printf("processBookings : Processing booking %s in timeframe %s to %s for all cameras", 
 			bookingID, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 		
 		// Track successful camera count
@@ -230,34 +230,35 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		for _, camera := range cfg.Cameras {
 			// Skip disabled cameras
 			if !camera.Enabled {
-				log.Printf("Skipping disabled camera: %s", camera.Name)
+				log.Printf("processBookings : Skipping disabled camera: %s", camera.Name)
 				continue
 			}
 			
-			log.Printf("Checking camera %s for booking %s", camera.Name, bookingID)
+			log.Printf("processBookings : Checking camera %s for booking %s", camera.Name, bookingID)
 			
 			// Find video segments directory for this camera
 			videoDirectory := filepath.Join(cfg.StoragePath, "recordings", camera.Name, "mp4")
 			
 			// Check if directory exists
 			if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
-				log.Printf("No video directory found for camera %s", camera.Name)
+				log.Printf("processBookings : No video directory found for camera %s", camera.Name)
 				continue
 			}
 			
 			// Find segments for this camera in the time range
 			segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 			if err != nil || len(segments) == 0 {
-				log.Printf("No video segments found for booking %s on camera %s: %v", bookingID, camera.Name, err)
+				log.Printf("processBookings : No video segments found for booking %s on camera %s: %v", bookingID, camera.Name, err)
 				continue
 			}
 			
-			log.Printf("Found %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
+			log.Printf("processBookings : Found %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
 			
 			// Convert orderDetailID to string
 			orderDetailIDStr := strconv.Itoa(int(orderDetailID))
 			
 			// Process video segments using service
+			log.Printf("processBookings : orderDetailIDStr %s", orderDetailIDStr)
 			uniqueID, err := bookingService.ProcessVideoSegments(
 				camera,
 				bookingID,
@@ -269,16 +270,17 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			)
 			
 			if err != nil {
-				log.Printf("Error processing video segments for booking %s on camera %s: %v", bookingID, camera.Name, err)
+				log.Printf("processBookings : Error processing video segments for booking %s on camera %s: %v", bookingID, camera.Name, err)
 				continue
 			}
+			log.Printf("processBookings : uniqueID %s", uniqueID)
 			
 			// Ambil path file watermarked yang akan digunakan
 			watermarkedVideoPath := filepath.Join(cfg.StoragePath, "tmp", "watermark", uniqueID+".mp4")
-			
+			log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
 			// Upload processed video
 			// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
-			_, previewURL, thumbnailURL, _, _, err := bookingService.UploadProcessedVideo(
+			 previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
 				uniqueID,
 				watermarkedVideoPath,
 				bookingID,
@@ -286,12 +288,13 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			)
 			
 			if err != nil {
-				log.Printf("Error uploading processed video for booking %s on camera %s: %v", bookingID, camera.Name, err)
+				log.Printf("processBookings : Error uploading processed video for booking %s on camera %s: %v", bookingID, camera.Name, err)
 				// Update status to failed
 				db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed: %v", err))
 				continue
 			}
-			
+			log.Printf("processBookings : previewURL %s", previewURL)
+			log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
 			// Notify AYO API of successful upload
 			err = bookingService.NotifyAyoAPI(
 				bookingID,
@@ -303,9 +306,9 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			)
 			
 			if err != nil {
-				log.Printf("Error notifying AYO API of successful upload for booking %s on camera %s: %v", bookingID, camera.Name, err)
+				log.Printf("processBookings : Error notifying AYO API of successful upload for booking %s on camera %s: %v", bookingID, camera.Name, err)
 			}
-			
+			log.Printf("processBookings : Notify AYO API of successful upload for booking %s on camera %s", bookingID, camera.Name)
 			// Cleanup temporary files after successful processing
 			// bookingService.CleanupTemporaryFiles(
 			// 	mergedVideoPath,
@@ -317,18 +320,18 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			// Increment counter for successful camera processing
 			camerasWithVideo++
 			
-			log.Printf("Successfully processed and uploaded video for booking %s on camera %s (ID: %s)", bookingID, camera.Name, uniqueID)
+			log.Printf("processBookings : Successfully processed and uploaded video for booking %s on camera %s (ID: %s)", bookingID, camera.Name, uniqueID)
 		}
 		
 		// Log summary of camera processing
 		if camerasWithVideo > 0 {
-			log.Printf("Successfully processed %d cameras for booking %s", camerasWithVideo, bookingID)
+			log.Printf("processBookings : Successfully processed %d cameras for booking %s", camerasWithVideo, bookingID)
 		} else {
-			log.Printf("No camera videos found for booking %s in the specified time range", bookingID)
+			log.Printf("processBookings : No camera videos found for booking %s in the specified time range", bookingID)
 		}
 	}
 
-	log.Println("Booking video processing task completed")
+	log.Println("processBookings : Booking video processing task completed")
 }
 
 // Semua fungsi helper sudah dipindahkan ke BookingVideoService di service/booking_video.go

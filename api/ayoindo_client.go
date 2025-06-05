@@ -548,6 +548,72 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 	return result, nil
 }
 
+// HealthCheck performs a health check request to the AYO API
+func (c *AyoIndoClient) HealthCheck(cameraToken string) (map[string]interface{}, error) {
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":        c.apiToken,
+		"venue_code":   c.venueCode,
+		"camera_token": cameraToken,
+	}
+	
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+	
+	// Add signature to parameters
+	params["signature"] = signature
+	
+	// Convert parameters to JSON
+	payload, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	
+	// Build the URL
+	endpoint := fmt.Sprintf("%s/api/v1/health-check", c.baseURL)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
+	
+	// Print full URL and payload for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
+	fmt.Printf("[DEBUG] API Request Body: %s\n", string(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read the response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
+	}
+	
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	return result, nil
+}
+
 // GetWatermark retrieves the watermark image path for the current venue
 func (c *AyoIndoClient) GetWatermark() (string, error) {
 	// Create watermark directory if it doesn't exist

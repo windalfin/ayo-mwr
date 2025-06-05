@@ -18,6 +18,7 @@ import (
 	"ayo-mwr/service"
 	"ayo-mwr/signaling"
 	"ayo-mwr/storage"
+	"context"
 )
 
 func main() {
@@ -79,6 +80,19 @@ func main() {
 
 	// Start config update cron job (every 24 hours)
 	cron.StartConfigUpdateCron(&cfg)
+
+	// Start health check cron job (every minute)
+	healthCheckCron, err := cron.NewHealthCheckCron()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize health check cron: %v", err)
+	} else {
+		go func() {
+			ctx := context.Background()
+			if err := healthCheckCron.Start(ctx); err != nil {
+				log.Printf("Error running health check cron: %v", err)
+			}
+		}()
+	}
 
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{

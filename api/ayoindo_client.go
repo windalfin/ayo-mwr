@@ -562,12 +562,12 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 
 	// Define watermark sizes and filenames
 	sizes := map[string]string{
-		"360":  "watermark_360.png",
-		"480":  "watermark_480.png",
-		"720":  "watermark_720.png",
 		"1080": "watermark_1080.png",
+		"720":  "watermark_720.png",
+		"480":  "watermark_480.png",
+		"360":  "watermark_360.png",
 	}
-	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
+	wanted := map[string]bool{"1080": true, "720": true, "480": true, "360": true}
 
 	// Check if any watermark files already exist
 	allExist := false
@@ -631,7 +631,13 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 		}
 
 		resolution, _ := entryMap["resolution"].(string)
-		watermarkURL, _ := entryMap["path"].(string)
+		pathValue, _ := entryMap["path"].(string)
+
+		// Ensure path has proper URL format with https:// prefix
+		watermarkURL := pathValue
+		if watermarkURL != "" && !strings.HasPrefix(watermarkURL, "http://") && !strings.HasPrefix(watermarkURL, "https://") {
+			watermarkURL = "https://" + watermarkURL
+		}
 
 		if wanted[resolution] && watermarkURL != "" {
 			fname, ok := sizes[resolution]
@@ -641,19 +647,23 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 
 			path := filepath.Join(folder, fname)
 			if _, err := os.Stat(path); os.IsNotExist(err) {
+				log.Printf("Downloading watermark from: %s", watermarkURL)
 				// Download watermark image
 				resp, err := http.Get(watermarkURL)
 				if err != nil {
+					log.Printf("Error downloading watermark: %v", err)
 					continue // try next resolution
 				}
 				defer resp.Body.Close()
 
 				if resp.StatusCode != http.StatusOK {
+					log.Printf("Error downloading watermark, status code: %d", resp.StatusCode)
 					continue // try next resolution
 				}
 
 				f, err := os.Create(path)
 				if err != nil {
+					log.Printf("Error creating watermark file: %v", err)
 					continue // try next resolution
 				}
 
@@ -661,10 +671,14 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 				f.Close()
 				if err == nil {
 					// Successfully downloaded and saved this watermark
+					log.Printf("Successfully downloaded watermark for resolution %s", resolution)
 					return path, nil
+				} else {
+					log.Printf("Error saving watermark file: %v", err)
 				}
 			} else {
 				// File already exists
+				log.Printf("Using existing watermark file for resolution %s", resolution)
 				return path, nil
 			}
 		}

@@ -760,3 +760,8 @@ func (s *SQLiteDB) UpdateLastCheckFile(id string, lastCheckTime time.Time) error
 func (s *SQLiteDB) Close() error {
 	return s.db.Close()
 }
+
+// GetDB returns the underlying *sql.DB instance
+func (s *SQLiteDB) GetDB() *sql.DB {
+	return s.db
+}

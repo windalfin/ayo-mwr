@@ -2,8 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -22,6 +24,9 @@ import (
 )
 
 func main() {
+	// Add execution tracking logs
+	fmt.Println("[MAIN] Starting application...")
+
 	logFile, err := os.OpenFile("server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err == nil {
 		log.SetOutput(logFile)
@@ -29,6 +34,9 @@ func main() {
 	} else {
 		log.Println("Failed to log to file, using default stderr")
 	}
+
+	// Print directly to console for debugging
+	fmt.Println("[MAIN] Log file setup complete")
 
 	// Parse command line arguments
 	configFile := flag.String("config", "", "Path to config file (optional)")
@@ -117,26 +125,62 @@ func main() {
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler
+	fmt.Println("[MAIN] About to initialize Arduino signal handler")
+	fmt.Printf("[MAIN] Arduino config: port=%s, baud rate=%d\n", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+	log.Printf("Starting Arduino signal handler initialization with port: %s, baud rate: %d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+
 	signalCallback := func(signal string) error {
 		log.Printf("Received signal from Arduino: %s", signal)
-		// TODO: Add your signal handling logic here
+		// Process the signal by calling the API
+		err := signaling.CallProcessBookingVideoAPI(signal)
+		if err != nil {
+			log.Printf("Error processing Arduino signal: %v", err)
+			return err
+		}
 		return nil
+	}
+
+	// Check if the Arduino port exists before trying to connect
+	fmt.Printf("[MAIN] Checking if Arduino port %s exists...\n", cfg.ArduinoCOMPort)
+	if _, err := os.Stat(cfg.ArduinoCOMPort); os.IsNotExist(err) {
+		fmt.Printf("[MAIN] ERROR: Arduino port %s does not exist!\n", cfg.ArduinoCOMPort)
+		// List available ports for debugging
+		fmt.Println("[MAIN] Available serial ports:")
+		ports, _ := filepath.Glob("/dev/tty.*")
+		for _, port := range ports {
+			fmt.Printf("[MAIN] - %s\n", port)
+		}
+	} else {
+		fmt.Printf("[MAIN] Arduino port %s exists, proceeding with connection\n", cfg.ArduinoCOMPort)
 	}
 
 	arduino, err := signaling.NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, signalCallback)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize Arduino signal handler: %v", err)
+		fmt.Printf("[MAIN] ERROR: Failed to initialize Arduino signal handler: %v\n", err)
+		log.Printf("ERROR: Failed to initialize Arduino signal handler: %v", err)
 	} else {
-		if err := arduino.Connect(); err != nil {
-			log.Printf("Warning: Failed to connect to Arduino: %v", err)
+		fmt.Println("[MAIN] Arduino signal handler initialized successfully, attempting to connect...")
+		log.Printf("Arduino signal handler initialized successfully, attempting to connect...")
+
+		connectErr := arduino.Connect()
+		if connectErr != nil {
+			fmt.Printf("[MAIN] ERROR: Failed to connect to Arduino: %v\n", connectErr)
+			log.Printf("ERROR: Failed to connect to Arduino: %v", connectErr)
+		} else {
+			fmt.Printf("[MAIN] Arduino connected successfully and listening for signals on port: %s\n", cfg.ArduinoCOMPort)
+			log.Printf("Arduino connected successfully and listening for signals on port: %s", cfg.ArduinoCOMPort)
 		}
 		defer arduino.Close()
 	}
 
+	fmt.Println("[MAIN] Arduino setup complete, starting RTSP stream recording")
 	log.Println("Starting 24/7 RTSP stream recording")
 
 	// Start capturing from all cameras
+	fmt.Println("[MAIN] Starting camera capture")
 	if err := recording.CaptureMultipleRTSPStreams(&cfg); err != nil {
 		log.Fatalf("Error capturing RTSP streams: %v", err)
 	}
+
+	fmt.Println("[MAIN] Application running. Press Ctrl+C to exit.")
 }

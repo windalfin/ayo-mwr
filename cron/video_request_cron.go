@@ -1,14 +1,17 @@
 package cron
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/storage"
+	"ayo-mwr/transcode"
 
 	"github.com/robfig/cron/v3"
 )
@@ -17,7 +20,7 @@ import (
 // 1. Get pending video requests from AYO API
 // 2. Check if video exists in database by unique_id
 // 3. Send video info to AYO API if it exists
-func StartVideoRequestCron(cfg config.Config) {
+func StartVideoRequestCron(cfg *config.Config) {
 	go func() {
 		// Initialize database
 		dbPath := cfg.DatabasePath
@@ -26,7 +29,7 @@ func StartVideoRequestCron(cfg config.Config) {
 			log.Printf("Error initializing database: %v", err)
 			return
 		}
-		defer db.Close()
+		// defer db.Close()
 
 		// Initialize AYO API client
 		ayoClient, err := api.NewAyoIndoClient()
@@ -62,7 +65,7 @@ func StartVideoRequestCron(cfg config.Config) {
 		schedule := cron.New()
 
 		// Schedule the task every 30 minutes
-		_, err = schedule.AddFunc("@every 30m", func() {
+		_, err = schedule.AddFunc("@every 2m", func() {
 			processVideoRequests(cfg, db, ayoClient, r2Client)
 		})
 		if err != nil {
@@ -75,7 +78,7 @@ func StartVideoRequestCron(cfg config.Config) {
 }
 
 // processVideoRequests handles fetching and processing video requests
-func processVideoRequests(cfg config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
+func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
 	log.Println("Running video request processing task...")
 
 	// Get video requests from AYO API
@@ -93,7 +96,7 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 	}
 
 	log.Printf("Found %d video requests", len(data))
-
+	videoRequestIDs := []string{}
 	// Process each video request
 	for _, item := range data {
 		request, ok := item.(map[string]interface{})
@@ -120,50 +123,20 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 		matchingVideo, err := db.GetVideoByUniqueID(uniqueID)
 		if err != nil {
 			log.Printf("Error checking database for unique ID %s: %v", uniqueID, err)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
 		if matchingVideo == nil {
 			log.Printf("No matching video found for unique_id: %s", uniqueID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
 		// Check if video is ready
 		if matchingVideo.Status != database.StatusReady {
 			log.Printf("Video for unique_id %s is not ready yet (status: %s)", uniqueID, matchingVideo.Status)
-			continue
-		}
-
-		// Prepare video data for API
-		type videoResolution struct {
-			StreamPath   string `json:"stream_path"`
-			DownloadPath string `json:"download_path"`
-			Resolution   string `json:"resolution"`
-		}
-
-		// Create slice of video resolutions
-		videoData := []videoResolution{}
-
-		// Add HLS and MP4 streams if available
-		if matchingVideo.R2HLSURL != "" && matchingVideo.R2MP4URL != "" {
-			videoData = append(videoData, videoResolution{
-				StreamPath:   matchingVideo.R2HLSURL,
-				DownloadPath: matchingVideo.R2MP4URL,
-				Resolution:   "1080", // Assuming 1080p resolution, adjust as needed
-			})
-		}
-
-		// // Add preview if available
-		// if matchingVideo.R2PreviewMP4URL != "" {
-		// 	videoData = append(videoData, videoResolution{
-		// 		StreamPath:   matchingVideo.R2PreviewMP4URL,
-		// 		DownloadPath: matchingVideo.R2PreviewMP4URL,
-		// 		Resolution:   "720", // Assuming 720p for preview, adjust as needed
-		// 	})
-		// }
-
-		if len(videoData) == 0 {
-			log.Printf("No video URLs available for unique_id: %s", uniqueID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
 
@@ -181,13 +154,116 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 			endTime = *matchingVideo.FinishedAt
 		}
 
+		// Upload video files to R2 if they haven't been uploaded yet
+		var r2HlsURL, r2MP4URL string
+		
+		// Get the video path
+		videoPath := matchingVideo.LocalPath
+		if videoPath == "" {
+			log.Printf("No local video path found for unique_id: %s", uniqueID)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			continue
+		}
+
+		// Check if file exists
+		if _, err := os.Stat(videoPath); os.IsNotExist(err) {
+			log.Printf("Video file does not exist at path: %s", videoPath)
+			videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			continue
+		}
+
+		// Buat direktori HLS untuk video ini di folder hls
+		hlsParentDir := filepath.Join(cfg.StoragePath, "hls")
+		os.MkdirAll(hlsParentDir, 0755)
+		hlsDir := filepath.Join(hlsParentDir, uniqueID)
+		hlsURL := ""
+		r2HLSPath := fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
+		
+		// Buat HLS stream dari video menggunakan ffmpeg
+		log.Printf("Generating HLS stream in: %s", hlsDir)
+		if err := transcode.GenerateHLS(videoPath, hlsDir, uniqueID, cfg); err != nil {
+			log.Printf("Warning: Failed to create HLS stream: %v", err)
+			// Use existing R2 URL if HLS generation fails
+			r2HlsURL = matchingVideo.R2HLSURL
+		} else {
+			// Format HLS URL untuk server lokal yang sudah di-setup di api/server.go
+			baseURL := cfg.BaseURL
+			if baseURL == "" {
+				baseURL = "http://localhost:8080" // Fallback if not configured
+			}
+			hlsURL = fmt.Sprintf("%s/hls/%s/master.m3u8", baseURL, uniqueID)
+			log.Printf("HLS stream created at: %s", hlsDir)
+			log.Printf("HLS stream can be accessed at: %s", hlsURL)
+			
+			// Upload HLS ke R2
+			_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)
+			if err != nil {
+				log.Printf("Warning: Failed to upload HLS stream to R2: %v", err)
+				// Use existing R2 URL if upload fails
+				r2HlsURL = matchingVideo.R2HLSURL
+			} else {
+				r2HlsURL = r2HlsURLTemp
+				log.Printf("HLS stream uploaded to R2: %s", r2HlsURL)
+			}
+			
+			// Update database with HLS path and URL information
+			// First update the R2 paths
+			err = db.UpdateVideoR2Paths(matchingVideo.ID, r2HLSPath, matchingVideo.R2MP4Path)
+			if err != nil {
+				log.Printf("Warning: Failed to update HLS R2 paths in database: %v", err)
+			}
+			
+			// Then update the R2 URLs
+			err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, matchingVideo.R2MP4URL)
+			if err != nil {
+				log.Printf("Warning: Failed to update HLS R2 URLs in database: %v", err)
+			}
+			
+			// Update the full video metadata to include local HLS path
+			matchingVideo.HLSPath = hlsDir
+			matchingVideo.HLSURL = hlsURL
+			matchingVideo.R2HLSURL = r2HlsURL
+			matchingVideo.R2HLSPath = r2HLSPath
+			err = db.UpdateVideo(*matchingVideo)
+			if err != nil {
+				log.Printf("Warning: Failed to update video metadata in database: %v", err)
+			}
+		}
+
+		// Upload MP4 to R2 if local video exists
+		if matchingVideo.LocalPath != "" {
+			mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
+			_, err = r2Client.UploadFile(matchingVideo.LocalPath, mp4Path)
+			if err != nil {
+				log.Printf("Warning: Failed to upload video to R2: %v", err)
+				// Use existing R2 URL if upload fails
+				r2MP4URL = matchingVideo.R2MP4URL
+			} else {
+				// Generate URL using custom domain
+				r2MP4URL = fmt.Sprintf("%s/%s", r2Client.GetBaseURL(), mp4Path)
+				log.Printf("Video uploaded to custom URL: %s", r2MP4URL)
+			}
+		} else {
+			r2MP4URL = matchingVideo.R2MP4URL
+		}
+
+		// Update database with R2 URLs if they were uploaded successfully
+		if r2HlsURL != matchingVideo.R2HLSURL || r2MP4URL != matchingVideo.R2MP4URL {
+			err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, r2MP4URL)
+			if err != nil {
+				log.Printf("Warning: Failed to update video URLs in database: %v", err)
+			} else {
+				log.Printf("Updated video URLs in database for unique_id: %s", uniqueID)
+			}
+		}
+
 		// Send video data to AYO API
 		result, err := ayoClient.SaveVideo(
 			videoRequestID,
 			bookingID,
 			"clip", // Assuming "clip" as video type, adjust if needed
-			videoData[0].StreamPath,
-			videoData[0].DownloadPath,
+			r2HlsURL,
+			r2MP4URL,
 			startTime,
 			endTime,
 		)
@@ -209,4 +285,25 @@ func processVideoRequests(cfg config.Config, db database.Database, ayoClient *ap
 	}
 
 	log.Println("Video request processing task completed")
+
+	// Mark invalid video requests if any were found
+	if len(videoRequestIDs) > 0 {
+		log.Printf("Marking %d video requests as invalid: %v", len(videoRequestIDs), videoRequestIDs)
+		
+		// Process in batches of 10 if needed (API limit)
+		for i := 0; i < len(videoRequestIDs); i += 10 {
+			end := i + 10
+			if end > len(videoRequestIDs) {
+				end = len(videoRequestIDs)
+			}
+			
+			batch := videoRequestIDs[i:end]
+			result, err := ayoClient.MarkVideoRequestsInvalid(batch)
+			if err != nil {
+				log.Printf("Error marking video requests as invalid: %v", err)
+			} else {
+				log.Printf("Successfully marked batch of video requests as invalid: %v", result)
+			}
+		}
+	}
 }

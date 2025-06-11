@@ -44,6 +44,9 @@ type VideoMetadata struct {
 	BookingID         string      `json:"bookingId"`         // Booking ID reference
 	RawJSON           string      `json:"rawJson"`           // Raw JSON data for additional metadata
 	ErrorMessage      string      `json:"errorMessage"`      // Error message if processing failed
+	Resolution        string      `json:"resolution"`        // Resolution of the video
+	HasRequest        bool        `json:"hasRequest"`        // Whether there is a request for this video
+	LastCheckFile     *time.Time  `json:"lastCheckFile"`     // When the file was last checked for existence
 }
 
 // Database defines the interface for database operations
@@ -58,6 +61,7 @@ type Database interface {
 	// Status operations
 	GetVideosByStatus(status VideoStatus, limit, offset int) ([]VideoMetadata, error)
 	UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error
+	UpdateLastCheckFile(id string, lastCheckTime time.Time) error
 
 	// Booking operations
 	GetVideosByBookingID(bookingID string) ([]VideoMetadata, error)

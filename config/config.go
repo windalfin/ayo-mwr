@@ -22,6 +22,8 @@ type CameraConfig struct {
 	Height    int    `json:"height"`     // Video height
 	FrameRate int    `json:"frame_rate"` // Video frame rate
 	Field     string `json:"field"`      // Camera field ID
+	Resolution string `json:"resolution"` // Camera resolution
+	AutoDelete int `json:"auto_delete"` // Auto delete video after x days
 }
 
 // Config contains all configuration for the application
@@ -43,9 +45,12 @@ type Config struct {
 
 	// Recording Configuration
 	SegmentDuration int
+	ClipDuration    int // Duration of video clips in seconds
 	Width           int
 	Height          int
 	FrameRate       int
+	Resolution      string
+	AutoDelete      int
 
 	// Storage Configuration
 	StoragePath   string
@@ -136,9 +141,18 @@ func LoadConfig() Config {
 		R2Region:     getEnv("R2_REGION", "auto"),
 	}
 
+	// Load ClipDuration from environment variable if available
+	if clipDurationStr := getEnv("CLIP_DURATION", ""); clipDurationStr != "" {
+		if clipDuration, err := strconv.Atoi(clipDurationStr); err == nil {
+			cfg.ClipDuration = clipDuration
+			log.Printf("Loaded ClipDuration from environment: %d seconds", cfg.ClipDuration)
+		}
+	}
+
 	// Load multiple cameras configuration
 	camerasJSON := getEnv("CAMERAS_CONFIG", "")
 	log.Printf("Raw CAMERAS_CONFIG: %s", camerasJSON) // Debug: Print raw JSON
+	log.Printf("Length of cfg.Cameras: %d", len(cfg.Cameras))
 	if camerasJSON != "" {
 		var cameras []CameraConfig
 		if err := json.Unmarshal([]byte(camerasJSON), &cameras); err != nil {
@@ -166,6 +180,8 @@ func LoadConfig() Config {
 			Width:     cfg.Width,
 			Height:    cfg.Height,
 			FrameRate: cfg.FrameRate,
+			Resolution: cfg.Resolution,
+			AutoDelete: cfg.AutoDelete,
 		})
 	}
 
@@ -181,6 +197,10 @@ func LoadConfig() Config {
 	log.Printf("R2 Storage Enabled: %v", cfg.R2Enabled)
 	log.Printf("Arduino COM Port: %s", cfg.ArduinoCOMPort)
 	log.Printf("Arduino Baud Rate: %d", cfg.ArduinoBaudRate)
+
+	// Initial configuration loaded from environment - will be updated by config update cron job
+	log.Println("Initial configuration loaded from environment and defaults")
+	log.Println("Configuration will be updated from AYO API via scheduled cron job")
 
 	return cfg
 }
@@ -214,10 +234,34 @@ func LoadConfigFromFile(filePath string) (Config, error) {
 			Width:     config.Width,
 			Height:    config.Height,
 			FrameRate: config.FrameRate,
+			Resolution: config.Resolution,
+			AutoDelete: config.AutoDelete,
 		})
 	}
 
 	return config, nil
+}
+
+// LoadConfigFromAPI loads configuration from AYO API using the provided client
+func LoadConfigFromAPI(cfg Config, client APIClient) (Config, error) {
+	// Get video configuration from API
+	response, err := client.GetVideoConfiguration()
+	if err != nil {
+		return cfg, fmt.Errorf("failed to get video configuration from API: %w", err)
+	}
+
+	// Check if the response has data field
+	data, ok := response["data"].(map[string]interface{})
+	if !ok {
+		return cfg, fmt.Errorf("invalid response format from API: missing data field")
+	}
+
+	log.Printf("Video configuration from API: %+v", data)
+
+	// Update config from API response
+	UpdateConfigFromAPIResponse(&cfg, data)
+
+	return cfg, nil
 }
 
 // getEnv returns environment variable or fallback value

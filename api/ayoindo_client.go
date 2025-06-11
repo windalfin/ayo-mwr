@@ -562,12 +562,12 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 
 	// Define watermark sizes and filenames
 	sizes := map[string]string{
-		"360":  "watermark_360.png",
-		"480":  "watermark_480.png",
-		"720":  "watermark_720.png",
 		"1080": "watermark_1080.png",
+		"720":  "watermark_720.png",
+		"480":  "watermark_480.png",
+		"360":  "watermark_360.png",
 	}
-	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
+	wanted := map[string]bool{"1080": true, "720": true, "480": true, "360": true}
 
 	// Check if any watermark files already exist
 	allExist := false
@@ -631,7 +631,13 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 		}
 
 		resolution, _ := entryMap["resolution"].(string)
-		watermarkURL, _ := entryMap["path"].(string)
+		pathValue, _ := entryMap["path"].(string)
+
+		// Ensure path has proper URL format with https:// prefix
+		watermarkURL := pathValue
+		if watermarkURL != "" && !strings.HasPrefix(watermarkURL, "http://") && !strings.HasPrefix(watermarkURL, "https://") {
+			watermarkURL = "https://" + watermarkURL
+		}
 
 		if wanted[resolution] && watermarkURL != "" {
 			fname, ok := sizes[resolution]
@@ -641,19 +647,23 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 
 			path := filepath.Join(folder, fname)
 			if _, err := os.Stat(path); os.IsNotExist(err) {
+				log.Printf("Downloading watermark from: %s", watermarkURL)
 				// Download watermark image
 				resp, err := http.Get(watermarkURL)
 				if err != nil {
+					log.Printf("Error downloading watermark: %v", err)
 					continue // try next resolution
 				}
 				defer resp.Body.Close()
 
 				if resp.StatusCode != http.StatusOK {
+					log.Printf("Error downloading watermark, status code: %d", resp.StatusCode)
 					continue // try next resolution
 				}
 
 				f, err := os.Create(path)
 				if err != nil {
+					log.Printf("Error creating watermark file: %v", err)
 					continue // try next resolution
 				}
 
@@ -661,10 +671,14 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 				f.Close()
 				if err == nil {
 					// Successfully downloaded and saved this watermark
+					log.Printf("Successfully downloaded watermark for resolution %s", resolution)
 					return path, nil
+				} else {
+					log.Printf("Error saving watermark file: %v", err)
 				}
 			} else {
 				// File already exists
+				log.Printf("Using existing watermark file for resolution %s", resolution)
 				return path, nil
 			}
 		}
@@ -697,6 +711,149 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 	}
 	
 	return fallbackPath, nil
+}
+
+// GetVideoConfiguration retrieves video configuration from AYO API
+func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) {
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
+	}
+	
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+	
+	// Add signature to parameters
+	params["signature"] = signature
+	
+	// Build the URL with query parameters
+	endpoint := fmt.Sprintf("%s/api/v1/video-configuration", c.baseURL)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Add query parameters
+	q := req.URL.Query()
+	for k, v := range params {
+		q.Add(k, fmt.Sprintf("%v", v))
+	}
+	req.URL.RawQuery = q.Encode()
+	
+	// Print full URL for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
+	
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read the response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
+	}
+	
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	return result, nil
+}
+
+// MarkVideoRequestsInvalid marks multiple video requests as invalid
+func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[string]interface{}, error) {
+	// Validate input
+	if len(videoRequestIDs) == 0 {
+		return nil, fmt.Errorf("at least one video request ID must be provided")
+	}
+	if len(videoRequestIDs) > 10 {
+		return nil, fmt.Errorf("maximum 10 video request IDs are allowed, got %d", len(videoRequestIDs))
+	}
+
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":             c.apiToken,
+		"venue_code":        c.venueCode,
+		// Convert array to comma-separated string
+		"video_request_ids": strings.Join(videoRequestIDs, ","),
+	}
+
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+
+	// Add signature to parameters
+	params["signature"] = signature
+	params["video_request_ids"] = videoRequestIDs
+
+	// Prepare the request body
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Build the URL
+	endpoint := fmt.Sprintf("%s/api/v1/video-request-invalid", c.baseURL)
+
+	// Print full URL for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
+	fmt.Printf("[DEBUG] API Request Body: %s\n", string(body))
+
+	// Create the request
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result, nil
 }
 
 // SaveCameraStatus updates camera status to AYO API

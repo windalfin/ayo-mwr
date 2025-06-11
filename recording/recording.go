@@ -36,7 +36,7 @@ func ExtractThumbnail(videoPath, outPath string) error {
 }
 
 // CaptureMultipleRTSPStreams captures video from multiple RTSP streams using FFmpeg and saves them in segments
-func CaptureMultipleRTSPStreams(cfg config.Config) error {
+func CaptureMultipleRTSPStreams(cfg *config.Config) error {
 	// Create logs directory if it doesn't exist
 	logDir := filepath.Join(cfg.StoragePath, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -112,7 +112,7 @@ func TestRTSPConnection(cameraName, rtspURL string) (bool, error) {
 }
 
 // captureRTSPStreamForCamera handles a single camera's RTSP stream
-func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, cameraID int) {
+func captureRTSPStreamForCamera(cfg *config.Config, camera config.CameraConfig, cameraID int) {
 	// Construct the RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
 		camera.Username,
@@ -243,7 +243,7 @@ func captureRTSPStreamForCamera(cfg config.Config, camera config.CameraConfig, c
 
 // CaptureRTSPSegments is the legacy single-camera capture function
 // Kept for backward compatibility
-func CaptureRTSPSegments(cfg config.Config) error {
+func CaptureRTSPSegments(cfg *config.Config) error {
 	if len(cfg.Cameras) > 0 {
 		camera := cfg.Cameras[0]
 		captureRTSPStreamForCamera(cfg, camera, 0)

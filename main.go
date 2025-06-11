@@ -69,13 +69,16 @@ func main() {
 	monitoring.StartMonitoring(30 * time.Second)
 
 	// Start camera status cron job (every 5 minutes)
-	cron.StartCameraStatusCron(cfg)
+	cron.StartCameraStatusCron(&cfg)
 
 	// Start booking video processing cron job (every 30 minutes)
-	cron.StartBookingVideoCron(cfg)
+	cron.StartBookingVideoCron(&cfg)
 
 	// Start video request processing cron job (every 30 minutes)
-	cron.StartVideoRequestCron(cfg)
+	cron.StartVideoRequestCron(&cfg)
+
+	// Start config update cron job (every 24 hours)
+	cron.StartConfigUpdateCron(&cfg)
 
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{
@@ -93,10 +96,10 @@ func main() {
 	}
 
 	// Initialize upload service
-	uploadService := service.NewUploadService(db, r2Storage, cfg)
+	uploadService := service.NewUploadService(db, r2Storage, &cfg)
 
 	// Initialize and start API server
-	apiServer := api.NewServer(cfg, db, r2Storage, uploadService)
+	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler
@@ -119,7 +122,7 @@ func main() {
 	log.Println("Starting 24/7 RTSP stream recording")
 
 	// Start capturing from all cameras
-	if err := recording.CaptureMultipleRTSPStreams(cfg); err != nil {
+	if err := recording.CaptureMultipleRTSPStreams(&cfg); err != nil {
 		log.Fatalf("Error capturing RTSP streams: %v", err)
 	}
 }

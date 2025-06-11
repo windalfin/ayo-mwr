@@ -54,7 +54,7 @@ func GetQualityPresets() []QualityPreset {
 }
 
 // TranscodeVideo generates multi-quality HLS format from the MP4 file
-func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (map[string]string, map[string]float64, error) {
+func TranscodeVideo(inputPath, videoID, cameraName string, cfg *config.Config) (map[string]string, map[string]float64, error) {
 	// Set up camera-specific paths
 	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	hlsPath := filepath.Join(baseDir, "hls", videoID)
@@ -67,7 +67,7 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (m
 	timings := make(map[string]float64)
 
 	hlsStart := time.Now()
-	if err := generateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
+	if err := GenerateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
 		return nil, nil, fmt.Errorf("HLS transcoding error: %v", err)
 	}
 	timings["hlsTranscode"] = time.Since(hlsStart).Seconds()
@@ -77,8 +77,8 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg config.Config) (m
 	}, timings, nil
 }
 
-// generateHLS creates a multi-quality HLS stream
-func generateHLS(inputPath, outputDir, videoID string, cfg config.Config) error {
+// GenerateHLS creates a multi-quality HLS stream
+func GenerateHLS(inputPath, outputDir, videoID string, cfg *config.Config) error {
 	inputParams, _ := GetInputParams(cfg.HardwareAccel)
 	qualityPresets := GetQualityPresets()
 

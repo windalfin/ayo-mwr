@@ -56,7 +56,7 @@ func TestHandleUpload_HappyPath(t *testing.T) {
 	}
 
 	s := &Server{
-		config: config.Config{
+		config: &config.Config{
 			StoragePath: storagePath,
 			VenueCode:   venueCode, // Hardcoded for testing
 		},

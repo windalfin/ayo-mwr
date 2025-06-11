@@ -1,9 +1,11 @@
 package signaling
 
 import (
-	"bufio"
 	"fmt"
+	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/tarm/serial"
 )
@@ -36,7 +38,10 @@ func (a *ArduinoSignal) Connect() error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
+	log.Printf("Attempting to connect to Arduino on port %s with baud rate %d", a.portName, a.baud)
+
 	if a.port != nil {
+		log.Printf("Arduino connection already established on port %s", a.portName)
 		return nil
 	}
 
@@ -47,10 +52,12 @@ func (a *ArduinoSignal) Connect() error {
 
 	port, err := serial.OpenPort(config)
 	if err != nil {
+		log.Printf("ERROR: Failed to open Arduino serial port: %v", err)
 		return fmt.Errorf("failed to open serial port: %v", err)
 	}
 
 	a.port = port
+	log.Printf("Successfully connected to Arduino on port %s, now listening for signals", a.portName)
 
 	// Start listening for signals in a goroutine
 	go a.listen()
@@ -60,19 +67,70 @@ func (a *ArduinoSignal) Connect() error {
 
 // listen continuously reads from the serial port
 func (a *ArduinoSignal) listen() {
-	scanner := bufio.NewScanner(a.port)
-	for scanner.Scan() {
-		signal := scanner.Text()
-		if a.callback != nil {
-			if err := a.callback(signal); err != nil {
-				fmt.Printf("Error handling signal: %v\n", err)
+	log.Printf("Arduino listener started on port %s with baud rate %d - waiting for signals...", a.portName, a.baud)
+	
+	// Use a buffer for reading data
+	buf := make([]byte, 128)
+	
+	// Log a waiting message every minute to confirm the listener is still active
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for range ticker.C {
+			log.Printf("Still waiting for Arduino signals on port %s...", a.portName)
+		}
+	}()
+
+	// Use a separate goroutine for reading to avoid blocking
+	go func() {
+		fmt.Printf("[ARDUINO] Starting to read from port %s\n", a.portName)
+		
+		for {
+			// Read directly from the port
+			n, err := a.port.Read(buf)
+			if err != nil {
+				log.Printf("Error reading from Arduino: %v", err)
+				fmt.Printf("[ARDUINO] Error reading from port: %v\n", err)
+				time.Sleep(500 * time.Millisecond) // Wait before retrying
+				continue
+			}
+
+			if n > 0 {
+				// Print both hex and ASCII representation of received bytes
+				log.Printf("Received %d bytes from Arduino", n)
+				hexStr := ""
+				asciiStr := ""
+				for i := 0; i < n; i++ {
+					hexStr += fmt.Sprintf("%02X ", buf[i])
+					if buf[i] >= 32 && buf[i] <= 126 { // Printable ASCII
+						asciiStr += string(buf[i])
+					} else {
+						asciiStr += "."
+					}
+				}
+				log.Printf("HEX: %s", hexStr)
+				log.Printf("ASCII: %s", asciiStr)
+				fmt.Printf("[ARDUINO] Received: HEX=%s ASCII='%s'\n", hexStr, asciiStr)
+				
+				// Process the signal
+				signal := string(buf[:n])
+				if a.callback != nil {
+					if err := a.callback(signal); err != nil {
+						log.Printf("Error handling signal: %v", err)
+						fmt.Printf("[ARDUINO] Error handling signal: %v\n", err)
+					} else {
+						log.Printf("Successfully processed signal: '%s'", signal)
+						fmt.Printf("[ARDUINO] Successfully processed signal: '%s'\n", signal)
+					}
+				}
 			}
 		}
-	}
+	}()
 
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Scanner error: %v\n", err)
-	}
+	// Block this goroutine to keep it running
+	<-make(chan struct{})
+
+	ticker.Stop()
+	log.Printf("Arduino listener on port %s has stopped", a.portName)
 }
 
 // HandleSignal processes signals received from Arduino
@@ -80,6 +138,24 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 	if a.callback != nil {
 		return a.callback(signal)
 	}
+
+	fmt.Printf("Received signal: %s\n", signal)
+
+	// Trim the trailing semicolon from the signal
+	processedSignal := strings.TrimSuffix(signal, ";")
+
+	// Call the API using the utility function
+	err := CallProcessBookingVideoAPI(processedSignal)
+	if err != nil {
+		// The utility function already logs the specific error,
+		// so we can just return a general error or the specific one.
+		log.Printf("Error calling Process Booking Video API: %v", err) // Optional: log here as well
+		return fmt.Errorf("failed to process booking video API call: %w", err)
+	}
+
+	// Log success (utility function also logs success, this is optional)
+	// log.Printf("Successfully initiated API call for field_id: %s", processedSignal)
+
 	return nil
 }
 

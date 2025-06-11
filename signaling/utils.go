@@ -1,8 +1,11 @@
 package signaling
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +79,45 @@ func FindClosestVideo(storagePath string, cameraName string, targetTime time.Tim
 
 	log.Printf("Found closest video file: %s", closestFile)
 	return closestFile, nil
+}
+
+// CallProcessBookingVideoAPI sends a POST request to the booking video process API.
+func CallProcessBookingVideoAPI(fieldID string) error {
+	// Prepare data for the API call
+	requestBodyMap := map[string]string{"field_id": fieldID}
+	requestBodyBytes, err := json.Marshal(requestBodyMap)
+	if err != nil {
+		log.Printf("Error marshaling JSON for API call: %v", err)
+		return fmt.Errorf("error marshaling JSON: %w", err)
+	}
+
+	// Make the API call
+	apiURL := "http://localhost:5000/api/booking/video/process"
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBodyBytes))
+	if err != nil {
+		log.Printf("Error creating API request: %v", err)
+		return fmt.Errorf("error creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending API request: %v", err)
+		return fmt.Errorf("error sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("API call failed with status %s", resp.Status)
+		// Optionally, read and log the response body for more details
+		// responseBody, _ := io.ReadAll(resp.Body)
+		// log.Printf("API response body: %s", string(responseBody))
+		return fmt.Errorf("API call failed with status %s", resp.Status)
+	}
+
+	log.Printf("Successfully called API to process booking video for field_id: %s, Status: %s", fieldID, resp.Status)
+	return nil
 }
 
 // abs returns the absolute value of x

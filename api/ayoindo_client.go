@@ -189,64 +189,64 @@ func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string
 func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
-		"token":       c.apiToken,
-		"venue_code":  c.venueCode,
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Build the URL with query parameters
 	endpoint := fmt.Sprintf("%s/api/v1/watermark", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Add query parameters
 	q := req.URL.Query()
 	for k, v := range params {
 		q.Add(k, fmt.Sprintf("%v", v))
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	// Print full URL for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -263,61 +263,61 @@ func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error)
 		"venue_code": c.venueCode,
 		"date":       date,
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Build the URL with query parameters
 	endpoint := fmt.Sprintf("%s/api/v1/bookings", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Add query parameters
 	q := req.URL.Query()
 	for k, v := range params {
 		q.Add(k, fmt.Sprintf("%v", v))
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	// Print full URL for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -335,61 +335,61 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 		"start_timestamp": startTime.Format(time.RFC3339),
 		"end_timestamp":   endTime.Format(time.RFC3339),
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Convert parameters to JSON
 	payload, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	// Build the URL
 	endpoint := fmt.Sprintf("%s/api/v1/save-video-available", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
-	
+
 	// Print full URL and payload for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
 	fmt.Printf("[DEBUG] API Request Body: %s\n", string(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -400,7 +400,7 @@ func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, e
 		"token":      c.apiToken,
 		"venue_code": c.venueCode,
 	}
-	
+
 	// If date is provided, add it to parameters
 	// if date != "" {
 	// 	params["date"] = date
@@ -408,61 +408,61 @@ func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, e
 	// 	// If date is empty, use today's date as default
 	// 	params["date"] = time.Now().Format("2006-01-02")
 	// }
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Build the URL with query parameters
 	endpoint := fmt.Sprintf("%s/api/v1/video-requests", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Add query parameters
 	q := req.URL.Query()
 	for k, v := range params {
 		q.Add(k, fmt.Sprintf("%v", v))
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	// Print full URL for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -486,7 +486,7 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 		"start_timestamp":  startTime.Format(time.RFC3339),
 		"end_timestamp":    endTime.Format(time.RFC3339),
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
@@ -505,9 +505,75 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	// Build the URL
 	endpoint := fmt.Sprintf("%s/api/v1/save-video", c.baseURL)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
+
+	// Print full URL and payload for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
+	fmt.Printf("[DEBUG] API Request Body: %s\n", string(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result, nil
+}
+
+// HealthCheck performs a health check request to the AYO API
+func (c *AyoIndoClient) HealthCheck(cameraToken string) (map[string]interface{}, error) {
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":        c.apiToken,
+		"venue_code":   c.venueCode,
+		"camera_token": cameraToken,
+	}
+	
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+	
+	// Add signature to parameters
+	params["signature"] = signature
+	
+	// Convert parameters to JSON
+	payload, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	
+	// Build the URL
+	endpoint := fmt.Sprintf("%s/api/v1/health-check", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	
 	// Print full URL and payload for debugging/Postman testing
@@ -590,7 +656,7 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 	if err != nil {
 		log.Printf("Warning: Failed to get watermark metadata: %v", err)
 		log.Printf("Using test watermark instead")
-		
+
 		// Simpan watermark dari URL test ke file
 		fallbackPath := filepath.Join(folder, "watermark_test.png")
 		resp, err := http.Get(testWatermarkURL)
@@ -598,22 +664,22 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 			return "", fmt.Errorf("failed to download test watermark: %v", err)
 		}
 		defer resp.Body.Close()
-		
+
 		if resp.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("failed to download test watermark, status code: %d", resp.StatusCode)
 		}
-		
+
 		f, err := os.Create(fallbackPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to create test watermark file: %v", err)
 		}
-		
+
 		_, err = io.Copy(f, resp.Body)
 		f.Close()
 		if err != nil {
 			return "", fmt.Errorf("failed to save test watermark file: %v", err)
 		}
-		
+
 		return fallbackPath, nil
 	}
 
@@ -686,7 +752,7 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 
 	// Jika tidak ada watermark yang ditemukan, gunakan test watermark URL
 	log.Printf("No watermark found from API, using test watermark URL")
-	
+
 	// Simpan watermark dari URL test ke file
 	fallbackPath := filepath.Join(folder, "watermark_test.png")
 	resp, err := http.Get(testWatermarkURL)
@@ -694,22 +760,22 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 		return "", fmt.Errorf("failed to download test watermark: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to download test watermark, status code: %d", resp.StatusCode)
 	}
-	
+
 	f, err := os.Create(fallbackPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to create test watermark file: %v", err)
 	}
-	
+
 	_, err = io.Copy(f, resp.Body)
 	f.Close()
 	if err != nil {
 		return "", fmt.Errorf("failed to save test watermark file: %v", err)
 	}
-	
+
 	return fallbackPath, nil
 }
 
@@ -720,61 +786,61 @@ func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) 
 		"token":      c.apiToken,
 		"venue_code": c.venueCode,
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Build the URL with query parameters
 	endpoint := fmt.Sprintf("%s/api/v1/video-configuration", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Add query parameters
 	q := req.URL.Query()
 	for k, v := range params {
 		q.Add(k, fmt.Sprintf("%v", v))
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	// Print full URL for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL: %s\n", req.URL.String())
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -790,8 +856,8 @@ func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[
 
 	// Prepare the parameters
 	params := map[string]interface{}{
-		"token":             c.apiToken,
-		"venue_code":        c.venueCode,
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
 		// Convert array to comma-separated string
 		"video_request_ids": strings.Join(videoRequestIDs, ","),
 	}
@@ -856,6 +922,82 @@ func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[
 	return result, nil
 }
 
+// MarkVideosUnavailable marks multiple videos as unavailable
+func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]interface{}, error) {
+	// Validate input
+	if len(uniqueIDs) == 0 {
+		return nil, fmt.Errorf("at least one unique ID must be provided")
+	}
+	if len(uniqueIDs) > 10 {
+		return nil, fmt.Errorf("maximum 10 unique IDs are allowed, got %d", len(uniqueIDs))
+	}
+
+	// Prepare the parameters
+	params := map[string]interface{}{
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
+		"unique_ids": uniqueIDs,
+	}
+
+	// Generate signature
+	signature, err := c.GenerateSignature(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signature: %w", err)
+	}
+
+	// Add signature to parameters
+	params["signature"] = signature
+
+	// Prepare the request body
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Build the URL
+	endpoint := fmt.Sprintf("%s/api/v1/video-unavailable", c.baseURL)
+
+	// Print full URL for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
+	fmt.Printf("[DEBUG] API Request Body: %s\n", string(body))
+
+	// Create the request
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result, nil
+}
+
 // SaveCameraStatus updates camera status to AYO API
 func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[string]interface{}, error) {
 	// Prepare the parameters
@@ -864,65 +1006,65 @@ func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[st
 		strIsonline = "ACTIVE"
 	}
 	params := map[string]interface{}{
-		"token":       c.apiToken,
-		"venue_code":  c.venueCode,
-		"camera_id":   cameraID,
-		"status":   strIsonline,
+		"token":      c.apiToken,
+		"venue_code": c.venueCode,
+		"camera_id":  cameraID,
+		"status":     strIsonline,
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Convert parameters to JSON
 	payload, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	// Build the URL
 	endpoint := fmt.Sprintf("%s/api/v1/update-camera-status", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
-	
+
 	// Print full URL and payload for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
 	fmt.Printf("[DEBUG] API Request Body: %s\n", string(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }

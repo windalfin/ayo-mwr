@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -131,7 +132,6 @@ func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName 
 		// Get the latest camera config from the manager
 		currentCamera := configManager.GetCameraByName(cameraName)
 
-
 		if currentCamera == nil {
 			log.Printf("[%s] Camera configuration not found, using default", cameraName)
 			return ""
@@ -157,27 +157,26 @@ func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName 
 		return rtspURL
 	}
 
-	// Create camera-specific directories and add MP4 folder
+	// Create camera-specific directories and add HLS and MP4 folders
 	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	cameraLogsDir := filepath.Join(cameraDir, "logs")
+	cameraHLSDir := filepath.Join(cameraDir, "hls")
 	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
 
 	// Create all required directories
-	for _, dir := range []string{cameraDir, cameraLogsDir, cameraMP4Dir} {
+	for _, dir := range []string{cameraDir, cameraLogsDir, cameraHLSDir, cameraMP4Dir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
 		}
 	}
 
+	// Start the MP4 segmenter in the background
+	StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
+
 	log.Printf("Starting capture for camera: %s", cameraName)
 
-	for {
-		// Create a new segment file with timestamp
-		timestamp := time.Now().Format("20060102_150405")
-		outputFilename := fmt.Sprintf("%s_%s.mp4", cameraName, timestamp)
-		outputPath := filepath.Join(cameraMP4Dir, outputFilename)
-
-		log.Printf("[%s] Creating new video segment: %s\n", cameraName, outputFilename)
+	// Start continuous HLS streaming
+	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
 
 		// Get the latest RTSP URL using current camera configuration
 		currentRTSPURL := getLatestRTSPURL()
@@ -194,51 +193,44 @@ func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName 
 			continue
 		}
 
-		// Create a log file for FFmpeg error output
-		logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", timestamp)))
+	for {
+		logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
 		if err != nil {
 			log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
-		} else {
-			defer logFile.Close()
+			time.Sleep(5 * time.Second)
+			continue
 		}
 
-		// Construct FFmpeg command for capturing a segment with more detailed parameters
 		ffmpegArgs := []string{
-			"-rtsp_transport", "tcp", // Use TCP (more reliable than UDP)
-			"-timeout", "5000000", // General IO timeout in microseconds (5 seconds)
-			"-fflags", "nobuffer", // Reduce buffering and latency
+			"-rtsp_transport", "tcp",
+			"-timeout", "5000000",
+			"-fflags", "nobuffer+discardcorrupt",
+			"-analyzeduration", "2000000",
+			"-probesize", "1000000",
+			"-re",
+			"-i", rtspURL,
+			"-c:v", "libx264",
+			"-preset", "ultrafast",
+			"-tune", "zerolatency",
+			"-profile:v", "baseline",
+			"-pix_fmt", "yuv420p",
+			"-color_range", "tv",
+			"-b:v", "2M",
+			"-bufsize", "4M",
+			"-c:a", "aac",
+			"-b:a", "128k",
+			"-ar", "44100",
+			"-max_muxing_queue_size", "1024",
+			"-f", "hls",
+			"-hls_time", "2",
+			"-hls_list_size", "0",
+			"-strftime", "1",
+			"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
+			hlsPlaylistPath,
 		}
 
-		// Add input
-		ffmpegArgs = append(ffmpegArgs,
-			"-i", currentRTSPURL,
-			"-t", fmt.Sprintf("%d", cfg.SegmentDuration),
-		)
+		log.Printf("[%s] Starting continuous HLS FFmpeg recording", cameraName)
 
-		// Add output parameters for better reliability
-		ffmpegArgs = append(ffmpegArgs,
-			"-c:v", "libx264", // Use H.264 codec
-			"-preset", "ultrafast", // Fastest encoding
-			"-tune", "zerolatency", // Reduce latency
-			"-profile:v", "high", // Use high profile for better color
-			"-pix_fmt", "yuv420p", // Standard pixel format
-			"-colorspace", "bt709", // Standard colorspace
-			"-color_primaries", "bt709", // Standard color primaries
-			"-color_trc", "bt709", // Standard transfer characteristics
-			"-color_range", "tv",
-			"-b:v", "2M", // 2 Mbps video bitrate
-			"-bufsize", "4M",
-			"-c:a", "aac", // Use AAC audio codec
-			"-b:a", "128k", // 128kbps audio bitrate
-			"-ar", "44100", // Standard audio sample rate
-			"-max_muxing_queue_size", "1024", // Prevent muxing queue errors
-			"-f", "mp4",
-			"-reset_timestamps", "1", // Reset timestamps to avoid errors
-			"-movflags", "+faststart", // Optimize for web playback
-			outputPath,
-		)
-
-		// Create and start FFmpeg command
 		cmd := exec.Command("ffmpeg", ffmpegArgs...)
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
@@ -254,27 +246,8 @@ func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName 
 			time.Sleep(5 * time.Second) // Wait before retrying
 			continue
 		}
-
-		// Wait for the capture to complete in a goroutine
-		go func() {
-			captureDone <- cmd.Wait()
-		}()
-
-		// Wait for capture to complete or timeout
-		select {
-		case err := <-captureDone:
-			if err != nil {
-				log.Printf("[%s] Error during FFmpeg capture: %v", cameraName, err)
-			} else {
-				log.Printf("[%s] Successfully completed video segment: %s", cameraName, outputFilename)
-			}
-		case <-time.After(time.Duration(cfg.SegmentDuration+5) * time.Second):
-			log.Printf("[%s] FFmpeg capture timed out, killing process", cameraName)
-			cmd.Process.Kill()
-		}
-
-		// Brief pause before starting next segment
-		time.Sleep(1 * time.Second)
+		log.Printf("[%s] FFmpeg process exited normally, restarting in 2 seconds...", cameraName)
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -347,4 +320,68 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		return fmt.Errorf("ffmpeg concat failed: %v\nOutput: %s", err, string(output))
 	}
 	return nil
+}
+
+// StartMP4Segmenter periodically merges the last 1 minute of HLS .ts segments into a single MP4 file
+func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
+	// Ensure hlsDir is absolute for robust concat list pathing
+	var err error
+	hlsDir, err = filepath.Abs(hlsDir)
+	if err != nil {
+		log.Printf("[%s] MP4 segmenter: failed to get absolute path for hlsDir: %v", cameraName, err)
+		return
+	}
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			cutoff := time.Now().Add(-1 * time.Minute)
+			entries, err := os.ReadDir(hlsDir)
+			if err != nil {
+				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
+				continue
+			}
+			var segs []string
+			for _, e := range entries {
+				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if info.ModTime().After(cutoff) {
+					segs = append(segs, filepath.Base(e.Name()))
+				}
+			}
+			if len(segs) == 0 {
+				continue
+			}
+			sort.Strings(segs)
+			log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs)
+			hlsDir = filepath.Clean(hlsDir)
+			concatList := filepath.Join(hlsDir, "concat_list.txt")
+			f, err := os.Create(concatList)
+			if err != nil {
+				log.Printf("[%s] MP4 segmenter: failed to create concat list: %v", cameraName, err)
+				continue
+			}
+			hlsDir = filepath.Clean(hlsDir)
+			for _, s := range segs {
+				// s should already be just the base filename
+				absPath := filepath.Join(hlsDir, s)
+				log.Printf("[%s] MP4 segmenter: Adding segment to concat list: s=%q, absPath=%q", cameraName, s, absPath)
+				f.WriteString("file '" + absPath + "'\n")
+			}
+			f.Close()
+			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, time.Now().Format("20060102_150405"))
+			mp4Path := filepath.Join(mp4Dir, mp4Name)
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", mp4Path)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
+				continue
+			}
+			log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
+		}
+	}()
 }

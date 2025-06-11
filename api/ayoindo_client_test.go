@@ -199,11 +199,140 @@ func TestGetWatermark(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected data item to be an object")
 	}
+	
 	if item["resolution"] != "480" {
 		t.Errorf("Expected resolution to be '480', got %v", item["resolution"])
 	}
 	if item["path"] != "https://asset.ayo.co.id/venue-a-watermark-480.png" {
 		t.Errorf("Expected path to be 'https://asset.ayo.co.id/venue-a-watermark-480.png', got %v", item["path"])
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	cleanup := setupTestEnv()
+	defer cleanup()
+
+	// Create a test server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check request method
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		// Check path
+		if r.URL.Path != "/api/v1/health-check" {
+			t.Errorf("Expected path to be '/api/v1/health-check', got %s", r.URL.Path)
+		}
+
+		// Check headers
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept header to be 'application/json', got %s", r.Header.Get("Accept"))
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type header to be 'application/json', got %s", r.Header.Get("Content-Type"))
+		}
+
+		// Decode and check request body
+		var reqBody map[string]interface{}
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&reqBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+
+		// Check required fields in request body
+		if reqBody["token"] != "test-token" {
+			t.Errorf("Expected token to be 'test-token', got %v", reqBody["token"])
+		}
+		if reqBody["venue_code"] != "TEST123456" {
+			t.Errorf("Expected venue_code to be 'TEST123456', got %v", reqBody["venue_code"])
+		}
+		if reqBody["camera_token"] != "test-camera-token" {
+			t.Errorf("Expected camera_token to be 'test-camera-token', got %v", reqBody["camera_token"])
+		}
+		if _, exists := reqBody["signature"]; !exists {
+			t.Error("Expected signature to be present in request body")
+		}
+
+		// Send response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{
+			"error": false,
+			"status_code": 200,
+			"message": "Health check successful",
+			"data": {
+				"server_time": "2025-06-05T14:11:01+07:00",
+				"version": "1.0.0",
+				"status": "OK"
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	// Save original API base URL
+	originalBaseURL := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+	// Point client to test server
+	os.Setenv("AYOINDO_API_BASE_ENDPOINT", server.URL)
+	defer os.Setenv("AYOINDO_API_BASE_ENDPOINT", originalBaseURL)
+
+	// Create client with updated baseURL
+	client, err := NewAyoIndoClient()
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	// Call the API
+	result, err := client.HealthCheck("test-camera-token")
+	if err != nil {
+		t.Fatalf("HealthCheck failed: %v", err)
+	}
+
+	// Check response
+	errorValue, ok := result["error"]
+	if !ok {
+		t.Errorf("Response missing 'error' field")
+	} else if errorValue != false {
+		t.Errorf("Expected error to be false, got %v", errorValue)
+	}
+	
+	statusCode, ok := result["status_code"]
+	if !ok {
+		t.Errorf("Response missing 'status_code' field")
+	} else if statusCode != float64(200) {
+		t.Errorf("Expected status_code to be 200, got %v", statusCode)
+	}
+
+	message, ok := result["message"]
+	if !ok {
+		t.Errorf("Response missing 'message' field")
+	} else if !strings.Contains(message.(string), "Health check successful") {
+		t.Errorf("Expected message to contain 'Health check successful', got %v", message)
+	}
+
+	// Check data object
+	dataValue, exists := result["data"]
+	if !exists {
+		t.Fatalf("Response missing 'data' field")
+	}
+	
+	data, ok := dataValue.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an object, got %T", dataValue)
+	}
+
+	// Verify data fields
+	if _, exists := data["server_time"]; !exists {
+		t.Errorf("Expected data to contain 'server_time' field")
+	}
+	
+	if _, exists := data["version"]; !exists {
+		t.Errorf("Expected data to contain 'version' field")
+	}
+	
+	if status, exists := data["status"]; !exists {
+		t.Errorf("Expected data to contain 'status' field")
+	} else if status != "OK" {
+		t.Errorf("Expected status to be 'OK', got %v", status)
 	}
 }
 
@@ -687,6 +816,36 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	t.Logf("Venue Code: %s", client.venueCode)
 	t.Logf("Secret Key: %s", client.secretKey)
 
+	// Test HealthCheck
+	t.Run("HealthCheck", func(t *testing.T) {
+		t.Logf("Attempting HealthCheck API call")
+		// Use a test camera token
+		cameraToken := "test-camera-token"
+		result, err := client.HealthCheck(cameraToken)
+		t.Logf("HealthCheck returned: result=%v, err=%v", result, err)
+		if err != nil {
+			t.Fatalf("HealthCheck failed: %v", err)
+		}
+		
+		// Check response
+		errorValue, ok := result["error"]
+		if !ok {
+			t.Errorf("Response missing 'error' field")
+		} else if errorValue != false {
+			t.Errorf("Expected error to be false, got %v", errorValue)
+		}
+		
+		statusCode, ok := result["status_code"]
+		if !ok {
+			t.Errorf("Response missing 'status_code' field")
+		} else if statusCode != float64(200) {
+			t.Errorf("Expected status_code to be 200, got %v", statusCode)
+		}
+		
+		// Log response for debugging
+		t.Logf("HealthCheck response: %v", result)
+	})
+	
 	// Test GetWatermark
 	t.Run("GetWatermark", func(t *testing.T) {
 		watermarkPath, err := client.GetWatermark()

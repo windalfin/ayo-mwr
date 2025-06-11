@@ -23,7 +23,7 @@ type Server struct {
 func NewServer(configManager *config.ConfigManager, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
 	// Get current config from manager
 	cfg := configManager.GetConfig()
-	
+
 	// Initialize video request handler
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 

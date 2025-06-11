@@ -363,7 +363,7 @@ func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, string, err
 	}
 	// Kembalikan path dan URL
 	r2Path := remotePrefix
-	r2URL := fmt.Sprintf("%s/%s/playlist.m3u8", r.GetBaseURL(), remotePrefix)
+	r2URL := fmt.Sprintf("%s/%s/master.m3u8", r.GetBaseURL(), remotePrefix)
 	return r2Path, r2URL, nil
 }
 

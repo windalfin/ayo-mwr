@@ -188,6 +188,7 @@ func AddWatermark(inputVideo, watermarkImg, outputVideo string, x, y int) error 
 // Opacity should be between 0.0 (fully transparent) and 1.0 (fully opaque).
 // This implementation preserves the original video quality as much as possible.
 func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, position WatermarkPosition, margin int, opacity float64) error {
+	log.Printf("AddWatermarkWithPosition : Adding watermark to video: %s", inputVideo)
 	if opacity < 0.0 {
 		opacity = 0.0
 	} else if opacity > 1.0 {
@@ -208,7 +209,7 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 	}
 
 	filter := fmt.Sprintf("[1]format=rgba,colorchannelmixer=aa=%.2f[wm];[0][wm]%s", opacity, overlayExpr)
-	
+	log.Printf("AddWatermarkWithPosition : Filter: %s", filter)
 	// Komando ffmpeg dengan parameter yang menjaga kualitas video tetap original
 	cmd := exec.Command(
 		"ffmpeg", "-y",
@@ -226,10 +227,12 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 		outputVideo,
 	)
 	
-	log.Printf("Executing ffmpeg with high quality settings for watermark overlay")
+	log.Printf("AddWatermarkWithPosition : Executing ffmpeg with high quality settings for watermark overlay")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ffmpeg error: %v, output: %s", err, string(output))
+		log.Printf("AddWatermarkWithPosition : ffmpeg error: %v, output: %s", err, string(output))
+		return fmt.Errorf("AddWatermarkWithPosition : ffmpeg error: %v, output: %s", err, string(output))
 	}
+	log.Printf("AddWatermarkWithPosition : Watermark added successfully")
 	return nil
 }

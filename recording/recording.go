@@ -39,6 +39,7 @@ func ExtractThumbnail(videoPath, outPath string) error {
 func CaptureMultipleRTSPStreams(configManager *config.ConfigManager) error {
 	// Get current config from manager
 	cfg := configManager.GetConfig()
+  
 	// Create logs directory if it doesn't exist
 	logDir := filepath.Join(cfg.StoragePath, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -129,6 +130,7 @@ func captureRTSPStreamForCamera(configManager *config.ConfigManager, cameraName 
 	getLatestRTSPURL := func() string {
 		// Get the latest camera config from the manager
 		currentCamera := configManager.GetCameraByName(cameraName)
+
 
 		if currentCamera == nil {
 			log.Printf("[%s] Camera configuration not found, using default", cameraName)

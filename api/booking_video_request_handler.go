@@ -44,14 +44,14 @@ func getBookingJSON(booking map[string]interface{}) string {
 
 // BookingVideoRequestHandler handles booking video processing requests
 type BookingVideoRequestHandler struct {
-	config        config.Config
+	config        *config.Config
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
 }
 
 // NewBookingVideoRequestHandler creates a new booking video request handler instance
-func NewBookingVideoRequestHandler(cfg config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
+func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
 	return &BookingVideoRequestHandler{
 		config:        cfg,
 		db:            db,
@@ -172,7 +172,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
-
+	// log.Printf("Bookings: %v", response)
 	// Extract bookings from response
 	data, ok := response["data"].([]interface{})
 	if !ok || len(data) == 0 {
@@ -203,7 +203,10 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		endTimeStr, _ := booking["end_time"].(string)
 		
 		// Parse date and times
-		bookingDate, err := time.Parse(time.RFC3339, date)
+		log.Printf("Date: %v", date)
+		
+		bookingDate, err := time.Parse("2006-01-02", date)
+		log.Printf("Booking Date: %v", bookingDate)
 		if err != nil {
 			log.Printf("Error parsing date: %v", err)
 			continue
@@ -232,9 +235,16 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			log.Printf("Error parsing end time: %v", err)
 			continue
 		}
-		
+
+		bookingStartTime = bookingStartTime.UTC().Add(localOffsetHours)
+		bookingEndTime = bookingEndTime.UTC().Add(localOffsetHours)
+		log.Printf("Debug Booking Start Time: %v", bookingStartTime)
+		log.Printf("Debug Booking End Time: %v", bookingEndTime)
+		log.Printf("Debug End Time: %v", endTime)
+		log.Printf("Debug Start Time: %v", startTime)	
 		// Compare field_id and check if current time is within booking time range
 		if int(bookingFieldIDFloat) == fieldID && endTime.After(bookingStartTime) && startTime.Before(bookingEndTime) {
+			log.Printf("Found matching booking for field_id: %d at current time", fieldID)
 			matchingBooking = booking
 			orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 			break
@@ -304,7 +314,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		watermarkedVideoPath := filepath.Join(h.config.StoragePath, "tmp", "watermark", uniqueID+".mp4")
 
 		// Upload processed video
-		_, previewURL, thumbnailURL, _, _, err := bookingVideoService.UploadProcessedVideo(
+		previewURL, thumbnailURL, err := bookingVideoService.UploadProcessedVideo(
 			uniqueID,
 			watermarkedVideoPath,
 			bookingID,

@@ -17,6 +17,7 @@ import (
 	"ayo-mwr/database"
 	"ayo-mwr/recording"
 	"ayo-mwr/storage"
+	// "ayo-mwr/transcode"
 )
 
 // AyoAPIClient adalah interface untuk berinteraksi dengan AYO API
@@ -31,7 +32,7 @@ type BookingVideoService struct {
 	db        database.Database
 	ayoClient AyoAPIClient
 	r2Client  *storage.R2Storage
-	config    config.Config
+	config    *config.Config
 }
 
 // Tipe file sementara yang disimpan
@@ -61,7 +62,7 @@ func sanitizeID(id string) string {
 }
 
 // NewBookingVideoService creates a new booking video service
-func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Client *storage.R2Storage, cfg config.Config) *BookingVideoService {
+func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Client *storage.R2Storage, cfg *config.Config) *BookingVideoService {
 	return &BookingVideoService{
 		db:        db,
 		ayoClient: ayoClient,
@@ -106,7 +107,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	sanitizedBookingID := sanitizeID(bookingID)
 	uniqueID := fmt.Sprintf("%s_%s_%s", sanitizedBookingID, camera.Name, time.Now().Format("20060102150405"))
 	
-	log.Printf("Processing %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
+	log.Printf("ProcessVideoSegments : Processing %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
 	
 	// Tentukan direktori tempat segment berada (ambil dari segment pertama)
 	segmentDir := filepath.Dir(segments[0])
@@ -115,7 +116,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	mergedVideoPath := s.getTempPath(TmpTypeMerged, uniqueID, ".mp4")
 
 	// Langkah 1: Gabungkan video segments
-	log.Printf("Merging video segments to: %s", mergedVideoPath)
+	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
 	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to merge video segments: %v", err)
@@ -123,16 +124,17 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	
 	// Langkah 2: Tambahkan watermark (di folder watermark)
 	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
-	log.Printf("Adding watermark, output to: %s", watermarkedVideoPath)
+	log.Printf("ProcessVideoSegments : Adding watermark, output to: %s", watermarkedVideoPath)
 	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath)
 	
 	// Use merged video if watermarking fails
 	videoPathForNextStep := watermarkedVideoPath
 	if watermarkErr != nil {
-		log.Printf("Warning: Failed to add watermark: %v, continuing with unwatermarked video", watermarkErr)
+		log.Printf("ProcessVideoSegments : Warning: Failed to add watermark: %v, continuing with unwatermarked video", watermarkErr)
 		// Use original merged video instead
 		videoPathForNextStep = mergedVideoPath
 	}
+	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	
 	// Step 3: Create video metadata
 	videoMeta := database.VideoMetadata{
@@ -146,14 +148,15 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		BookingID:     bookingID,
 		RawJSON:       rawJSON,
 		Resolution:    camera.Resolution,
+		HasRequest:    false, // Explicitly set default to false
 	}
 	
 	// Create database entry
 	err = s.db.CreateVideo(videoMeta)
 	if err != nil {
-		return "", fmt.Errorf("error creating database entry: %v", err)
+		return "", fmt.Errorf("ProcessVideoSegments : error creating database entry: %v", err)
 	}
-	
+	log.Printf("ProcessVideoSegments : Database entry created for uniqueID: %s", uniqueID)
 	return uniqueID, nil
 }
 
@@ -163,7 +166,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	videoPath string,
 	bookingID string,
 	cameraName string,
-) (string, string, string, string, string, error) {
+) (string, string, error) {
 	// UniqueID sudah berisi booking ID yang aman
 	
 	// Create preview video (di folder preview)
@@ -186,43 +189,43 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	
 	// Buat direktori HLS untuk video ini di folder hls, bukan di tmp/hls
 	// Sesuai dengan konfigurasi server di api/server.go
-	hlsParentDir := filepath.Join(s.config.StoragePath, "hls")
-	os.MkdirAll(hlsParentDir, 0755)
-	hlsDir := filepath.Join(hlsParentDir, uniqueID)
-	hlsURL := ""
+	// hlsParentDir := filepath.Join(s.config.StoragePath, "hls")
+	// os.MkdirAll(hlsParentDir, 0755)
+	// hlsDir := filepath.Join(hlsParentDir, uniqueID)
+	// hlsURL := ""
 	
-	// Buat HLS stream dari video menggunakan ffmpeg
-	log.Printf("Generating HLS stream in: %s", hlsDir)
-	if err := s.CreateHLSStream(videoPath, hlsDir); err != nil {
-		log.Printf("Warning: Failed to create HLS stream: %v", err)
-	} else {
-		// Format HLS URL untuk server lokal yang sudah di-setup di api/server.go
-		// Route: r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
-		baseURL := "http://localhost:8080" // Gunakan base URL yang sesuai dengan konfigurasi
-		hlsURL = fmt.Sprintf("%s/hls/%s/playlist.m3u8", baseURL, uniqueID)
-		log.Printf("HLS stream created at: %s", hlsDir)
-		log.Printf("HLS stream can be accessed at: %s", hlsURL)
+	// // Buat HLS stream dari video menggunakan ffmpeg
+	// log.Printf("Generating HLS stream in: %s", hlsDir)
+	// if err := transcode.GenerateHLS(videoPath, hlsDir, uniqueID, s.config); err != nil {
+	// 	log.Printf("Warning: Failed to create HLS stream: %v", err)
+	// } else {
+	// 	// Format HLS URL untuk server lokal yang sudah di-setup di api/server.go
+	// 	// Route: r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
+	// 	baseURL := "http://localhost:8080" // Gunakan base URL yang sesuai dengan konfigurasi
+	// 	hlsURL = fmt.Sprintf("%s/hls/%s/master.m3u8", baseURL, uniqueID)
+	// 	log.Printf("HLS stream created at: %s", hlsDir)
+	// 	log.Printf("HLS stream can be accessed at: %s", hlsURL)
 		
-		// Upload HLS ke R2
-		_, r2HlsURL, err := s.r2Client.UploadHLSStream(hlsDir, uniqueID)
-		if err != nil {
-			log.Printf("Warning: Failed to upload HLS stream to R2: %v", err)
-		} else {
-			hlsURL = r2HlsURL // ganti dengan URL dari R2 jika berhasil
-			log.Printf("HLS stream uploaded to R2: %s", r2HlsURL)
-		}
-	}
+	// 	// Upload HLS ke R2
+	// 	// _, r2HlsURL, err := s.r2Client.UploadHLSStream(hlsDir, uniqueID)
+	// 	// if err != nil {
+	// 	// 	log.Printf("Warning: Failed to upload HLS stream to R2: %v", err)
+	// 	// } else {
+	// 	// 	hlsURL = r2HlsURL // ganti dengan URL dari R2 jika berhasil
+	// 	// 	log.Printf("HLS stream uploaded to R2: %s", r2HlsURL)
+	// 	// }
+	// }
 	
 	// Upload main video to R2
 	mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
-	_, err = s.r2Client.UploadFile(videoPath, mp4Path)
-	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("error uploading video to R2: %v", err)
-	}
+	// _, err = s.r2Client.UploadFile(videoPath, mp4Path)
+	// if err != nil {
+	// 	return "", "", "", "", "", fmt.Errorf("error uploading video to R2: %v", err)
+	// }
 	
 	// Gunakan GetBaseURL untuk membuat URL dari custom domain
-	mp4URL := fmt.Sprintf("%s/%s", s.r2Client.GetBaseURL(), mp4Path)
-	log.Printf("Video uploaded to custom URL: %s", mp4URL)
+	// mp4URL := fmt.Sprintf("%s/%s", s.r2Client.GetBaseURL(), mp4Path)
+	// log.Printf("Video uploaded to custom URL: %s", mp4URL)
 	
 	// Upload preview video if available
 	previewPath := fmt.Sprintf("mp4/%s_preview.mp4", uniqueID)
@@ -277,44 +280,40 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	
 	// Update database entry with all information
 	// Siapkan nilai HLS untuk update database
-	var r2HLSPath, hlsLocalPath, hlsLocalURL string
-	if hlsDir != "" {
+	// var r2HLSPath, hlsLocalPath, hlsLocalURL string
+	// if hlsDir != "" {
 		// Format paths dengan benar
-		r2HLSPath = fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
-		hlsLocalPath = hlsDir // Path di lokal filesystem
+		// r2HLSPath = fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
+		// hlsLocalPath = hlsDir // Path di lokal filesystem
 		
 		// Format URL dengan benar untuk akses lokal
 		// Hapus semua referensi ke StoragePath dan pastikan URL mengacu langsung ke folder hls
 		// Karena server sudah di-configure untuk menyajikan langsung dari endpoint /hls
 		
 		// Path server hls harus persis seperti endpoint yang dikonfigurasi di server.go: /hls/{uniqueID}
-		hlsServerPath := fmt.Sprintf("hls/%s", uniqueID)  
+		// hlsServerPath := fmt.Sprintf("hls/%s", uniqueID)  
 		
 		// Gunakan BaseURL dari konfigurasi
-		hlsLocalURL = fmt.Sprintf("%s/%s/playlist.m3u8", s.config.BaseURL, hlsServerPath)
+		// hlsLocalURL = fmt.Sprintf("%s/%s/playlist.m3u8", s.config.BaseURL, hlsServerPath)
 		
 		// Tambahan debug untuk memastikan URL yang dibuat sudah benar
-		log.Printf("HLS Endpoint URL: %s", hlsLocalURL)
+		// log.Printf("HLS Endpoint URL: %s", hlsLocalURL)
 		
 		// Log semua nilai untuk debugging
 		log.Printf("HLS: Menyimpan ke database:")
-		log.Printf("  - hls_path: %s", hlsLocalPath)
-		log.Printf("  - hls_url: %s", hlsLocalURL)
-		log.Printf("  - r2_hls_path: %s", r2HLSPath)
-		log.Printf("  - r2_hls_url: %s", hlsURL)
-	}
+		// log.Printf("  - hls_path: %s", hlsLocalPath)
+		// log.Printf("  - hls_url: %s", hlsLocalURL)
+		// log.Printf("  - r2_hls_path: %s", r2HLSPath)
+		// log.Printf("  - r2_hls_url: %s", hlsURL)
+	// }
 	
 	videoUpdate := database.VideoMetadata{
 		ID:               uniqueID,
 		Status:           database.StatusReady,
 		Size:             fileSize,
 		Duration:         duration,
-		R2MP4Path:        mp4Path,
-		R2MP4URL:         mp4URL,
-		R2HLSPath:        r2HLSPath,  // Nilai sudah dipersiapkan
-		R2HLSURL:         hlsURL,
-		HLSPath:          hlsLocalPath, // Tambahkan local HLS path
-		HLSURL:           hlsLocalURL, // Tambahkan local HLS URL
+		// HLSPath:          hlsLocalPath, // Tambahkan local HLS path
+		// HLSURL:           hlsLocalURL, // Tambahkan local HLS URL
 		R2PreviewMP4Path: previewPath,
 		R2PreviewMP4URL:  previewURL,
 		R2PreviewPNGPath: thumbnailR2Path,
@@ -324,6 +323,8 @@ func (s *BookingVideoService) UploadProcessedVideo(
 		LocalPath:        videoPath,
 		UniqueID:         uniqueID,
 		BookingID:        bookingID,
+		// R2HLSPath:        r2HLSPath,
+		R2MP4Path:        mp4Path,
 	}
 	
 	// Salin field-field penting dari data yang sudah ada jika tersedia
@@ -347,7 +348,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	
 	// Set timestamp upload dan finished
 	now := time.Now()
-	videoUpdate.UploadedAt = &now
+	// videoUpdate.UploadedAt = &now
 	videoUpdate.FinishedAt = &now // Set finished time saat status ready
 	
 	log.Printf("Updating video metadata with complete fields for %s", uniqueID)
@@ -362,13 +363,13 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	log.Printf("Video metadata updated for %s", uniqueID)
 	
 	// Isi nilai HLS untuk dikembalikan ke caller
-	hlsPath := ""
-	if hlsDir != "" {
-		hlsPath = fmt.Sprintf("hls/%s", uniqueID)
-		log.Printf("HLS path yang dikembalikan: %s", hlsPath)
-		log.Printf("HLS URL yang dikembalikan: %s", hlsURL)
-	}
-	return mp4URL, previewURL, thumbnailURL, hlsPath, hlsURL, nil
+	// hlsPath := ""
+	// if hlsDir != "" {
+	// 	hlsPath = fmt.Sprintf("hls/%s", uniqueID)
+	// 	// log.Printf("HLS path yang dikembalikan: %s", hlsPath)
+	// 	// log.Printf("HLS URL yang dikembalikan: %s", hlsURL)
+	// }
+	return previewURL, thumbnailURL, nil
 }
 
 // NotifyAyoAPI notifies the AYO API that a video is available
@@ -411,19 +412,23 @@ func (s *BookingVideoService) CleanupTemporaryFiles(mergedPath, watermarkedPath,
 // addWatermarkToVideo adds a watermark to a video
 func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) error {
 	// Attempt to get watermark from AYO API
+	log.Printf("addWatermarkToVideo : Attempting to get watermark from AYO API")
 	watermarkPath, err := s.ayoClient.GetWatermark()
 	if err != nil {
-		return fmt.Errorf("failed to get watermark: %v", err)
+		return fmt.Errorf("addWatermarkToVideo : failed to get watermark: %v", err)
 	}
+	log.Printf("addWatermarkToVideo : Watermark path: %s", watermarkPath)
 	
 	// Get watermark position settings
 	pos, margin, opacity := recording.GetWatermarkSettings()
+	log.Printf("addWatermarkToVideo : Watermark position: %s, margin: %d, opacity: %f", pos, margin, opacity)
 	
 	// Add watermark to video
 	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity)
 	if err != nil {
-		return fmt.Errorf("failed to add watermark: %v", err)
+		return fmt.Errorf("addWatermarkToVideo : failed to add watermark: %v", err)
 	}
+	log.Printf("addWatermarkToVideo : Watermark added successfully")
 	
 	return nil
 }

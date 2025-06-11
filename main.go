@@ -107,6 +107,10 @@ func main() {
 
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(configManager)
+  
+  // Start config update Config (every 24 hours)
+	cron.StartConfigUpdateCron(configManager)
+
 
 	// Initialize R2 storage with config
 	r2Config := storage.R2Config{
@@ -124,10 +128,11 @@ func main() {
 	}
 
 	// Initialize upload service
-	uploadService := service.NewUploadService(db, r2Storage, cfg)
+	uploadService := service.NewUploadService(db, r2Storage, &cfg)
 
 	// Initialize and start API server
 	apiServer := api.NewServer(configManager, db, r2Storage, uploadService)
+
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler

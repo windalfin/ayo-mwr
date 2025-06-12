@@ -89,7 +89,6 @@ func main() {
 	// Start config update cron job (every 24 hours)
 	cron.StartConfigUpdateCron(&cfg)
 
-<<<<<<< HEAD
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
 	if err != nil {
@@ -101,7 +100,7 @@ func main() {
 				log.Printf("Error running health check cron: %v", err)
 			}
 		}()
-=======
+	}
 	// Initialize AyoIndo API client for video cleanup
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
@@ -115,7 +114,6 @@ func main() {
 		// For testing: Immediately run the video cleanup function once
 		log.Println("Running immediate test of video cleanup function...")
 		go cron.CleanupExpiredVideosWithSQLiteDB(db, apiClient, cfg.AutoDelete, cfg.VenueCode)
->>>>>>> origin/feature/auto-cleanup
 	}
 
 	// Initialize R2 storage with config

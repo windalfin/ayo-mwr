@@ -62,7 +62,8 @@ func initTables(db *sql.DB) error {
 			duration REAL,
 			resolution TEXT,
 			has_request BOOLEAN DEFAULT 0,
-			last_check_file DATETIME
+			last_check_file DATETIME,
+			video_type TEXT
 		)
 	`)
 	if err != nil {
@@ -117,6 +118,14 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom last_check_file ke tabel videos")
 	}
+	
+	// Tambahkan kolom video_type jika belum ada
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN video_type TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for video_type: %v (bisa abaikan jika kolom sudah ada)", migrationErr)
+	} else {
+		log.Printf("Success: Menambahkan kolom video_type ke tabel videos")
+	}
 	// Create index on status
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_videos_status ON videos (status)
@@ -137,8 +146,8 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size, duration, resolution, has_request, last_check_file, video_type
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metadata.ID,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -166,6 +175,7 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 		metadata.Resolution,
 		metadata.HasRequest,
 		metadata.LastCheckFile,
+		metadata.VideoType,
 	)
 	return err
 }
@@ -174,14 +184,14 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	var video VideoMetadata
 	var finishedAt, uploadedAt, lastCheckFile sql.NullTime
-	var cameraName, uniqueID, orderDetailID, bookingID, rawJSON, resolution sql.NullString
+	var cameraName, uniqueID, orderDetailID, bookingID, rawJSON, videoType sql.NullString
 
 	err := s.db.QueryRow(`
 		SELECT id, camera_name, local_path, hls_path, hls_url,
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file
+			size, duration, resolution, has_request, last_check_file, video_type
 		FROM videos WHERE id = ?`, id).Scan(
 		&video.ID,
 		&cameraName,
@@ -210,6 +220,7 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		&video.Resolution,
 		&video.HasRequest,
 		&lastCheckFile,
+		&videoType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -243,10 +254,17 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	}
 
 	// Set resolution if valid, otherwise leave as empty string
-	if resolution.Valid {
-		video.Resolution = resolution.String
+	// if resolution.Valid {
+	// 	video.Resolution = resolution.String
+	// } else {
+	// 	video.Resolution = "" // Set default empty value for NULL resolution
+	// }
+
+	// Set VideoType if valid, otherwise leave as empty string
+	if videoType.Valid {
+		video.VideoType = videoType.String
 	} else {
-		video.Resolution = "" // Set default empty value for NULL resolution
+		video.VideoType = "" // Set default empty value for NULL video_type
 	}
 
 	return &video, nil
@@ -279,7 +297,9 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 			size = ?,
 			duration = ?,
 			resolution = ?,
-			has_request = ?
+			has_request = ?,
+			last_check_file = ?,
+			video_type = ?
 		WHERE id = ?`,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -305,6 +325,8 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 		metadata.Duration,
 		metadata.Resolution,
 		metadata.HasRequest,
+		metadata.LastCheckFile,
+		metadata.VideoType,
 		metadata.ID,
 	)
 	return err
@@ -522,48 +544,48 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 
 // UpdateVideoStatus updates the status and optional error message of a video
 func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error {
-	// Pertama, cek apakah kita perlu mendapatkan data lama untuk dipertahankan
+	var updateSQL string
+	var args []interface{}
+	
+	// If status is ready or failed, also update the finished_at time
 	if status == StatusReady || status == StatusFailed {
-		// Dapatkan data video saat ini
-		currentVideo, err := s.GetVideo(id)
-		if err != nil {
-			return fmt.Errorf("failed to get current video data: %v", err)
-		}
-
-		// Pastikan field-field penting dari video tetap terisi
-		// dengan mempertahankan nilai yang sudah ada
 		now := time.Now()
+		updateSQL = `
+			UPDATE videos 
+			SET 
+				status = ?,
+				error = ?,
+				finished_at = ?
+			WHERE id = ?
+		`
+		args = []interface{}{status, errorMsg, now, id}
 		
-		// Update data video yang ada dengan status baru dan finished_at
-		currentVideo.Status = status
-		currentVideo.ErrorMessage = errorMsg
-		currentVideo.FinishedAt = &now
-		
-		// Periksa apakah field-field penting kosong
-		if currentVideo.CameraName == "" || currentVideo.LocalPath == "" || 
-		   currentVideo.UniqueID == "" || currentVideo.OrderDetailID == "" || 
-		   currentVideo.BookingID == "" {
-			log.Printf("Warning: Some important fields are empty for video %s. This might cause issues.", id)
-		}
-		
-		// Update video menggunakan UpdateVideo untuk memastikan semua field terjaga
-		return s.UpdateVideo(*currentVideo)
+		// Log for debugging purposes
+		log.Printf("Setting video %s status to %s with finished_at=%s", id, status, now.Format(time.RFC3339))
 	} else {
-		// Untuk status selain ready dan failed, cukup perbarui status dan error
-		_, err := s.db.Exec(`
+		// For other statuses, just update status and error
+		updateSQL = `
 			UPDATE videos 
 			SET 
 				status = ?,
 				error = ?
 			WHERE id = ?
-		`, status, errorMsg, id)
-
-		if err != nil {
-			return fmt.Errorf("failed to update video status: %v", err)
-		}
+		`
+		args = []interface{}{status, errorMsg, id}
 	}
 
-	log.Printf("Updated video %s status to %s", id, status)
+	// Execute the update
+	_, err := s.db.Exec(updateSQL, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update video status: %v", err)
+	}
+	
+	// Add debug logging to verify the update worked
+	updatedVideo, getErr := s.GetVideo(id)
+	if getErr == nil && updatedVideo != nil {
+		log.Printf("Updated video %s status to %s, VideoType=%s", id, status, updatedVideo.VideoType)
+	}
+	
 	return nil
 }
 
@@ -585,7 +607,7 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file
+			size, duration, resolution, has_request, last_check_file, video_type
 		FROM videos 
 		WHERE booking_id = ?
 		ORDER BY created_at DESC
@@ -601,8 +623,7 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 		var video VideoMetadata
 		var createdAt, finishedAt, uploadedAt, lastCheckFile sql.NullTime
 		var status string
-		var orderDetailID sql.NullString
-		var resolution sql.NullString
+		var orderDetailID, resolution, videoType sql.NullString
 		var hasRequest sql.NullBool
 
 		err := rows.Scan(
@@ -611,7 +632,7 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 			&video.R2PreviewMP4Path, &video.R2PreviewMP4URL, &video.R2PreviewPNGPath, &video.R2PreviewPNGURL,
 			&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
 			&createdAt, &finishedAt, &uploadedAt,
-			&video.Size, &video.Duration, &resolution, &hasRequest, &lastCheckFile,
+			&video.Size, &video.Duration, &resolution, &hasRequest, &lastCheckFile, &videoType,
 		)
 		if err != nil {
 			return nil, err
@@ -662,6 +683,13 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 			video.LastCheckFile = &lastCheckFile.Time
 		}
 
+		// Set VideoType if valid
+		if videoType.Valid {
+			video.VideoType = videoType.String
+		} else {
+			video.VideoType = "" // Default empty value for NULL video_type
+		}
+
 		videos = append(videos, video)
 	}
 
@@ -677,8 +705,7 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 	var video VideoMetadata
 	var createdAt, finishedAt, uploadedAt, lastCheckFile sql.NullTime
 	var status string
-	var orderDetailID sql.NullString
-	var resolution sql.NullString
+	var orderDetailID, resolution, videoType sql.NullString
 	var hasRequest sql.NullBool
 
 	err := s.db.QueryRow(`
@@ -687,7 +714,7 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file
+			size, duration, resolution, has_request, last_check_file, video_type
 		FROM videos 
 		WHERE unique_id = ?
 	`, uniqueID).Scan(
@@ -696,7 +723,7 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 		&video.R2PreviewMP4Path, &video.R2PreviewMP4URL, &video.R2PreviewPNGPath, &video.R2PreviewPNGURL,
 		&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
 		&createdAt, &finishedAt, &uploadedAt,
-		&video.Size, &video.Duration, &resolution, &hasRequest, &lastCheckFile,
+		&video.Size, &video.Duration, &resolution, &hasRequest, &lastCheckFile, &videoType,
 	)
 
 	if err != nil {
@@ -740,6 +767,13 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 		video.Resolution = resolution.String
 	} else {
 		video.Resolution = "" // Set default empty value for NULL resolution
+	}
+
+	// Set VideoType if valid, otherwise leave as empty string
+	if videoType.Valid {
+		video.VideoType = videoType.String
+	} else {
+		video.VideoType = "" // Set default empty value for NULL video_type
 	}
 
 	return &video, nil

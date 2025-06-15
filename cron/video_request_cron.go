@@ -261,7 +261,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 		result, err := ayoClient.SaveVideo(
 			videoRequestID,
 			bookingID,
-			"clip", // Assuming "clip" as video type, adjust if needed
+			matchingVideo.VideoType, // Assuming "clip" as video type, adjust if needed
 			r2HlsURL,
 			r2MP4URL,
 			startTime,

@@ -97,6 +97,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	segments []string,
 	startTime, endTime time.Time,
 	rawJSON string,
+	videoType string, // Added videoType parameter ("clip" or "full")
 ) (string, error) {
 	if len(segments) == 0 {
 		return "", fmt.Errorf("no video segments found")
@@ -135,7 +136,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		videoPathForNextStep = mergedVideoPath
 	}
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
-	
+	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
 	// Step 3: Create video metadata
 	videoMeta := database.VideoMetadata{
 		ID:            uniqueID,
@@ -149,6 +150,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		RawJSON:       rawJSON,
 		Resolution:    camera.Resolution,
 		HasRequest:    false, // Explicitly set default to false
+		VideoType:     videoType, // Set from the parameter
 	}
 	
 	// Create database entry
@@ -168,6 +170,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	cameraName string,
 ) (string, string, error) {
 	// UniqueID sudah berisi booking ID yang aman
+	// getVideoMeta := s.db.GetVideo(uniqueID)
 	
 	// Create preview video (di folder preview)
 	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4")
@@ -307,25 +310,37 @@ func (s *BookingVideoService) UploadProcessedVideo(
 		// log.Printf("  - r2_hls_url: %s", hlsURL)
 	// }
 	
-	videoUpdate := database.VideoMetadata{
-		ID:               uniqueID,
-		Status:           database.StatusReady,
-		Size:             fileSize,
-		Duration:         duration,
-		// HLSPath:          hlsLocalPath, // Tambahkan local HLS path
-		// HLSURL:           hlsLocalURL, // Tambahkan local HLS URL
-		R2PreviewMP4Path: previewPath,
-		R2PreviewMP4URL:  previewURL,
-		R2PreviewPNGPath: thumbnailR2Path,
-		R2PreviewPNGURL:  thumbnailURL,
-		// Pastikan field-field penting dipertahankan
-		CameraName:       cameraName,
-		LocalPath:        videoPath,
-		UniqueID:         uniqueID,
-		BookingID:        bookingID,
-		// R2HLSPath:        r2HLSPath,
-		R2MP4Path:        mp4Path,
+	// Get existing video metadata to preserve all fields
+	existingVideo, err := s.db.GetVideo(uniqueID)
+	if err != nil {
+		log.Printf("Warning: Could not get existing video metadata: %v. Creating a new update struct.", err)
+		// Continue with a new struct if we can't get the existing one
+		existingVideo = &database.VideoMetadata{
+			ID:        uniqueID,
+			UniqueID:  uniqueID,
+			BookingID: bookingID,
+		}
 	}
+	
+	log.Printf("Current existing video with ID=%s, VideoType=%s", uniqueID, existingVideo.VideoType)
+	
+	// Update only the fields that need changing, preserving everything else
+	videoUpdate := *existingVideo
+	// log.Printf("videoUpdate.resolution: %s", videoUpdate.Resolution)
+	videoUpdate.Status = database.StatusReady
+	videoUpdate.Size = fileSize
+	videoUpdate.Duration = duration
+	videoUpdate.R2PreviewMP4Path = previewPath
+	videoUpdate.R2PreviewMP4URL = previewURL
+	videoUpdate.R2PreviewPNGPath = thumbnailR2Path
+	videoUpdate.R2PreviewPNGURL = thumbnailURL
+	videoUpdate.CameraName = cameraName    // Ensure this is still set
+	videoUpdate.LocalPath = videoPath      // Ensure this is still set
+	videoUpdate.R2MP4Path = mp4Path  
+	// videoUpdate.Resolution = "720p"    // Ensure this is still set
+	
+	// Double check that VideoType is preserved
+	log.Printf("Updating video with ID=%s, VideoType=%s", uniqueID, videoUpdate.VideoType)
 	
 	// Salin field-field penting dari data yang sudah ada jika tersedia
 	if currentVideo != nil {
@@ -353,6 +368,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	
 	log.Printf("Updating video metadata with complete fields for %s", uniqueID)
 	err = s.db.UpdateVideo(videoUpdate)
+	log.Printf("videoUpdate: %v", videoUpdate)
 	if err != nil {
 		log.Printf("Error updating database with all fields: %v", err)
 	}
@@ -380,10 +396,11 @@ func (s *BookingVideoService) NotifyAyoAPI(
 	thumbnailURL string,
 	startTime time.Time,
 	endTime time.Time,
+	videoType string,
 ) error {
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
-		"clip", // videoType
+		videoType, // videoType
 		previewURL, // previewPath
 		thumbnailURL, // imagePath
 		uniqueID, // uniqueID

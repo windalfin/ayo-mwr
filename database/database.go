@@ -48,6 +48,7 @@ type VideoMetadata struct {
 	Resolution       string      `json:"resolution"`       // Resolution of the video
 	HasRequest       bool        `json:"hasRequest"`       // Whether there is a request for this video
 	LastCheckFile    *time.Time  `json:"lastCheckFile"`    // When the file was last checked for existence
+	VideoType        string      `json:"videoType"`        // Type of video: "clip" or "full"
 }
 
 // Database defines the interface for database operations

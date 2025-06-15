@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ayo-mwr/api"
@@ -132,7 +133,13 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
-
+		// matchingVideo.request_id ilike videoRequestID
+		if strings.Contains(matchingVideo.RequestID, videoRequestID) {
+			log.Printf("matchingVideo.request_id ilike videoRequestID %s found in %s", videoRequestID, matchingVideo.RequestID)
+			// videoRequestIDs = append(videoRequestIDs, videoRequestID)
+			continue
+		}
+		
 		// Check if video is ready
 		if matchingVideo.Status != database.StatusReady {
 			log.Printf("Video for unique_id %s is not ready yet (status: %s)", uniqueID, matchingVideo.Status)
@@ -171,6 +178,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			videoRequestIDs = append(videoRequestIDs, videoRequestID)
 			continue
 		}
+		db.UpdateVideoRequestID(uniqueID, videoRequestID)
 
 		// Buat direktori HLS untuk video ini di folder hls
 		hlsParentDir := filepath.Join(cfg.StoragePath, "hls")

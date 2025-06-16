@@ -32,6 +32,10 @@ type Config struct {
 	// Venue Configuration
 	VenueCode string
 
+	// Storage Configuration
+	ExternalStoragePath string `json:"external_storage_path"` // Path to external storage (HDD/SSD)
+	MinFreeSpaceGB     int    `json:"min_free_space_gb"`    // Minimum free space required in GB to use external storage
+
 	// Arduino Configuration
 	ArduinoCOMPort  string
 	ArduinoBaudRate int

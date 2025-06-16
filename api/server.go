@@ -1,7 +1,11 @@
 package api
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
+	"log"
+	"net/http"
 	"path/filepath"
 
 	"ayo-mwr/config"
@@ -18,9 +22,10 @@ type Server struct {
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
 	videoRequestHandler  *BookingVideoRequestHandler
+	dashboardFS   embed.FS // Embedded filesystem for dashboard files
 }
 
-func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *Server {
+func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
 	// Initialize video request handler
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 
@@ -30,6 +35,7 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		r2Storage:     r2Storage,
 		uploadService: uploadService,
 		videoRequestHandler:  videoRequestHandler,
+		dashboardFS:   dashboardFS,
 	}
 }
 
@@ -58,11 +64,18 @@ func (s *Server) setupCORS(r *gin.Engine) {
 func (s *Server) setupRoutes(r *gin.Engine) {
 	// Static routes
 	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
-	// Serve dashboard static files
-	r.Static("/dashboard", filepath.Join("dashboard"))
-	r.GET("/dashboard", func(c *gin.Context) {
-		c.File(filepath.Join("dashboard", "admin_dashboard.html"))
-	})
+	
+	// Serve embedded dashboard files
+	fsys, err := fs.Sub(s.dashboardFS, "dashboard")
+	if err != nil {
+		log.Printf("Error creating sub filesystem: %v", err)
+	} else {
+		r.StaticFS("/dashboard", http.FS(fsys))
+		// Redirect root to dashboard
+		r.GET("/", func(c *gin.Context) {
+			c.Redirect(http.StatusMovedPermanently, "/dashboard")
+		})
+	}
 
 	// API routes
 	api := r.Group("/api")

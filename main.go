@@ -27,6 +27,9 @@ import (
 //go:embed .env
 var embeddedEnv embed.FS
 
+//go:embed dashboard/*
+var dashboardFS embed.FS
+
 func main() {
 	// Add execution tracking logs
 	fmt.Println("[MAIN] Starting application...")
@@ -160,8 +163,9 @@ func main() {
 	// Initialize upload service
 	uploadService := service.NewUploadService(db, r2Storage, &cfg)
 
-	// Initialize and start API server
-	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService)
+	// Start the API server
+	fmt.Println("[MAIN] Starting API server...")
+	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, dashboardFS)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler

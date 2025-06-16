@@ -24,7 +24,7 @@ import (
 type AyoAPIClient interface {
 	GetBookings(date string) (map[string]interface{}, error)
 	SaveVideoAvailable(bookingID, videoType, previewURL, thumbnailURL, uniqueID string, startTime, endTime time.Time) (map[string]interface{}, error)
-	GetWatermark() (string, error)
+	GetWatermark(resolution string) (string, error)
 }
 
 // BookingVideoService handles all operations related to booking videos
@@ -118,7 +118,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 
 	// Langkah 1: Gabungkan video segments
 	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
-	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath)
+	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath, camera.Resolution)
 	if err != nil {
 		return "", fmt.Errorf("failed to merge video segments: %v", err)
 	}
@@ -126,7 +126,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	// Langkah 2: Tambahkan watermark (di folder watermark)
 	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
 	log.Printf("ProcessVideoSegments : Adding watermark, output to: %s", watermarkedVideoPath)
-	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath)
+	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath, camera.Resolution)
 	
 	// Use merged video if watermarking fails
 	videoPathForNextStep := watermarkedVideoPath
@@ -427,10 +427,10 @@ func (s *BookingVideoService) CleanupTemporaryFiles(mergedPath, watermarkedPath,
 }
 
 // addWatermarkToVideo adds a watermark to a video
-func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) error {
+func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, resolution string) error {
 	// Attempt to get watermark from AYO API
 	log.Printf("addWatermarkToVideo : Attempting to get watermark from AYO API")
-	watermarkPath, err := s.ayoClient.GetWatermark()
+	watermarkPath, err := s.ayoClient.GetWatermark(resolution)
 	if err != nil {
 		return fmt.Errorf("addWatermarkToVideo : failed to get watermark: %v", err)
 	}
@@ -441,7 +441,7 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) 
 	log.Printf("addWatermarkToVideo : Watermark position: %s, margin: %d, opacity: %f", pos, margin, opacity)
 	
 	// Add watermark to video
-	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity)
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity, resolution)
 	if err != nil {
 		return fmt.Errorf("addWatermarkToVideo : failed to add watermark: %v", err)
 	}
@@ -484,16 +484,15 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	for i, interval := range intervals {
 		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
 		
-		// Extract the clip using ffmpeg
+		// Extract the clip using ffmpeg (using fast encoding but good quality)
 		cmd := exec.Command(
 			"ffmpeg", "-y", 
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
 			"-to", interval.end,   // End time
-			"-c:v", "libx264", "-c:a", "aac",
-			"-vf", "scale=480:-2", // 480p width, maintain aspect ratio
-			"-crf", "28",         // Higher CRF = lower quality
-			"-preset", "fast",
+			"-c:v", "libx264", "-c:a", "aac", // Use consistent codecs across all clips
+			"-crf", "22", // Good quality (lower number = better quality)
+			"-preset", "ultrafast", // Faster encoding
 			clipPath,
 		)
 
@@ -515,7 +514,10 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 		"-f", "concat",
 		"-safe", "0",
 		"-i", clipListPath,
-		"-c", "copy",
+		"-c:v", "libx264",
+		"-c:a", "aac", 
+		"-crf", "22", // Good quality
+		"-preset", "ultrafast",
 		outputPath,
 	)
 

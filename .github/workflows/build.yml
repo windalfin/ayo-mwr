@@ -11,17 +11,14 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             ext: ''
             artifact_name: ayo-mwr-linux-amd64
-          - os: windows-latest
-            goos: windows
+          - goos: windows
             ext: '.exe'
             artifact_name: ayo-mwr-windows-amd64.exe
 

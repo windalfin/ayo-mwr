@@ -19,7 +19,7 @@ func UpdateConfigFromAPIResponse(cfg *Config, data map[string]interface{}) {
 	}
 
 	if videoQuality, ok := data["video_quality"].(float64); ok {
-		cfg.Resolution = fmt.Sprintf("%dp", int(videoQuality))
+		cfg.Resolution = fmt.Sprintf("%d", int(videoQuality))
 		log.Printf("Set Resolution from API: %s", cfg.Resolution)
 	}
 

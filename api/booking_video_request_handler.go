@@ -293,7 +293,8 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	go func() {
 		log.Printf("Starting background processing for task: %s, field_id: %d, booking_id: %s", taskID, fieldID, bookingID)
 		time.Sleep(30 * time.Second)
-
+		videoType := "clip"
+		
 		// Process video segments using service
 		uniqueID, err := bookingVideoService.ProcessVideoSegments(
 			*targetCamera,
@@ -303,6 +304,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			startTime,
 			endTime,
 			getBookingJSON(matchingBooking),
+			videoType,
 		)
 
 		if err != nil {
@@ -327,15 +329,17 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed: %v", err))
 			return
 		}
-
+		var startTimeBooking = startTime.Add(localOffsetHours * -1)
+		var endTimeBooking = endTime.Add(localOffsetHours * -1)
 		// Notify AYO API of successful upload
 		err = bookingVideoService.NotifyAyoAPI(
 			bookingID,
 			uniqueID,
 			previewURL,
 			thumbnailURL,
-			startTime,
-			endTime,
+			startTimeBooking,
+			endTimeBooking,
+			videoType,
 		)
 
 		if err != nil {

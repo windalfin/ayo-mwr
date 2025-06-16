@@ -1,12 +1,14 @@
 package cron
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"ayo-mwr/api"
@@ -17,6 +19,7 @@ import (
 	"ayo-mwr/storage"
 
 	"github.com/robfig/cron/v3"
+	"golang.org/x/sync/semaphore"
 )
 
 // Semua helper function telah dipindahkan ke BookingVideoService
@@ -122,6 +125,11 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 	log.Printf("processBookings : Found %d bookings for today", len(data))
 
+	// Process bookings concurrently with a limit on parallelism
+	const maxConcurrent = 5 // Maximum number of concurrent booking processing
+	var wg sync.WaitGroup
+	sem := semaphore.NewWeighted(maxConcurrent)
+	
 	// Process each booking
 	for _, item := range data {
 		// Extract booking details from map
@@ -154,7 +162,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		} else {
 			hasReadyVideo := false
 			for _, video := range existingVideos {
-				if video.Status == database.StatusReady {
+				if (video.Status == database.StatusReady || video.Status == database.StatusUploading) && video.VideoType == "full" {
 					hasReadyVideo = true
 					break
 				}
@@ -214,7 +222,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
-
+		
 		// The log message was moved to the condition above
 
 		// Venue code tidak digunakan lagi karena sudah diakses melalui service
@@ -223,11 +231,24 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		log.Printf("processBookings : Processing booking %s in timeframe %s to %s for all cameras", 
 			bookingID, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 		
-		// Track successful camera count
-		camerasWithVideo := 0
+		// Acquire semaphore before processing this booking
+		if err := sem.Acquire(context.Background(), 1); err != nil {
+			log.Printf("processBookings : Error acquiring semaphore for booking %s: %v", bookingID, err)
+			continue
+		}
 		
-		// Process each camera
-		for _, camera := range cfg.Cameras {
+		// Process this booking in a separate goroutine
+		wg.Add(1)
+		go func(booking map[string]interface{}, bookingID string, startTime, endTime time.Time, 
+		   orderDetailID float64, localOffsetHours time.Duration) {
+			defer wg.Done()
+			defer sem.Release(1) // Release semaphore when done
+			
+			// Track successful camera count
+			camerasWithVideo := 0
+			videoType := "full"
+			// Process each camera
+			for _, camera := range cfg.Cameras {
 			// Skip disabled cameras
 			if !camera.Enabled {
 				log.Printf("processBookings : Skipping disabled camera: %s", camera.Name)
@@ -267,6 +288,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				startTime,
 				endTime,
 				getBookingJSON(booking), // rawJSON - contains the full booking JSON
+				videoType,
 			)
 			
 			if err != nil {
@@ -280,7 +302,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
 			// Upload processed video
 			// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
-			 previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
+			previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
 				uniqueID,
 				watermarkedVideoPath,
 				bookingID,
@@ -296,13 +318,16 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			log.Printf("processBookings : previewURL %s", previewURL)
 			log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
 			// Notify AYO API of successful upload
+			var startTimeBooking = startTime.Add(localOffsetHours * -1)
+			var endTimeBooking = endTime.Add(localOffsetHours * -1)
 			err = bookingService.NotifyAyoAPI(
 				bookingID,
 				uniqueID,
 				previewURL,
 				thumbnailURL,
-				startTime,
-				endTime,
+				startTimeBooking,
+				endTimeBooking,
+				videoType,
 			)
 			
 			if err != nil {
@@ -329,8 +354,11 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		} else {
 			log.Printf("processBookings : No camera videos found for booking %s in the specified time range", bookingID)
 		}
+		}(booking, bookingID, startTime, endTime, orderDetailID, localOffsetHours) // Pass variables to goroutine
 	}
 
+	// Wait for all booking processing goroutines to complete
+	wg.Wait()
 	log.Println("processBookings : Booking video processing task completed")
 }
 

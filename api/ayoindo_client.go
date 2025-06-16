@@ -615,7 +615,7 @@ func (c *AyoIndoClient) HealthCheck(cameraToken string) (map[string]interface{},
 }
 
 // GetWatermark retrieves the watermark image path for the current venue
-func (c *AyoIndoClient) GetWatermark() (string, error) {
+func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Create watermark directory if it doesn't exist
 	venueCode := c.venueCode
 	folder := filepath.Join("watermark", venueCode)
@@ -633,23 +633,22 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 		"480":  "watermark_480.png",
 		"360":  "watermark_360.png",
 	}
-	wanted := map[string]bool{"1080": true, "720": true, "480": true, "360": true}
-
-	// Check if any watermark files already exist
-	allExist := false
-	var existingWatermarkPath string
-	for res, fname := range sizes {
-		path := filepath.Join(folder, fname)
-		if _, err := os.Stat(path); err == nil && wanted[res] {
-			allExist = true
-			existingWatermarkPath = path
-			break
-		}
+	
+	// Use specified resolution or fallback to 1080
+	if resolution == "" || sizes[resolution] == "" {
+		resolution = "1080" // Default to 1080p if no valid resolution specified
 	}
 
-	if allExist && existingWatermarkPath != "" {
-		return existingWatermarkPath, nil
+	// Check if watermark file for the specified resolution exists
+	specificPath := filepath.Join(folder, sizes[resolution])
+	log.Printf("GetWatermark : Watermark path: %s", specificPath)
+	if _, err := os.Stat(specificPath); err == nil {
+		log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+		return specificPath, nil
 	}
+	log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
+
+	// No existing watermark for the specified resolution
 
 	// Download metadata JSON from API
 	response, err := c.GetWatermarkMetadata()
@@ -688,7 +687,6 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("invalid response format from API")
 	}
-
 	// Download images for required resolutions
 	for _, entry := range data {
 		entryMap, ok := entry.(map[string]interface{})
@@ -696,7 +694,7 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 			continue
 		}
 
-		resolution, _ := entryMap["resolution"].(string)
+		resAPI, _ := entryMap["resolution"].(string)
 		pathValue, _ := entryMap["path"].(string)
 
 		// Ensure path has proper URL format with https:// prefix
@@ -705,7 +703,7 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 			watermarkURL = "https://" + watermarkURL
 		}
 
-		if wanted[resolution] && watermarkURL != "" {
+		if resAPI == resolution && watermarkURL != "" {
 			fname, ok := sizes[resolution]
 			if !ok {
 				continue
@@ -737,14 +735,14 @@ func (c *AyoIndoClient) GetWatermark() (string, error) {
 				f.Close()
 				if err == nil {
 					// Successfully downloaded and saved this watermark
-					log.Printf("Successfully downloaded watermark for resolution %s", resolution)
+					log.Printf("Successfully downloaded watermark for resolution %s", resAPI)
 					return path, nil
 				} else {
 					log.Printf("Error saving watermark file: %v", err)
 				}
 			} else {
 				// File already exists
-				log.Printf("Using existing watermark file for resolution %s", resolution)
+				log.Printf("Using existing watermark file for resolution %s", resAPI)
 				return path, nil
 			}
 		}

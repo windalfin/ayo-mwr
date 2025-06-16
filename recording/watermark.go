@@ -187,7 +187,7 @@ func AddWatermark(inputVideo, watermarkImg, outputVideo string, x, y int) error 
 // on the input video and writes to outputVideo.
 // Opacity should be between 0.0 (fully transparent) and 1.0 (fully opaque).
 // This implementation preserves the original video quality as much as possible.
-func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, position WatermarkPosition, margin int, opacity float64) error {
+func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, position WatermarkPosition, margin int, opacity float64, resolution string) error {
 	log.Printf("AddWatermarkWithPosition : Adding watermark to video: %s", inputVideo)
 	if opacity < 0.0 {
 		opacity = 0.0
@@ -208,11 +208,34 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
 	}
 
-	filter := fmt.Sprintf("[1]format=rgba,colorchannelmixer=aa=%.2f[wm];[0][wm]%s", opacity, overlayExpr)
+	// Use a simplified but more reliable filter chain
+	filter := fmt.Sprintf("overlay=%s:enable='between(t,0,999999)'", overlayExpr[8:])
 	log.Printf("AddWatermarkWithPosition : Filter: %s", filter)
+	// Verify watermark file exists and is readable
+	if _, err := os.Stat(watermarkImg); err != nil {
+		log.Printf("AddWatermarkWithPosition : WARNING - Watermark file not found or not accessible: %s", watermarkImg)
+		return fmt.Errorf("watermark file not found or not accessible: %v", err)
+	}
+	
+	// Read first few bytes of watermark file to verify it's actually an image
+	f, err := os.Open(watermarkImg)
+	if err == nil {
+		header := make([]byte, 8)
+		_, err = f.Read(header)
+		f.Close()
+		
+		// Check for PNG signature
+		if err == nil && string(header[:4]) != "\x89PNG" {
+			log.Printf("AddWatermarkWithPosition : WARNING - File doesn't appear to be a valid PNG image: %s", watermarkImg)
+		}
+	}
+	
+	log.Printf("AddWatermarkWithPosition : Using watermark: %s with opacity %.2f", watermarkImg, opacity)
+	
 	// Komando ffmpeg dengan parameter yang menjaga kualitas video tetap original
 	cmd := exec.Command(
 		"ffmpeg", "-y",
+		"-v", "warning", // Show more detailed output
 		"-i", inputVideo,
 		"-i", watermarkImg,
 		"-filter_complex", filter,

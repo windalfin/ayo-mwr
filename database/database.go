@@ -48,6 +48,8 @@ type VideoMetadata struct {
 	Resolution       string      `json:"resolution"`       // Resolution of the video
 	HasRequest       bool        `json:"hasRequest"`       // Whether there is a request for this video
 	LastCheckFile    *time.Time  `json:"lastCheckFile"`    // When the file was last checked for existence
+	VideoType        string      `json:"videoType"`        // Type of video: "clip" or "full"
+	RequestID        string      `json:"requestId"`        // ID of the request for this video
 }
 
 // Database defines the interface for database operations
@@ -71,6 +73,7 @@ type Database interface {
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
 	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
+	UpdateVideoRequestID(id, requestId string) error
 
 	// Helper operations
 	Close() error

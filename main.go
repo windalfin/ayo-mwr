@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +24,9 @@ import (
 	"context"
 )
 
+//go:embed .env
+var embeddedEnv embed.FS
+
 func main() {
 	// Add execution tracking logs
 	fmt.Println("[MAIN] Starting application...")
@@ -43,9 +47,26 @@ func main() {
 	envFile := flag.String("env", ".env", "Path to .env file")
 	flag.Parse()
 
-	// Load environment variables
-	if err := godotenv.Load(*envFile); err != nil {
-		log.Printf("Warning: .env file not found at %s, using environment variables", *envFile)
+	// First try to load from embedded .env file
+	if envData, err := embeddedEnv.ReadFile(".env"); err == nil {
+		log.Println("Loading environment variables from embedded .env file")
+		envMap, err := godotenv.Unmarshal(string(envData))
+		if err != nil {
+			log.Printf("Error parsing embedded .env file: %v", err)
+		} else {
+			// Set environment variables from the embedded file
+			for k, v := range envMap {
+				if os.Getenv(k) == "" { // Don't override existing env vars
+					os.Setenv(k, v)
+				}
+			}
+		}
+	} else {
+		// Fall back to loading from filesystem
+		log.Printf("Embedded .env not found, trying filesystem at %s", *envFile)
+		if err := godotenv.Load(*envFile); err != nil {
+			log.Printf("Warning: .env file not found at %s, using environment variables", *envFile)
+		}
 	}
 
 	// Load configuration

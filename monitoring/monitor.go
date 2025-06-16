@@ -4,22 +4,23 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
-	"path/filepath"
-	"syscall"
+
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
 type ResourceUsage struct {
-	CPUPercent     float64
-	MemoryUsedMB   float64
-	MemoryTotalMB  float64
-	MemoryPercent  float64
-	NumGoroutines  int
-	Uptime         string
-	Storage        string
+	CPUPercent    float64
+	MemoryUsedMB  float64
+	MemoryTotalMB float64
+	MemoryPercent float64
+	NumGoroutines int
+	Uptime        string
+	Storage       string
 }
 
 var startTime = time.Now()
@@ -93,6 +94,8 @@ func GetUptime() string {
 
 func GetStorageUsage(path string) (string, error) {
 	var totalSize int64
+
+	// Calculate total size of files in the path
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -102,20 +105,25 @@ func GetStorageUsage(path string) (string, error) {
 		}
 		return nil
 	})
+
 	if err != nil {
 		return "-", err
 	}
-	disk := "/"
-	if path != "" {
-		disk = path
+
+	// Get disk usage information using cross-platform gopsutil
+	diskPath := filepath.VolumeName(path) + "\\"
+	if diskPath == "\\" {
+		diskPath = "C:\\" // Default to C: drive on Windows if path is empty
 	}
-	stat := &syscall.Statfs_t{}
-	err = syscall.Statfs(disk, stat)
+
+	diskUsage, err := disk.Usage(diskPath)
 	if err != nil {
 		return fmt.Sprintf("%s / -", formatBytes(totalSize)), nil
 	}
-	totalDisk := stat.Blocks * uint64(stat.Bsize)
-	return fmt.Sprintf("%s / %s", formatBytes(totalSize), formatBytes(int64(totalDisk))), nil
+
+	return fmt.Sprintf("%s / %s",
+		formatBytes(totalSize),
+		formatBytes(int64(diskUsage.Total))), nil
 }
 
 func formatBytes(b int64) string {

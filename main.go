@@ -73,6 +73,10 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
+	// Start config update cron job (every 24 hours)
+	cron.StartConfigUpdateCron(&cfg)
+	// delay 15 seconds before first run
+	time.Sleep(15 * time.Second)
 
 	// Start resource monitoring (every 30 seconds)
 	monitoring.StartMonitoring(30 * time.Second)
@@ -86,10 +90,8 @@ func main() {
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
 
-	// Start config update cron job (every 24 hours)
-	cron.StartConfigUpdateCron(&cfg)
+	
 
-<<<<<<< HEAD
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
 	if err != nil {
@@ -101,13 +103,15 @@ func main() {
 				log.Printf("Error running health check cron: %v", err)
 			}
 		}()
-=======
+	}
 	// Initialize AyoIndo API client for video cleanup
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
 	} else {
 		// Start video cleanup cron job (every 24 hours)
+		// delay 10 seconds before first run
+		// time.Sleep(15 * time.Second)
 		log.Println("Starting video cleanup job...")
 		// Use the underlying *sql.DB for the scheduled job
 		cron.StartVideoCleanupJob(db.GetDB(), apiClient, cfg.AutoDelete, cfg.VenueCode)
@@ -115,7 +119,6 @@ func main() {
 		// For testing: Immediately run the video cleanup function once
 		log.Println("Running immediate test of video cleanup function...")
 		go cron.CleanupExpiredVideosWithSQLiteDB(db, apiClient, cfg.AutoDelete, cfg.VenueCode)
->>>>>>> origin/feature/auto-cleanup
 	}
 
 	// Initialize R2 storage with config

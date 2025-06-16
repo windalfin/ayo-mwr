@@ -24,7 +24,7 @@ import (
 type AyoAPIClient interface {
 	GetBookings(date string) (map[string]interface{}, error)
 	SaveVideoAvailable(bookingID, videoType, previewURL, thumbnailURL, uniqueID string, startTime, endTime time.Time) (map[string]interface{}, error)
-	GetWatermark() (string, error)
+	GetWatermark(resolution string) (string, error)
 }
 
 // BookingVideoService handles all operations related to booking videos
@@ -97,6 +97,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	segments []string,
 	startTime, endTime time.Time,
 	rawJSON string,
+	videoType string, // Added videoType parameter ("clip" or "full")
 ) (string, error) {
 	if len(segments) == 0 {
 		return "", fmt.Errorf("no video segments found")
@@ -117,7 +118,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 
 	// Langkah 1: Gabungkan video segments
 	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
-	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath)
+	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath, camera.Resolution)
 	if err != nil {
 		return "", fmt.Errorf("failed to merge video segments: %v", err)
 	}
@@ -125,7 +126,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	// Langkah 2: Tambahkan watermark (di folder watermark)
 	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
 	log.Printf("ProcessVideoSegments : Adding watermark, output to: %s", watermarkedVideoPath)
-	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath)
+	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath, camera.Resolution)
 	
 	// Use merged video if watermarking fails
 	videoPathForNextStep := watermarkedVideoPath
@@ -135,7 +136,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		videoPathForNextStep = mergedVideoPath
 	}
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
-	
+	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
 	// Step 3: Create video metadata
 	videoMeta := database.VideoMetadata{
 		ID:            uniqueID,
@@ -149,6 +150,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		RawJSON:       rawJSON,
 		Resolution:    camera.Resolution,
 		HasRequest:    false, // Explicitly set default to false
+		VideoType:     videoType, // Set from the parameter
 	}
 	
 	// Create database entry
@@ -168,6 +170,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	cameraName string,
 ) (string, string, error) {
 	// UniqueID sudah berisi booking ID yang aman
+	// getVideoMeta := s.db.GetVideo(uniqueID)
 	
 	// Create preview video (di folder preview)
 	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4")
@@ -307,25 +310,37 @@ func (s *BookingVideoService) UploadProcessedVideo(
 		// log.Printf("  - r2_hls_url: %s", hlsURL)
 	// }
 	
-	videoUpdate := database.VideoMetadata{
-		ID:               uniqueID,
-		Status:           database.StatusReady,
-		Size:             fileSize,
-		Duration:         duration,
-		// HLSPath:          hlsLocalPath, // Tambahkan local HLS path
-		// HLSURL:           hlsLocalURL, // Tambahkan local HLS URL
-		R2PreviewMP4Path: previewPath,
-		R2PreviewMP4URL:  previewURL,
-		R2PreviewPNGPath: thumbnailR2Path,
-		R2PreviewPNGURL:  thumbnailURL,
-		// Pastikan field-field penting dipertahankan
-		CameraName:       cameraName,
-		LocalPath:        videoPath,
-		UniqueID:         uniqueID,
-		BookingID:        bookingID,
-		// R2HLSPath:        r2HLSPath,
-		R2MP4Path:        mp4Path,
+	// Get existing video metadata to preserve all fields
+	existingVideo, err := s.db.GetVideo(uniqueID)
+	if err != nil {
+		log.Printf("Warning: Could not get existing video metadata: %v. Creating a new update struct.", err)
+		// Continue with a new struct if we can't get the existing one
+		existingVideo = &database.VideoMetadata{
+			ID:        uniqueID,
+			UniqueID:  uniqueID,
+			BookingID: bookingID,
+		}
 	}
+	
+	log.Printf("Current existing video with ID=%s, VideoType=%s", uniqueID, existingVideo.VideoType)
+	
+	// Update only the fields that need changing, preserving everything else
+	videoUpdate := *existingVideo
+	// log.Printf("videoUpdate.resolution: %s", videoUpdate.Resolution)
+	videoUpdate.Status = database.StatusReady
+	videoUpdate.Size = fileSize
+	videoUpdate.Duration = duration
+	videoUpdate.R2PreviewMP4Path = previewPath
+	videoUpdate.R2PreviewMP4URL = previewURL
+	videoUpdate.R2PreviewPNGPath = thumbnailR2Path
+	videoUpdate.R2PreviewPNGURL = thumbnailURL
+	videoUpdate.CameraName = cameraName    // Ensure this is still set
+	videoUpdate.LocalPath = videoPath      // Ensure this is still set
+	videoUpdate.R2MP4Path = mp4Path  
+	// videoUpdate.Resolution = "720p"    // Ensure this is still set
+	
+	// Double check that VideoType is preserved
+	log.Printf("Updating video with ID=%s, VideoType=%s", uniqueID, videoUpdate.VideoType)
 	
 	// Salin field-field penting dari data yang sudah ada jika tersedia
 	if currentVideo != nil {
@@ -353,6 +368,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	
 	log.Printf("Updating video metadata with complete fields for %s", uniqueID)
 	err = s.db.UpdateVideo(videoUpdate)
+	log.Printf("videoUpdate: %v", videoUpdate)
 	if err != nil {
 		log.Printf("Error updating database with all fields: %v", err)
 	}
@@ -380,10 +396,11 @@ func (s *BookingVideoService) NotifyAyoAPI(
 	thumbnailURL string,
 	startTime time.Time,
 	endTime time.Time,
+	videoType string,
 ) error {
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
-		"clip", // videoType
+		videoType, // videoType
 		previewURL, // previewPath
 		thumbnailURL, // imagePath
 		uniqueID, // uniqueID
@@ -410,10 +427,10 @@ func (s *BookingVideoService) CleanupTemporaryFiles(mergedPath, watermarkedPath,
 }
 
 // addWatermarkToVideo adds a watermark to a video
-func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) error {
+func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, resolution string) error {
 	// Attempt to get watermark from AYO API
 	log.Printf("addWatermarkToVideo : Attempting to get watermark from AYO API")
-	watermarkPath, err := s.ayoClient.GetWatermark()
+	watermarkPath, err := s.ayoClient.GetWatermark(resolution)
 	if err != nil {
 		return fmt.Errorf("addWatermarkToVideo : failed to get watermark: %v", err)
 	}
@@ -424,7 +441,7 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string) 
 	log.Printf("addWatermarkToVideo : Watermark position: %s, margin: %d, opacity: %f", pos, margin, opacity)
 	
 	// Add watermark to video
-	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity)
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity, resolution)
 	if err != nil {
 		return fmt.Errorf("addWatermarkToVideo : failed to add watermark: %v", err)
 	}
@@ -467,16 +484,15 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	for i, interval := range intervals {
 		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
 		
-		// Extract the clip using ffmpeg
+		// Extract the clip using ffmpeg (using fast encoding but good quality)
 		cmd := exec.Command(
 			"ffmpeg", "-y", 
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
 			"-to", interval.end,   // End time
-			"-c:v", "libx264", "-c:a", "aac",
-			"-vf", "scale=480:-2", // 480p width, maintain aspect ratio
-			"-crf", "28",         // Higher CRF = lower quality
-			"-preset", "fast",
+			"-c:v", "libx264", "-c:a", "aac", // Use consistent codecs across all clips
+			"-crf", "22", // Good quality (lower number = better quality)
+			"-preset", "ultrafast", // Faster encoding
 			clipPath,
 		)
 
@@ -498,7 +514,10 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 		"-f", "concat",
 		"-safe", "0",
 		"-i", clipListPath,
-		"-c", "copy",
+		"-c:v", "libx264",
+		"-c:a", "aac", 
+		"-crf", "22", // Good quality
+		"-preset", "ultrafast",
 		outputPath,
 	)
 

@@ -113,6 +113,10 @@ func LoadConfig() Config {
 			rate, _ := strconv.Atoi(getEnv("FRAME_RATE", "30"))
 			return rate
 		}(),
+		AutoDelete: func() int {
+			days, _ := strconv.Atoi(getEnv("AUTO_DELETE", "30"))
+			return days
+		}(),
 
 		// Storage Configuration
 		StoragePath:   getEnv("STORAGE_PATH", "./videos"),

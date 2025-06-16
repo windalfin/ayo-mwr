@@ -216,7 +216,7 @@ func CaptureRTSPSegments(cfg *config.Config) error {
 }
 
 // MergeSessionVideos merges MP4 segments in inputPath between startTime and endTime into outputPath.
-func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string) error {
+func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string, resolution string) error {
 
 	// find segment in range of the startTime and endTime
 	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
@@ -260,10 +260,36 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	if err != nil {
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
-	cmd := exec.Command(
-		"ffmpeg", "-y", "-f", "concat", "-safe", "0",
-		"-i", concatListPath, "-c", "copy", outputPath,
-	)
+	// Define supported resolutions
+	resolutions := map[string]struct {
+		width  string
+		height string
+	}{
+		"360":  {"640", "360"},
+		"480":  {"854", "480"},
+		"720":  {"1280", "720"},
+		"1080": {"1920", "1080"},
+	}
+
+	// Base ffmpeg command
+	ffmpegArgs := []string{
+		"-y", "-f", "concat", "-safe", "0", "-i", concatListPath,
+	}
+
+	// Add resolution parameters if a valid resolution is provided
+	if res, found := resolutions[resolution]; found {
+		// Use transcoding with specified resolution
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264", "-preset", "fast", 
+			"-vf", fmt.Sprintf("scale=%s:%s", res.width, res.height),
+			"-c:a", "aac", outputPath,
+		)
+	} else {
+		// Use copy codec (no transcoding) if no valid resolution specified
+		ffmpegArgs = append(ffmpegArgs, "-c", "copy", outputPath)
+	}
+
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

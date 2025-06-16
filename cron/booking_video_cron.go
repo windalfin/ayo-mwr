@@ -154,7 +154,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		} else {
 			hasReadyVideo := false
 			for _, video := range existingVideos {
-				if video.Status == database.StatusReady {
+				if (video.Status == database.StatusReady || video.Status == database.StatusUploading) && video.VideoType == "full" {
 					hasReadyVideo = true
 					break
 				}
@@ -214,7 +214,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
-
+		
 		// The log message was moved to the condition above
 
 		// Venue code tidak digunakan lagi karena sudah diakses melalui service
@@ -225,7 +225,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		
 		// Track successful camera count
 		camerasWithVideo := 0
-		
+		videoType := "full"
 		// Process each camera
 		for _, camera := range cfg.Cameras {
 			// Skip disabled cameras
@@ -267,6 +267,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				startTime,
 				endTime,
 				getBookingJSON(booking), // rawJSON - contains the full booking JSON
+				videoType,
 			)
 			
 			if err != nil {
@@ -280,7 +281,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
 			// Upload processed video
 			// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
-			 previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
+			previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
 				uniqueID,
 				watermarkedVideoPath,
 				bookingID,
@@ -296,13 +297,16 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			log.Printf("processBookings : previewURL %s", previewURL)
 			log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
 			// Notify AYO API of successful upload
+			var startTimeBooking = startTime.Add(localOffsetHours * -1)
+			var endTimeBooking = endTime.Add(localOffsetHours * -1)
 			err = bookingService.NotifyAyoAPI(
 				bookingID,
 				uniqueID,
 				previewURL,
 				thumbnailURL,
-				startTime,
-				endTime,
+				startTimeBooking,
+				endTimeBooking,
+				videoType,
 			)
 			
 			if err != nil {

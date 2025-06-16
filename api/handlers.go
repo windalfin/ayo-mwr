@@ -190,8 +190,8 @@ func (s *Server) handleUpload(c *gin.Context) {
 	// Get watermark settings from environment
 	position, margin, opacity := recording.GetWatermarkSettings()
 
-	// Add watermark to the video
-	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, mp4Path, position, margin, opacity)
+	// Add watermark to the video (using 1080p resolution by default)
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, mp4Path, position, margin, opacity, "1080")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to add watermark: %v", err)})
 		return

@@ -37,13 +37,25 @@ jobs:
         echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
       shell: bash
 
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+        fi
+        
     - name: Build
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: amd64
+        CGO_ENABLED: 1
       run: |
         mkdir -p build
-        go build -o "build/${{ matrix.artifact_name }}"
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o "build/${{ matrix.artifact_name }}"
+        else
+          go build -o "build/${{ matrix.artifact_name }}"
+        fi
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

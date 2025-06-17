@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/tarm/serial"
+	
+	"ayo-mwr/config"
 )
 
 // SignalHandler interface defines methods for handling signals
@@ -22,14 +24,16 @@ type ArduinoSignal struct {
 	baud     int
 	mutex    sync.Mutex
 	callback func(string) error
+	config   *config.Config // Reference to application config
 }
 
 // NewArduinoSignal creates a new Arduino signal handler
-func NewArduinoSignal(portName string, baud int, callback func(string) error) (*ArduinoSignal, error) {
+func NewArduinoSignal(portName string, baud int, callback func(string) error, cfg *config.Config) (*ArduinoSignal, error) {
 	return &ArduinoSignal{
 		portName: portName,
 		baud:     baud,
 		callback: callback,
+		config:   cfg,
 	}, nil
 }
 
@@ -68,10 +72,10 @@ func (a *ArduinoSignal) Connect() error {
 // listen continuously reads from the serial port
 func (a *ArduinoSignal) listen() {
 	log.Printf("Arduino listener started on port %s with baud rate %d - waiting for signals...", a.portName, a.baud)
-	
+
 	// Use a buffer for reading data
 	buf := make([]byte, 128)
-	
+
 	// Log a waiting message every minute to confirm the listener is still active
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
@@ -83,7 +87,7 @@ func (a *ArduinoSignal) listen() {
 	// Use a separate goroutine for reading to avoid blocking
 	go func() {
 		fmt.Printf("[ARDUINO] Starting to read from port %s\n", a.portName)
-		
+
 		for {
 			// Read directly from the port
 			n, err := a.port.Read(buf)
@@ -110,7 +114,7 @@ func (a *ArduinoSignal) listen() {
 				log.Printf("HEX: %s", hexStr)
 				log.Printf("ASCII: %s", asciiStr)
 				fmt.Printf("[ARDUINO] Received: HEX=%s ASCII='%s'\n", hexStr, asciiStr)
-				
+
 				// Process the signal
 				signal := string(buf[:n])
 				if a.callback != nil {
@@ -141,11 +145,37 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 
 	fmt.Printf("Received signal: %s\n", signal)
 
-	// Trim the trailing semicolon from the signal
-	processedSignal := strings.TrimSuffix(signal, ";")
+	// Ignore semicolons as separate signals
+	if signal == ";" || strings.TrimSpace(signal) == ";" {
+		log.Printf("Ignoring semicolon as a separate signal")
+		return nil
+	}
 
+	// Ignore carriage return and newline characters
+	if strings.TrimSpace(signal) == "" || signal == "\r" || signal == "\n" || signal == "\r\n" {
+		log.Printf("Ignoring whitespace/control characters")
+		return nil
+	}
+
+	// Trim the trailing semicolon from the signal to get the button number
+	buttonNo := strings.TrimSuffix(strings.TrimSpace(signal), ";")
+
+	// Map button number to field ID using camera configuration
+	fieldID := buttonNo // Default to using button number as field ID
+	
+	if a.config != nil && a.config.CameraByButtonNo != nil {
+		if camera, exists := a.config.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
+			fieldID = camera.Field
+			log.Printf("Mapped button %s to field ID %s", buttonNo, fieldID)
+		} else {
+			log.Printf("Warning: No mapping found for button %s, using button number as field ID", buttonNo)
+		}
+	} else {
+		log.Printf("Warning: Camera configuration not available, using button number as field ID")
+	}
+	
 	// Call the API using the utility function
-	err := CallProcessBookingVideoAPI(processedSignal)
+	err := CallProcessBookingVideoAPI(fieldID)
 	if err != nil {
 		// The utility function already logs the specific error,
 		// so we can just return a general error or the specific one.
@@ -153,8 +183,8 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 		return fmt.Errorf("failed to process booking video API call: %w", err)
 	}
 
-	// Log success (utility function also logs success, this is optional)
-	// log.Printf("Successfully initiated API call for field_id: %s", processedSignal)
+	// Log success
+	log.Printf("Successfully initiated API call for button_no: %s, field_id: %s", buttonNo, fieldID)
 
 	return nil
 }

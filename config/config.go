@@ -11,19 +11,20 @@ import (
 
 // CameraConfig holds configuration for a single RTSP camera
 type CameraConfig struct {
-	Name      string `json:"name"`       // Unique camera name (used for file naming)
-	IP        string `json:"ip"`         // Camera IP address
-	Port      string `json:"port"`       // RTSP port (typically 554)
-	Path      string `json:"path"`       // RTSP URL path (e.g., "/cam/realmonitor?channel=1&subtype=0")
-	Username  string `json:"username"`   // RTSP authentication username
-	Password  string `json:"password"`   // RTSP authentication password
-	Enabled   bool   `json:"enabled"`    // Whether this camera is enabled for capture
-	Width     int    `json:"width"`      // Video width
-	Height    int    `json:"height"`     // Video height
-	FrameRate int    `json:"frame_rate"` // Video frame rate
-	Field     string `json:"field"`      // Camera field ID
-	Resolution string `json:"resolution"` // Camera resolution
-	AutoDelete int `json:"auto_delete"` // Auto delete video after x days
+	ButtonNo   string `json:"button_no"`   // Button number for hardware mapping
+	Name       string `json:"name"`        // Unique camera name (used for file naming)
+	IP         string `json:"ip"`          // Camera IP address
+	Port       string `json:"port"`        // RTSP port (typically 554)
+	Path       string `json:"path"`        // RTSP URL path (e.g., "/cam/realmonitor?channel=1&subtype=0")
+	Username   string `json:"username"`    // RTSP authentication username
+	Password   string `json:"password"`    // RTSP authentication password
+	Enabled    bool   `json:"enabled"`     // Whether this camera is enabled for capture
+	Width      int    `json:"width"`       // Video width
+	Height     int    `json:"height"`      // Video height
+	FrameRate  int    `json:"frame_rate"`  // Video frame rate
+	Field      string `json:"field"`       // Camera field ID
+	Resolution string `json:"resolution"`  // Camera resolution
+	AutoDelete int    `json:"auto_delete"` // Auto delete video after x days
 }
 
 // Config contains all configuration for the application
@@ -76,7 +77,8 @@ type Config struct {
 	R2TokenValue string
 
 	// Multi-camera Configuration
-	Cameras []CameraConfig
+	Cameras          []CameraConfig
+	CameraByButtonNo map[string]*CameraConfig // Fast lookup by button_no
 }
 
 // LoadConfig loads configuration from environment variables
@@ -163,6 +165,14 @@ func LoadConfig() Config {
 			log.Printf("Warning: Failed to parse CAMERAS_CONFIG: %v", err)
 		} else {
 			cfg.Cameras = cameras
+			// Build CameraByButtonNo map for fast lookup
+			cfg.CameraByButtonNo = make(map[string]*CameraConfig)
+			for i := range cfg.Cameras {
+				cam := &cfg.Cameras[i]
+				if cam.ButtonNo != "" {
+					cfg.CameraByButtonNo[cam.ButtonNo] = cam
+				}
+			}
 			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(cameras))
 			for i, cam := range cameras {
 				log.Printf("Debug Camera %d: %+v", i, cam) // Debug: Print each camera after unmarshaling
@@ -174,16 +184,16 @@ func LoadConfig() Config {
 	if len(cfg.Cameras) == 0 {
 		log.Println("No cameras configured, using legacy camera settings")
 		cfg.Cameras = append(cfg.Cameras, CameraConfig{
-			Name:      "camera_1",
-			IP:        cfg.RTSPIP,
-			Port:      cfg.RTSPPort,
-			Path:      cfg.RTSPPath,
-			Username:  cfg.RTSPUsername,
-			Password:  cfg.RTSPPassword,
-			Enabled:   true,
-			Width:     cfg.Width,
-			Height:    cfg.Height,
-			FrameRate: cfg.FrameRate,
+			Name:       "camera_1",
+			IP:         cfg.RTSPIP,
+			Port:       cfg.RTSPPort,
+			Path:       cfg.RTSPPath,
+			Username:   cfg.RTSPUsername,
+			Password:   cfg.RTSPPassword,
+			Enabled:    true,
+			Width:      cfg.Width,
+			Height:     cfg.Height,
+			FrameRate:  cfg.FrameRate,
 			Resolution: cfg.Resolution,
 			AutoDelete: cfg.AutoDelete,
 		})
@@ -228,16 +238,16 @@ func LoadConfigFromFile(filePath string) (Config, error) {
 	if len(config.Cameras) == 0 && config.RTSPIP != "" {
 		log.Println("No cameras in config file, using legacy camera settings")
 		config.Cameras = append(config.Cameras, CameraConfig{
-			Name:      "camera_A",
-			IP:        config.RTSPIP,
-			Port:      config.RTSPPort,
-			Path:      config.RTSPPath,
-			Username:  config.RTSPUsername,
-			Password:  config.RTSPPassword,
-			Enabled:   true,
-			Width:     config.Width,
-			Height:    config.Height,
-			FrameRate: config.FrameRate,
+			Name:       "camera_A",
+			IP:         config.RTSPIP,
+			Port:       config.RTSPPort,
+			Path:       config.RTSPPath,
+			Username:   config.RTSPUsername,
+			Password:   config.RTSPPassword,
+			Enabled:    true,
+			Width:      config.Width,
+			Height:     config.Height,
+			FrameRate:  config.FrameRate,
 			Resolution: config.Resolution,
 			AutoDelete: config.AutoDelete,
 		})

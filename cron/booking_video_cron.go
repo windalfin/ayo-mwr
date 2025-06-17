@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,11 +148,15 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		date, _ := booking["date"].(string)
 		startTimeStr, _ := booking["start_time"].(string)
 		endTimeStr, _ := booking["end_time"].(string)
+		statusVal, _ := booking["status"].(string)
+		status := strings.ToLower(statusVal) // convert to lowercase
+		
 		// date := "2025-05-05T00:00:00Z"
 		// endTimeStr := "06:00:00"
 		// startTimeStr := "05:00:00"
 
 		log.Printf("processBookings : Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
+		
 		
 		// akan menggunakan kode parsing date di bawah untuk menghindari duplikasi
 		
@@ -169,8 +174,17 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			}
 			if hasReadyVideo {
 				log.Printf("processBookings : Skipping booking %s: already has a video with 'ready' status", bookingID)
+				if status == "cancelled" {
+					// update status to cancelled
+					db.UpdateVideoStatus(bookingID, database.StatusCancelled, "Booking cancelled")
+					log.Printf("processBookings : Booking %s is cancelled, updating status to 'cancelled'", bookingID)
+				}
 				continue
 			}
+		}
+		if status != "success" {
+			log.Printf("processBookings : Booking %s is not success, skipping processing", bookingID)
+			continue
 		}
 		
 		// Convert date and time strings to time.Time objects

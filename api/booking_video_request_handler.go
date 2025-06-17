@@ -201,9 +201,19 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		date, _ := booking["date"].(string)
 		startTimeStr, _ := booking["start_time"].(string)
 		endTimeStr, _ := booking["end_time"].(string)
+		statusVal, _ := booking["status"].(string)
+		status := strings.ToLower(statusVal) // convert to lowercase
 		
 		// Parse date and times
 		log.Printf("Date: %v", date)
+
+		if status == "cancelled" {
+			log.Printf("Booking %s is cancelled, skipping processing", bookingID)
+			continue
+		} else if status != "success" {
+			log.Printf("Booking %s is not success, skipping processing", bookingID)
+			continue
+		}
 		
 		bookingDate, err := time.Parse("2006-01-02", date)
 		log.Printf("Booking Date: %v", bookingDate)

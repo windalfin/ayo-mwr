@@ -549,12 +549,11 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 }
 
 // HealthCheck performs a health check request to the AYO API
-func (c *AyoIndoClient) HealthCheck(cameraToken string) (map[string]interface{}, error) {
+func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
-		"token":        c.apiToken,
 		"venue_code":   c.venueCode,
-		"camera_token": cameraToken,
+		"token":        c.apiToken,
 	}
 	
 	// Generate signature

@@ -11,6 +11,13 @@
       margin: 0;
       padding: 0;
       color: #222;
+      --primary-color: #273c75;
+      --secondary-color: #dcdde1;
+      --success-color: #27ae60;
+      --danger-color: #e74c3c;
+      --warning-color: #f39c12;
+      --light-gray: #f5f6fa;
+      --dark-gray: #7f8c8d;
     }
     header {
       background: #273c75;
@@ -67,6 +74,209 @@
     .card span {
       font-size: 1rem;
       color: #888;
+    }
+
+    /* Form Styles */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+
+    .password-input-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    
+    .password-input {
+      flex: 1;
+      padding-right: 35px; /* Space for the toggle button */
+    }
+    
+    .toggle-password {
+      position: absolute;
+      right: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      color: #666;
+      font-size: 16px;
+    }
+    
+    .toggle-password:focus {
+      outline: none;
+      color: #007bff;
+    }
+    
+    .form-group input[type="text"],
+    .form-group input[type="password"],
+    .form-group input[type="number"],
+    .form-group select {
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background-color: var(--primary-color);
+      color: white;
+    }
+
+    .btn-secondary {
+      background-color: var(--secondary-color);
+      color: #333;
+    }
+
+    .btn-success {
+      background-color: var(--success-color);
+      color: white;
+    }
+
+    .btn-danger {
+      background-color: var(--danger-color);
+      color: white;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    /* Modal Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      overflow-y: auto;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    .modal-content {
+      background-color: white;
+      margin: 2% auto;
+      padding: 2rem;
+      border-radius: 8px;
+      max-width: 600px;
+      width: 90%;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    
+    @media (max-height: 700px) {
+      .modal-content {
+        margin: 10px auto;
+        max-height: 95vh;
+      }
+    }
+
+    .close {
+      position: absolute;
+      right: 1.5rem;
+      top: 1rem;
+      font-size: 1.5rem;
+      cursor: pointer;
+    }
+
+    /* Table Styles */
+    .camera-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .camera-table th,
+    .camera-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+
+    .camera-table th {
+      background-color: var(--light-gray);
+      font-weight: 600;
+    }
+
+    .camera-table tr:hover {
+      background-color: #f8f9fa;
+    }
+
+    .camera-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .camera-config-actions {
+      margin-bottom: 1.5rem;
+      display: flex;
+      gap: 1rem;
+    }
+    
+    /* Notification Styles */
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 15px 25px;
+      border-radius: 4px;
+      color: white;
+      z-index: 1000;
+      opacity: 1;
+      transition: opacity 0.3s ease-in-out;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .notification.success {
+      background-color: var(--success-color);
+    }
+    
+    .notification.error {
+      background-color: var(--danger-color);
+    }
+    
+    .notification.info {
+      background-color: var(--primary-color);
+    }
+    
+    .notification.warning {
+      background-color: var(--warning-color);
+    }
+    
+    .notification.fade-out {
+      opacity: 0;
     }
     h3 {
       margin-top: 2rem;
@@ -243,6 +453,7 @@
   <nav>
     <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
     <a href="#videos" data-tab="videos">Videos/Clips</a>
+    <a href="#camera-config" data-tab="camera-config">Camera Config</a>
     <a href="#system" data-tab="system">System Health</a>
     <a href="#logs" data-tab="logs">Logs</a>
   </nav>
@@ -321,6 +532,84 @@
           <!-- Video rows will be populated by JS -->
         </tbody>
       </table>
+    </section>
+
+    <!-- Camera Config Tab -->
+    <section class="tab-section" id="tab-camera-config" style="display:none">
+      <h3>Camera Configuration</h3>
+      <div class="camera-config-actions">
+        <button id="add-camera-btn" class="btn btn-primary">Add Camera</button>
+        <button id="reload-config-btn" class="btn btn-secondary">Reload Config</button>
+        <button id="save-config-btn" class="btn btn-success">Save Changes</button>
+      </div>
+      
+      <!-- Camera Config Table -->
+      <table id="camera-config-table" class="camera-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>IP</th>
+            <th>Port</th>
+            <th>Path</th>
+            <th>Username</th>
+            <th>Enabled</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="camera-config-tbody">
+          <!-- Will be populated by JavaScript -->
+        </tbody>
+      </table>
+
+      <!-- Camera Form Modal -->
+      <div id="camera-form-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+          <span class="close">&times;</span>
+          <h3 id="modal-title">Add Camera</h3>
+          <form id="camera-form">
+            <input type="hidden" id="camera-index" value="-1">
+            <div class="form-group">
+              <label for="camera-name">Name</label>
+              <input type="text" id="camera-name" required>
+            </div>
+            <div class="form-group">
+              <label for="camera-ip">IP Address</label>
+              <input type="text" id="camera-ip" required>
+            </div>
+            <div class="form-group">
+              <label for="camera-port">Port</label>
+              <input type="text" id="camera-port" value="80">
+            </div>
+            <div class="form-group">
+              <label for="camera-path">Path</label>
+              <input type="text" id="camera-path" value="/video/mjpg.cgi">
+            </div>
+            <div class="form-group">
+              <label for="camera-username">Username</label>
+              <input type="text" id="camera-username">
+            </div>
+            <div class="form-group">
+              <label for="camera-password">Password</label>
+              <div class="password-input-container">
+                <input type="password" id="camera-password" class="password-input" autocomplete="off">
+                <button type="button" class="toggle-password" aria-label="Show password" tabindex="0">
+                  <span class="eye-icon">🙈</span>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="camera-enabled">
+                <input type="checkbox" id="camera-enabled" checked>
+                Enabled
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" id="cancel-camera">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
 
     <!-- System Health -->
@@ -657,6 +946,323 @@
     });
     
     window.addEventListener('DOMContentLoaded', initDashboard);
+    // Camera Config Management
+    const cameraConfig = {
+      cameras: []
+    };
+    
+    // DOM Elements
+    const cameraConfigTab = document.getElementById('tab-camera-config');
+    const cameraTableBody = document.getElementById('camera-config-tbody');
+    const addCameraBtn = document.getElementById('add-camera-btn');
+    const saveConfigBtn = document.getElementById('save-config-btn');
+    const reloadConfigBtn = document.getElementById('reload-config-btn');
+    const cameraForm = document.getElementById('camera-form');
+    const cameraModal = document.getElementById('camera-form-modal');
+    const closeModal = document.querySelector('.close');
+    const cancelCameraBtn = document.getElementById('cancel-camera');
+
+    // Event Listeners
+    addCameraBtn.addEventListener('click', () => openCameraModal());
+    saveConfigBtn.addEventListener('click', saveCameraConfig);
+    reloadConfigBtn.addEventListener('click', fetchCameraConfig);
+    closeModal.addEventListener('click', () => cameraModal.style.display = 'none');
+    cancelCameraBtn.addEventListener('click', () => cameraModal.style.display = 'none');
+    window.addEventListener('click', (e) => {
+      if (e.target === cameraModal) {
+        cameraModal.style.display = 'none';
+      }
+    });
+    cameraForm.addEventListener('submit', handleCameraFormSubmit);
+
+    // Tab switching
+    document.querySelectorAll('nav a').forEach(tab => {
+      tab.addEventListener('click', function(e) {
+        // Show the corresponding tab content
+        document.querySelectorAll('.tab-section').forEach(section => {
+          section.style.display = 'none';
+        });
+        const tabId = this.getAttribute('data-tab');
+        document.getElementById(`tab-${tabId}`).style.display = 'block';
+        
+        // Update active tab
+        document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        
+        // If switching to camera config tab, refresh the config
+        if (tabId === 'camera-config') {
+          fetchCameraConfig();
+        }
+      });
+    });
+
+    // Camera Form Handler
+    async function handleCameraFormSubmit(e) {
+      e.preventDefault();
+      
+      const camera = {
+        name: document.getElementById('camera-name').value,
+        ip: document.getElementById('camera-ip').value,
+        port: document.getElementById('camera-port').value,
+        path: document.getElementById('camera-path').value,
+        username: document.getElementById('camera-username').value,
+        // Only include password if it was changed (not empty)
+        ...(document.getElementById('camera-password').value && { 
+          password: document.getElementById('camera-password').value 
+        }),
+        enabled: document.getElementById('camera-enabled').checked,
+        width: 1920, // Default values, can be made configurable
+        height: 1080,
+        frame_rate: 30,
+        field: 'main',
+        resolution: '1080p',
+        auto_delete: 7 // Default 7 days
+      };
+      
+      const index = parseInt(document.getElementById('camera-index').value);
+      
+      try {
+        if (index >= 0 && index < cameraConfig.cameras.length) {
+          // Update existing camera - preserve existing fields not in the form
+          const existingCamera = cameraConfig.cameras[index];
+          cameraConfig.cameras[index] = { ...existingCamera, ...camera };
+        } else {
+          // Add new camera
+          cameraConfig.cameras.push(camera);
+        }
+        
+        // Save changes to backend
+        await saveCameraConfig();
+        
+        // Only update UI if save was successful
+        renderCameraTable();
+        cameraModal.style.display = 'none';
+        cameraForm.reset();
+        
+      } catch (error) {
+        console.error('Error saving camera:', error);
+        showNotification(`Error saving camera: ${error.message}`, 'error');
+      }
+    }
+    
+    // Open camera modal for adding/editing
+    function openCameraModal(camera = null, index = -1) {
+      const modalTitle = document.getElementById('modal-title');
+      const cameraIndex = document.getElementById('camera-index');
+      
+      if (camera) {
+        modalTitle.textContent = 'Edit Camera';
+        cameraIndex.value = index;
+        document.getElementById('camera-name').value = camera.name || '';
+        document.getElementById('camera-ip').value = camera.ip || '';
+        document.getElementById('camera-port').value = camera.port || '80';
+        document.getElementById('camera-path').value = camera.path || '/video/mjpg.cgi';
+        document.getElementById('camera-username').value = camera.username || '';
+        document.getElementById('camera-password').value = camera.password || ''; // Include password for editing
+        document.getElementById('camera-enabled').checked = camera.enabled !== false;
+      } else {
+        modalTitle.textContent = 'Add Camera';
+        cameraIndex.value = '-1';
+        cameraForm.reset();
+      }
+      
+      cameraModal.style.display = 'block';
+    }
+    
+    // Delete camera
+    function deleteCamera(index) {
+      if (confirm('Are you sure you want to delete this camera?')) {
+        cameraConfig.cameras.splice(index, 1);
+        renderCameraTable();
+      }
+    }
+    
+    // Render camera table
+    function renderCameraTable() {
+      cameraTableBody.innerHTML = '';
+      
+      if (cameraConfig.cameras.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="7" style="text-align: center;">No cameras configured</td>';
+        cameraTableBody.appendChild(row);
+        return;
+      }
+      
+      cameraConfig.cameras.forEach((camera, index) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${camera.name}</td>
+          <td>${camera.ip}</td>
+          <td>${camera.port || '80'}</td>
+          <td>${camera.path || ''}</td>
+          <td>${camera.username || ''}</td>
+          <td>${camera.enabled ? '✅' : '❌'}</td>
+          <td class="camera-actions">
+            <button class="btn btn-primary btn-sm edit-camera" data-index="${index}">Edit</button>
+            <button class="btn btn-danger btn-sm delete-camera" data-index="${index}">Delete</button>
+          </td>
+        `;
+        cameraTableBody.appendChild(row);
+      });
+      
+      // Add event listeners to the new buttons
+      document.querySelectorAll('.edit-camera').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const index = parseInt(e.target.getAttribute('data-index'));
+          openCameraModal(cameraConfig.cameras[index], index);
+        });
+      });
+      
+      document.querySelectorAll('.delete-camera').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const index = parseInt(e.target.getAttribute('data-index'));
+          if (confirm('Are you sure you want to delete this camera?')) {
+            cameraConfig.cameras.splice(index, 1);
+            renderCameraTable();
+          }
+        });
+      });
+    }
+    
+    // Fetch camera config from API
+    async function fetchCameraConfig() {
+      try {
+        const response = await fetch('/api/admin/cameras-config');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result = await response.json();
+        if (result.success) {
+          cameraConfig.cameras = result.data;
+          renderCameraTable();
+          showNotification('Camera configuration loaded successfully', 'success');
+        } else {
+          throw new Error(result.error || 'Failed to load camera config');
+        }
+      } catch (error) {
+        console.error('Error fetching camera config:', error);
+        showNotification(`Error: ${error.message}`, 'error');
+      }
+    }
+    
+    // Save camera config to API
+    async function saveCameraConfig() {
+      try {
+        // Prepare the data to send
+        const camerasToSave = cameraConfig.cameras.map(camera => ({
+          name: camera.name,
+          ip: camera.ip,
+          port: camera.port,
+          path: camera.path,
+          username: camera.username,
+          // Only include password if it was changed (not empty)
+          ...(camera.password && { password: camera.password }),
+          enabled: camera.enabled,
+          width: camera.width || 1920,
+          height: camera.height || 1080,
+          frame_rate: camera.frame_rate || 30,
+          field: camera.field || 'main',
+          resolution: camera.resolution || '1080p',
+          auto_delete: camera.auto_delete || 7
+        }));
+
+        const response = await fetch('/api/admin/cameras-config', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ cameras: camerasToSave })
+        });
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || `HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        showNotification(result.message || 'Camera configuration saved successfully', 'success');
+        
+        // Update local config with the saved data
+        cameraConfig.cameras = result.data || camerasToSave;
+        return true;
+      } catch (error) {
+        console.error('Error saving camera config:', error);
+        showNotification(`Error: ${error.message}`, 'error');
+        throw error; // Re-throw to allow handling in the calling function
+      }
+    }
+    
+    // Show notification
+    function showNotification(message, type = 'info') {
+      // Simple notification system - you might want to use a library like Toastr in production
+      const notification = document.createElement('div');
+      notification.className = `notification ${type}`;
+      notification.textContent = message;
+      
+      document.body.appendChild(notification);
+      
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => notification.remove(), 300);
+      }, 5000);
+    }
+    
+    // Toggle password visibility
+    function togglePasswordVisibility(button) {
+      const container = button.closest('.password-input-container');
+      const input = container.querySelector('.password-input');
+      const isPassword = input.type === 'password';
+      
+      // Toggle the input type
+      input.type = isPassword ? 'text' : 'password';
+      
+      // Update the button text/icon
+      const icon = button.querySelector('.eye-icon');
+      if (icon) {
+        icon.textContent = isPassword ? '🙈' : '👁️';
+      }
+      
+      // Update ARIA attributes for accessibility
+      button.setAttribute('aria-label', 
+        isPassword ? 'Hide password' : 'Show password');
+    }
+    
+    // Add event listeners for password toggles
+    function initPasswordToggles() {
+      document.querySelectorAll('.toggle-password').forEach(button => {
+        // Remove any existing listeners to prevent duplicates
+        const newButton = button.cloneNode(true);
+        button.parentNode.replaceChild(newButton, button);
+        
+        // Add click event
+        newButton.addEventListener('click', (e) => {
+          togglePasswordVisibility(e.currentTarget);
+        });
+        
+        // Add keyboard support (Enter/Space)
+        newButton.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            togglePasswordVisibility(e.currentTarget);
+          }
+        });
+      });
+    }
+    
+    // Update the openCameraModal function to handle password display
+    const originalOpenCameraModal = openCameraModal;
+    openCameraModal = function(camera = null, index = -1) {
+      originalOpenCameraModal(camera, index);
+      // Re-initialize password toggles after modal is opened
+      setTimeout(initPasswordToggles, 0);
+    };
+    
+    // Initialize the dashboard
+    window.addEventListener('DOMContentLoaded', () => {
+      initDashboard();
+      initPasswordToggles();
+    });
   </script>
 </body>
 </html>

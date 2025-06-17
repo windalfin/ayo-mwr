@@ -15,6 +15,7 @@ const (
 	StatusReady       VideoStatus = "ready"       // Video is ready for playback
 	StatusFailed      VideoStatus = "failed"      // Video processing failed
 	StatusUnavailable VideoStatus = "unavailable" // Video has been auto-deleted
+	StatusCancelled   VideoStatus = "cancelled"   // Video processing cancelled
 )
 
 // VideoMetadata represents the metadata for a recorded video

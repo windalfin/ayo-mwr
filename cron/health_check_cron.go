@@ -77,7 +77,7 @@ func (h *HealthCheckCron) runHealthCheck() {
 	log.Println("Running health check...")
 	
 	startTime := time.Now()
-	result, err := h.client.HealthCheck(h.cameraToken)
+	result, err := h.client.HealthCheck()
 	duration := time.Since(startTime)
 	
 	if err != nil {

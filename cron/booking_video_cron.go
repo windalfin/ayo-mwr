@@ -176,7 +176,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("processBookings : Skipping booking %s: already has a video with 'ready' status", bookingID)
 				if status == "cancelled" {
 					// update status to cancelled
-					db.UpdateVideoStatus(bookingID, database.StatusCancelled, "Booking cancelled")
+					db.UpdateVideoStatus(existingVideos[0].ID, database.StatusCancelled, "Cancel from api")
 					log.Printf("processBookings : Booking %s is cancelled, updating status to 'cancelled'", bookingID)
 				}
 				continue

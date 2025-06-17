@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -26,6 +27,9 @@ import (
 
 //go:embed .env
 var embeddedEnv embed.FS
+
+//go:embed dashboard
+var embeddedDashboardFS embed.FS
 
 func main() {
 	// Add execution tracking logs
@@ -111,8 +115,6 @@ func main() {
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
 
-	
-
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
 	if err != nil {
@@ -161,7 +163,7 @@ func main() {
 	uploadService := service.NewUploadService(db, r2Storage, &cfg)
 
 	// Initialize and start API server
-	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService)
+	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler
@@ -171,12 +173,46 @@ func main() {
 
 	signalCallback := func(signal string) error {
 		log.Printf("Received signal from Arduino: %s", signal)
-		// Process the signal by calling the API
-		err := signaling.CallProcessBookingVideoAPI(signal)
-		if err != nil {
-			log.Printf("Error processing Arduino signal: %v", err)
-			return err
+		// Ignore semicolons as separate signals
+		if signal == ";" || strings.TrimSpace(signal) == ";" {
+			log.Printf("Ignoring semicolon as a separate signal")
+			return nil
 		}
+
+		// Ignore carriage return and newline characters
+		if strings.TrimSpace(signal) == "" || signal == "\r" || signal == "\n" || signal == "\r\n" {
+			log.Printf("Ignoring whitespace/control characters")
+			return nil
+		}
+
+		// Trim the trailing semicolon from the signal to get the button number
+		buttonNo := strings.TrimSuffix(strings.TrimSpace(signal), ";")
+
+		// Map button number to field ID using camera configuration
+		fieldID := buttonNo // Default to using button number as field ID
+		
+		if cfg.CameraByButtonNo != nil {
+			if camera, exists := cfg.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
+				fieldID = camera.Field
+				log.Printf("Mapped button %s to field ID %s", buttonNo, fieldID)
+				fmt.Printf("[ARDUINO] Mapped button %s to field ID %s\n", buttonNo, fieldID)
+			} else {
+				log.Printf("Warning: No mapping found for button %s, using button number as field ID", buttonNo)
+				fmt.Printf("[ARDUINO] Warning: No mapping found for button %s, using button number as field ID\n", buttonNo)
+			}
+		} else {
+			log.Printf("Warning: Camera configuration not available, using button number as field ID")
+			fmt.Printf("[ARDUINO] Warning: Camera configuration not available, using button number as field ID\n", buttonNo)
+		}
+		
+		// Call the API using the utility function
+		err := signaling.CallProcessBookingVideoAPI(fieldID)
+		if err != nil {
+			log.Printf("Error calling Process Booking Video API: %v", err)
+			fmt.Printf("[ARDUINO] Error calling Process Booking Video API: %v\n", err)
+			return fmt.Errorf("failed to process booking video API call: %w", err)
+		}
+
 		return nil
 	}
 
@@ -194,7 +230,7 @@ func main() {
 		fmt.Printf("[MAIN] Arduino port %s exists, proceeding with connection\n", cfg.ArduinoCOMPort)
 	}
 
-	arduino, err := signaling.NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, signalCallback)
+	arduino, err := signaling.NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, signalCallback, &cfg)
 	if err != nil {
 		fmt.Printf("[MAIN] ERROR: Failed to initialize Arduino signal handler: %v\n", err)
 		log.Printf("ERROR: Failed to initialize Arduino signal handler: %v", err)

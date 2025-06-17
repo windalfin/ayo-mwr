@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -83,40 +85,58 @@ func FindClosestVideo(storagePath string, cameraName string, targetTime time.Tim
 
 // CallProcessBookingVideoAPI sends a POST request to the booking video process API.
 func CallProcessBookingVideoAPI(fieldID string) error {
+	fmt.Printf("[ARDUINO] CallProcessBookingVideoAPI called with field_id: %s\n", fieldID)
+
 	// Prepare data for the API call
-	requestBodyMap := map[string]string{"field_id": fieldID}
+	// convert fieldID to integer
+	fieldIDInt, err := strconv.Atoi(fieldID)
+	if err != nil {
+		fmt.Printf("[ARDUINO] Error converting field_id to integer: %v\n", err)
+		return fmt.Errorf("error converting field_id to integer: %w", err)
+	}
+	requestBodyMap := map[string]int{"field_id": fieldIDInt}
 	requestBodyBytes, err := json.Marshal(requestBodyMap)
 	if err != nil {
-		log.Printf("Error marshaling JSON for API call: %v", err)
+		fmt.Printf("[ARDUINO] Error marshaling JSON for API call: %v\n", err)
 		return fmt.Errorf("error marshaling JSON: %w", err)
 	}
 
 	// Make the API call
-	apiURL := "http://localhost:5000/api/booking/video/process"
+	apiURL := "http://localhost:3000/api/request-booking-video"
+	fmt.Printf("[ARDUINO] Attempting API call to: %s with body: %s\n", apiURL, string(requestBodyBytes))
+
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBodyBytes))
 	if err != nil {
-		log.Printf("Error creating API request: %v", err)
+		fmt.Printf("[ARDUINO] Error creating API request: %v\n", err)
 		return fmt.Errorf("error creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	fmt.Printf("[ARDUINO] Sending HTTP request to %s\n", apiURL)
+
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("Error sending API request: %v", err)
+		fmt.Printf("[ARDUINO] Error sending API request: %v\n", err)
 		return fmt.Errorf("error sending request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("API call failed with status %s", resp.Status)
-		// Optionally, read and log the response body for more details
-		// responseBody, _ := io.ReadAll(resp.Body)
-		// log.Printf("API response body: %s", string(responseBody))
+		fmt.Printf("[ARDUINO] API call failed with status %s\n", resp.Status)
+
+		// Read and log the response body for more details
+		responseBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[ARDUINO] API error response body: %s\n", string(responseBody))
+
 		return fmt.Errorf("API call failed with status %s", resp.Status)
 	}
 
-	log.Printf("Successfully called API to process booking video for field_id: %s, Status: %s", fieldID, resp.Status)
+	// Read and log the successful response
+	responseBody, _ := io.ReadAll(resp.Body)
+	fmt.Printf("[ARDUINO] API success response body: %s\n", string(responseBody))
+
+	fmt.Printf("[ARDUINO] Successfully called API to process booking video for field_id: %s, Status: %s\n", fieldID, resp.Status)
 	return nil
 }
 

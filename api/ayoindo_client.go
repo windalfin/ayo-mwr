@@ -552,64 +552,64 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
-		"venue_code":   c.venueCode,
-		"token":        c.apiToken,
+		"venue_code": c.venueCode,
+		"token":      c.apiToken,
 	}
-	
+
 	// Generate signature
 	signature, err := c.GenerateSignature(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signature: %w", err)
 	}
-	
+
 	// Add signature to parameters
 	params["signature"] = signature
-	
+
 	// Convert parameters to JSON
 	payload, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	// Build the URL
 	endpoint := fmt.Sprintf("%s/api/v1/health-check", c.baseURL)
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(payload))
-	
+
 	// Print full URL and payload for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
 	fmt.Printf("[DEBUG] API Request Body: %s\n", string(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse the response
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -632,7 +632,7 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 		"480":  "watermark_480.png",
 		"360":  "watermark_360.png",
 	}
-	
+
 	// Use specified resolution or fallback to 1080
 	if resolution == "" || sizes[resolution] == "" {
 		resolution = "1080" // Default to 1080p if no valid resolution specified

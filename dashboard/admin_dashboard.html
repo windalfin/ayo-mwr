@@ -153,6 +153,89 @@
       .card { padding: 1rem; }
       th, td { padding: 0.5rem 0.5rem; }
     }
+    
+    /* Modal styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.7);
+    }
+    
+    .modal-content {
+      background-color: #fefefe;
+      margin: 5% auto;
+      padding: 20px;
+      border-radius: 10px;
+      width: 80%;
+      max-width: 800px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    
+    .modal-header h4 {
+      margin: 0;
+      color: #273c75;
+      font-size: 1.4rem;
+    }
+    
+    .close-modal {
+      color: #aaa;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    
+    .close-modal:hover {
+      color: #273c75;
+    }
+    
+    .video-container {
+      width: 100%;
+      background: #000;
+      position: relative;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+    
+    #video-player {
+      width: 100%;
+      display: block;
+    }
+    
+    .video-controls {
+      margin-top: 10px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+    
+    .video-controls button {
+      background: #273c75;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 15px;
+      cursor: pointer;
+      font-size: 0.95em;
+      transition: background 0.2s;
+    }
+    
+    .video-controls button:hover {
+      background: #353b48;
+    }
   </style>
 </head>
 <body>
@@ -278,6 +361,25 @@
       <button style="background:#273c75;color:#fff;border:none;padding:0.6em 1.5em;border-radius:6px;">Download Logs</button>
     </section>
   </div>
+  
+  <!-- Video Modal -->
+  <div id="video-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 id="modal-camera-name">Camera Stream</h4>
+        <span class="close-modal">&times;</span>
+      </div>
+      <div class="video-container">
+        <video id="video-player" controls></video>
+      </div>
+      <div class="video-controls">
+        <button id="refresh-stream">Refresh Stream</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- HLS.js Script -->
+  <script src="/dashboard/js/hls.min.js"></script>
   <script>
     let cameras = null;
     let videos = null;
@@ -321,7 +423,7 @@
             <td>${cam.name}</td><td>${cam.ip}</td><td>${cam.port}</td><td>${cam.path}</td>
             <td><span class="status ${cam.status}">${cam.status.toUpperCase()}</span></td>
             <td>${cam.last_checked ? new Date(cam.last_checked).toLocaleString() : ''}</td>
-            <td class="actions"><button>Logs</button></td>
+            <td class="actions"><button onclick="openVideoStream('${cam.name}')">View</button></td>
           </tr>`;
         }
       });
@@ -424,6 +526,136 @@
       renderVideos();
       updateSummaryCards();
     }
+    // Video streaming functionality
+    const videoModal = document.getElementById('video-modal');
+    const modalCameraName = document.getElementById('modal-camera-name');
+    const videoPlayer = document.getElementById('video-player');
+    let currentHls = null;
+    
+    // Open video stream modal
+    function openVideoStream(cameraName) {
+      modalCameraName.textContent = `${cameraName} - Live Stream`;
+      videoModal.style.display = 'block';
+      
+      // Check if HLS.js is loaded
+      if (typeof Hls === 'undefined') {
+        console.error('HLS.js is not loaded. Attempting to load it now.');
+        const script = document.createElement('script');
+        script.src = '/dashboard/js/hls.min.js';
+        script.onload = function() {
+          console.log('HLS.js loaded successfully');
+          loadStream(cameraName);
+        };
+        script.onerror = function() {
+          console.error('Failed to load HLS.js');
+          alert('Failed to load video player library. Please refresh the page and try again.');
+        };
+        document.head.appendChild(script);
+      } else {
+        // Load the stream using HLS.js
+        loadStream(cameraName);
+      }
+    }
+    
+    // Load HLS stream
+    function loadStream(cameraName) {
+      // Clean up previous stream if exists
+      if (currentHls) {
+        currentHls.destroy();
+        currentHls = null;
+      }
+      
+      // Format camera name for folder structure (lowercase, replace spaces with underscores)
+      const formattedCameraName = cameraName.replace(/\s+/g, '_');
+      
+      // Path to the HLS stream - using the server's static file configuration
+      const streamUrl = `/hls/${formattedCameraName}/hls/playlist.m3u8`;
+      
+      // Check if Hls is defined
+      if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        currentHls = new Hls({
+          debug: false,
+          // Set appropriate HLS configuration
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          liveSyncDuration: 3,
+          liveMaxLatencyDuration: 10,
+          liveDurationInfinity: true
+        });
+        
+        currentHls.loadSource(streamUrl);
+        currentHls.attachMedia(videoPlayer);
+        
+        currentHls.on(Hls.Events.MANIFEST_PARSED, function() {
+          videoPlayer.play();
+        });
+        
+        currentHls.on(Hls.Events.ERROR, function(event, data) {
+          if (data.fatal) {
+            switch(data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.error('Network error while loading stream');
+                // Try to recover network error
+                currentHls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.error('Media error while playing stream');
+                // Try to recover media error
+                currentHls.recoverMediaError();
+                break;
+              default:
+                // Cannot recover
+                currentHls.destroy();
+                currentHls = null;
+                console.error('Unrecoverable error', data);
+                break;
+            }
+          }
+        });
+      } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+        // For Safari and iOS devices that support HLS natively
+        videoPlayer.src = streamUrl;
+        videoPlayer.addEventListener('loadedmetadata', function() {
+          videoPlayer.play();
+        });
+      } else {
+        console.error('HLS is not supported in this browser');
+        alert('Your browser does not support HLS streaming');
+      }
+    }
+    
+    // Close the modal
+    document.querySelector('.close-modal').addEventListener('click', function() {
+      videoModal.style.display = 'none';
+      // Stop the stream
+      if (currentHls) {
+        currentHls.destroy();
+        currentHls = null;
+      }
+      videoPlayer.pause();
+      videoPlayer.src = '';
+    });
+    
+    // Refresh stream button
+    document.getElementById('refresh-stream').addEventListener('click', function() {
+      const cameraName = modalCameraName.textContent.split(' - ')[0];
+      loadStream(cameraName);
+    });
+    
+    // Close modal when clicking outside of it
+    window.addEventListener('click', function(event) {
+      if (event.target === videoModal) {
+        videoModal.style.display = 'none';
+        // Stop the stream
+        if (currentHls) {
+          currentHls.destroy();
+          currentHls = null;
+        }
+        videoPlayer.pause();
+        videoPlayer.src = '';
+      }
+    });
+    
     window.addEventListener('DOMContentLoaded', initDashboard);
   </script>
 </body>

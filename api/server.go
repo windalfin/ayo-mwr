@@ -16,12 +16,12 @@ import (
 )
 
 type Server struct {
-	config        *config.Config
-	db            database.Database
-	r2Storage     *storage.R2Storage
-	uploadService *service.UploadService
-	videoRequestHandler  *BookingVideoRequestHandler
-	dashboardFS   embed.FS
+	config              *config.Config
+	db                  database.Database
+	r2Storage           *storage.R2Storage
+	uploadService       *service.UploadService
+	videoRequestHandler *BookingVideoRequestHandler
+	dashboardFS         embed.FS
 }
 
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
@@ -29,12 +29,12 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 
 	return &Server{
-		config:        cfg,
-		db:            db,
-		r2Storage:     r2Storage,
-		uploadService: uploadService,
-		videoRequestHandler:  videoRequestHandler,
-		dashboardFS:   dashboardFS,
+		config:              cfg,
+		db:                  db,
+		r2Storage:           r2Storage,
+		uploadService:       uploadService,
+		videoRequestHandler: videoRequestHandler,
+		dashboardFS:         dashboardFS,
 	}
 }
 
@@ -61,8 +61,8 @@ func (s *Server) setupCORS(r *gin.Engine) {
 }
 
 func (s *Server) setupRoutes(r *gin.Engine) {
-	// Static routes
-	r.Static("/hls", filepath.Join(s.config.StoragePath, "hls"))
+	// Static routes - serve HLS files from the recordings directory
+	r.Static("/hls", filepath.Join(s.config.StoragePath, "recordings"))
 
 	// Create a route group for the dashboard
 	dashboard := r.Group("/dashboard")

@@ -390,7 +390,7 @@ func (s *Server) reloadCameras(c *gin.Context) {
 		return
 	}
 
-	// Convert to config.CameraConfig and update in memory
+	// Convert DB rows to config.CameraConfig and reconcile running camera workers
 	newCams := make([]config.CameraConfig, len(dbCams))
 	for i, c := range dbCams {
 		newCams[i] = config.CameraConfig{
@@ -410,7 +410,20 @@ func (s *Server) reloadCameras(c *gin.Context) {
 		}
 	}
 
-	s.config.Cameras = newCams
+	// Build desired set and start any new workers
+current := make(map[string]struct{})
+for i, cam := range newCams {
+    current[cam.Name] = struct{}{}
+    recording.StartCamera(s.config, cam, i)
+}
+// Stop workers that are no longer present
+for _, name := range recording.ListRunningWorkers() {
+    if _, ok := current[name]; !ok {
+        recording.StopCamera(name)
+    }
+}
+
+s.config.Cameras = newCams
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

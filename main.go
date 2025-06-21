@@ -190,7 +190,7 @@ func main() {
 
 		// Map button number to field ID using camera configuration
 		fieldID := buttonNo // Default to using button number as field ID
-		
+
 		if cfg.CameraByButtonNo != nil {
 			if camera, exists := cfg.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
 				fieldID = camera.Field
@@ -204,7 +204,7 @@ func main() {
 			log.Printf("Warning: Camera configuration not available, using button number as field ID")
 			fmt.Printf("[ARDUINO] Warning: Camera configuration not available, using button number as field ID\n", buttonNo)
 		}
-		
+
 		// Call the API using the utility function
 		err := signaling.CallProcessBookingVideoAPI(fieldID)
 		if err != nil {
@@ -253,10 +253,9 @@ func main() {
 	log.Println("Starting 24/7 RTSP stream recording")
 
 	// Start capturing from all cameras
-	fmt.Println("[MAIN] Starting camera capture")
-	if err := recording.CaptureMultipleRTSPStreams(&cfg); err != nil {
-		log.Fatalf("Error capturing RTSP streams: %v", err)
-	}
+	fmt.Println("[MAIN] Starting camera workers")
+	recording.StartAllCameras(&cfg)
+	// Keep main alive
+	select {}
 
-	fmt.Println("[MAIN] Application running. Press Ctrl+C to exit.")
 }

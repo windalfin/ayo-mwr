@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	database "ayo-mwr/database"
 )
 
 // CameraConfig holds configuration for a single RTSP camera
@@ -155,30 +157,57 @@ func LoadConfig() Config {
 		}
 	}
 
-	// Load multiple cameras configuration
-	camerasJSON := getEnv("CAMERAS_CONFIG", "")
-	log.Printf("Raw CAMERAS_CONFIG: %s", camerasJSON) // Debug: Print raw JSON
-	log.Printf("Length of cfg.Cameras: %d", len(cfg.Cameras))
-	if camerasJSON != "" {
-		var cameras []CameraConfig
-		if err := json.Unmarshal([]byte(camerasJSON), &cameras); err != nil {
-			log.Printf("Warning: Failed to parse CAMERAS_CONFIG: %v", err)
-		} else {
-			cfg.Cameras = cameras
-			// Build CameraByButtonNo map for fast lookup
-			cfg.CameraByButtonNo = make(map[string]*CameraConfig)
-			for i := range cfg.Cameras {
-				cam := &cfg.Cameras[i]
-				if cam.ButtonNo != "" {
-					cfg.CameraByButtonNo[cam.ButtonNo] = cam
+	// --- CAMERA CONFIG LOAD via SQLite ---
+	// Open SQLite DB
+	dbPath := cfg.DatabasePath
+	db, err := database.NewSQLiteDB(dbPath)
+	if err != nil {
+		log.Printf("ERROR: Failed to open SQLite DB for camera config: %v", err)
+	} else {
+		cameras, err := db.GetCameras()
+		if err != nil {
+			log.Printf("ERROR loading cameras from SQLite: %v", err)
+		} else if len(cameras) == 0 {
+			// First run: load from env, store to DB
+			camerasJSON := getEnv("CAMERAS_CONFIG", "")
+			log.Printf("First run: loading cameras from CAMERAS_CONFIG env: %s", camerasJSON)
+			if camerasJSON != "" {
+				var envCams []CameraConfig
+				if err := json.Unmarshal([]byte(camerasJSON), &envCams); err != nil {
+					log.Printf("Warning: Failed to parse CAMERAS_CONFIG: %v", err)
+				} else {
+					// Convert []config.CameraConfig -> []database.CameraConfig
+					dbCams := make([]database.CameraConfig, len(envCams))
+					for i, c := range envCams {
+						dbCams[i] = database.CameraConfig{
+							Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
+							Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
+						}
+					}
+					if err := db.InsertCameras(dbCams); err != nil {
+						log.Printf("ERROR inserting cameras to SQLite: %v", err)
+					} else {
+						log.Printf("Inserted %d cameras to SQLite from env", len(dbCams))
+					}
 				}
 			}
-			log.Printf("Loaded %d cameras from CAMERAS_CONFIG", len(cameras))
-			for i, cam := range cameras {
-				log.Printf("Debug Camera %d: %+v", i, cam) // Debug: Print each camera after unmarshaling
+			// Re-query after insert
+			cameras, err = db.GetCameras()
+		}
+		// Convert []database.CameraConfig -> []config.CameraConfig
+		cfg.Cameras = make([]CameraConfig, len(cameras))
+		for i, c := range cameras {
+			cfg.Cameras[i] = CameraConfig{
+				Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
+				Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
 			}
 		}
+		log.Printf("Loaded %d cameras from SQLite", len(cfg.Cameras))
 	}
+	if db != nil {
+		db.Close()
+	}
+	// --- END CAMERA CONFIG LOAD ---
 
 	// If no cameras configured, use legacy camera settings
 	if len(cfg.Cameras) == 0 {

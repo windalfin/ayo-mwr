@@ -848,7 +848,7 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	
 	// Test GetWatermark
 	t.Run("GetWatermark", func(t *testing.T) {
-		watermarkPath, err := client.GetWatermark()
+		watermarkPath, err := client.GetWatermark("720")
 		if err != nil {
 			t.Fatalf("GetWatermark failed: %v", err)
 		}
@@ -1070,7 +1070,7 @@ func ExampleAyoIndoClient() {
 
 	// Get watermark
 	fmt.Println("Testing GetWatermark...")
-	result, err := client.GetWatermark()
+	result, err := client.GetWatermark("720")
 	if err != nil {
 		fmt.Printf("Error getting watermark: %v\n", err)
 	} else {

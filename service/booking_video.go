@@ -37,11 +37,11 @@ type BookingVideoService struct {
 
 // Tipe file sementara yang disimpan
 const (
-	TmpTypeHLS        = "hls"
-	TmpTypeMerged     = "merged"
-	TmpTypeWatermark  = "watermark"
-	TmpTypePreview    = "preview"
-	TmpTypeThumbnail  = "thumbnail"
+	TmpTypeHLS       = "hls"
+	TmpTypeMerged    = "merged"
+	TmpTypeWatermark = "watermark"
+	TmpTypePreview   = "preview"
+	TmpTypeThumbnail = "thumbnail"
 )
 
 // getTempPath mengembalikan path file sementara berdasarkan tipe dan uniqueID
@@ -49,7 +49,7 @@ func (s *BookingVideoService) getTempPath(fileType string, uniqueID string, exte
 	// Buat struktur folder untuk tipe
 	folderPath := filepath.Join(s.config.StoragePath, "tmp", fileType)
 	os.MkdirAll(folderPath, 0755)
-	
+
 	// Format nama file dengan benar (extension harus include titik jika diperlukan)
 	fileName := fmt.Sprintf("%s%s", uniqueID, extension)
 	return filepath.Join(folderPath, fileName)
@@ -107,12 +107,33 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	// Sanitasi bookingID untuk menghindari masalah path dengan karakter /
 	sanitizedBookingID := sanitizeID(bookingID)
 	uniqueID := fmt.Sprintf("%s_%s_%s", sanitizedBookingID, camera.Name, time.Now().Format("20060102150405"))
-	
+
 	log.Printf("ProcessVideoSegments : Processing %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
-	
+
+	videoInitialMeta := database.VideoMetadata{
+		ID:            uniqueID,
+		CreatedAt:     time.Now(),
+		Status:        database.StatusInitial, // Start with initial status
+		CameraName:    camera.Name,
+		UniqueID:      uniqueID,
+		OrderDetailID: orderDetailIDStr,
+		BookingID:     bookingID,
+		RawJSON:       rawJSON,
+		Resolution:    camera.Resolution,
+		HasRequest:    false,     // Explicitly set default to false
+		VideoType:     videoType, // Set from the parameter
+	}
+
+	// Create initial database entry
+	if err := s.db.CreateVideo(videoInitialMeta); err != nil {
+		return "", fmt.Errorf("ProcessVideoSegments: error creating initial database entry: %v", err)
+	}
+
+	log.Printf("ProcessVideoSegments: Created initial entry for video %s with status Initial", uniqueID)
+
 	// Tentukan direktori tempat segment berada (ambil dari segment pertama)
 	segmentDir := filepath.Dir(segments[0])
-	
+
 	// Buat path untuk file output, menggunakan struktur folder yang rapi
 	mergedVideoPath := s.getTempPath(TmpTypeMerged, uniqueID, ".mp4")
 
@@ -120,14 +141,15 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
 	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath, camera.Resolution)
 	if err != nil {
+		s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
 		return "", fmt.Errorf("failed to merge video segments: %v", err)
 	}
-	
+
 	// Langkah 2: Tambahkan watermark (di folder watermark)
 	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
 	log.Printf("ProcessVideoSegments : Adding watermark, output to: %s", watermarkedVideoPath)
 	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath, camera.Resolution)
-	
+
 	// Use merged video if watermarking fails
 	videoPathForNextStep := watermarkedVideoPath
 	if watermarkErr != nil {
@@ -137,26 +159,17 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	}
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
-	// Step 3: Create video metadata
+	// Step 3: update video metadata
 	videoMeta := database.VideoMetadata{
-		ID:            uniqueID,
-		CreatedAt:     time.Now(),
-		Status:        database.StatusUploading,
-		LocalPath:     videoPathForNextStep,
-		CameraName:    camera.Name,
-		UniqueID:      uniqueID,
-		OrderDetailID: orderDetailIDStr,
-		BookingID:     bookingID,
-		RawJSON:       rawJSON,
-		Resolution:    camera.Resolution,
-		HasRequest:    false, // Explicitly set default to false
-		VideoType:     videoType, // Set from the parameter
+		ID:        uniqueID,
+		Status:    database.StatusUploading,
+		LocalPath: videoPathForNextStep,
 	}
-	
-	// Create database entry
-	err = s.db.CreateVideo(videoMeta)
-	if err != nil {
-		return "", fmt.Errorf("ProcessVideoSegments : error creating database entry: %v", err)
+
+	// Update database entry with processing status and local path
+	if err := s.db.UpdateLocalPathVideo(videoMeta); err != nil {
+		s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
+		return "", fmt.Errorf("ProcessVideoSegments: error updating database entry: %v", err)
 	}
 	log.Printf("ProcessVideoSegments : Database entry created for uniqueID: %s", uniqueID)
 	return uniqueID, nil
@@ -171,7 +184,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 ) (string, string, error) {
 	// UniqueID sudah berisi booking ID yang aman
 	// getVideoMeta := s.db.GetVideo(uniqueID)
-	
+
 	// Create preview video (di folder preview)
 	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4")
 	log.Printf("Creating preview video at: %s", previewVideoPath)
@@ -180,7 +193,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 		log.Printf("Warning: Failed to create preview video: %v", err)
 		previewVideoPath = "" // Don't use preview if creation failed
 	}
-	
+
 	// Create thumbnail (di folder thumbnail)
 	thumbnailPath := s.getTempPath(TmpTypeThumbnail, uniqueID, ".png")
 	log.Printf("Creating thumbnail at: %s", thumbnailPath)
@@ -189,14 +202,14 @@ func (s *BookingVideoService) UploadProcessedVideo(
 		log.Printf("Warning: Failed to create thumbnail: %v", err)
 		thumbnailPath = "" // Don't use thumbnail if creation failed
 	}
-	
+
 	// Buat direktori HLS untuk video ini di folder hls, bukan di tmp/hls
 	// Sesuai dengan konfigurasi server di api/server.go
 	// hlsParentDir := filepath.Join(s.config.StoragePath, "hls")
 	// os.MkdirAll(hlsParentDir, 0755)
 	// hlsDir := filepath.Join(hlsParentDir, uniqueID)
 	// hlsURL := ""
-	
+
 	// // Buat HLS stream dari video menggunakan ffmpeg
 	// log.Printf("Generating HLS stream in: %s", hlsDir)
 	// if err := transcode.GenerateHLS(videoPath, hlsDir, uniqueID, s.config); err != nil {
@@ -208,7 +221,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	// 	hlsURL = fmt.Sprintf("%s/hls/%s/master.m3u8", baseURL, uniqueID)
 	// 	log.Printf("HLS stream created at: %s", hlsDir)
 	// 	log.Printf("HLS stream can be accessed at: %s", hlsURL)
-		
+
 	// 	// Upload HLS ke R2
 	// 	// _, r2HlsURL, err := s.r2Client.UploadHLSStream(hlsDir, uniqueID)
 	// 	// if err != nil {
@@ -218,18 +231,18 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	// 	// 	log.Printf("HLS stream uploaded to R2: %s", r2HlsURL)
 	// 	// }
 	// }
-	
+
 	// Upload main video to R2
 	mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
 	// _, err = s.r2Client.UploadFile(videoPath, mp4Path)
 	// if err != nil {
 	// 	return "", "", "", "", "", fmt.Errorf("error uploading video to R2: %v", err)
 	// }
-	
+
 	// Gunakan GetBaseURL untuk membuat URL dari custom domain
 	// mp4URL := fmt.Sprintf("%s/%s", s.r2Client.GetBaseURL(), mp4Path)
 	// log.Printf("Video uploaded to custom URL: %s", mp4URL)
-	
+
 	// Upload preview video if available
 	previewPath := fmt.Sprintf("mp4/%s_preview.mp4", uniqueID)
 	previewURL := ""
@@ -243,7 +256,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 			log.Printf("Preview video uploaded to custom URL: %s", previewURL)
 		}
 	}
-	
+
 	// Upload thumbnail if available
 	thumbnailR2Path := fmt.Sprintf("mp4/%s_thumbnail.png", uniqueID)
 	thumbnailURL := ""
@@ -257,7 +270,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 			log.Printf("Thumbnail uploaded to custom URL: %s", thumbnailURL)
 		}
 	}
-	
+
 	// Get video info (size and duration)
 	fileInfo, err := os.Stat(videoPath)
 	var fileSize int64
@@ -267,49 +280,49 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	} else {
 		fileSize = fileInfo.Size()
 	}
-	
+
 	// Get video duration using ffprobe
 	duration, err := s.GetVideoDuration(videoPath)
 	if err != nil {
 		log.Printf("Error getting video duration: %v", err)
 		duration = 0
 	}
-	
+
 	// Dapatkan data video yang sudah ada dari database
 	currentVideo, err := s.db.GetVideo(uniqueID)
 	if err != nil {
 		log.Printf("Error getting current video data from database: %v", err)
 	}
-	
+
 	// Update database entry with all information
 	// Siapkan nilai HLS untuk update database
 	// var r2HLSPath, hlsLocalPath, hlsLocalURL string
 	// if hlsDir != "" {
-		// Format paths dengan benar
-		// r2HLSPath = fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
-		// hlsLocalPath = hlsDir // Path di lokal filesystem
-		
-		// Format URL dengan benar untuk akses lokal
-		// Hapus semua referensi ke StoragePath dan pastikan URL mengacu langsung ke folder hls
-		// Karena server sudah di-configure untuk menyajikan langsung dari endpoint /hls
-		
-		// Path server hls harus persis seperti endpoint yang dikonfigurasi di server.go: /hls/{uniqueID}
-		// hlsServerPath := fmt.Sprintf("hls/%s", uniqueID)  
-		
-		// Gunakan BaseURL dari konfigurasi
-		// hlsLocalURL = fmt.Sprintf("%s/%s/playlist.m3u8", s.config.BaseURL, hlsServerPath)
-		
-		// Tambahan debug untuk memastikan URL yang dibuat sudah benar
-		// log.Printf("HLS Endpoint URL: %s", hlsLocalURL)
-		
-		// Log semua nilai untuk debugging
-		log.Printf("HLS: Menyimpan ke database:")
-		// log.Printf("  - hls_path: %s", hlsLocalPath)
-		// log.Printf("  - hls_url: %s", hlsLocalURL)
-		// log.Printf("  - r2_hls_path: %s", r2HLSPath)
-		// log.Printf("  - r2_hls_url: %s", hlsURL)
+	// Format paths dengan benar
+	// r2HLSPath = fmt.Sprintf("hls/%s", uniqueID) // Path di R2 storage
+	// hlsLocalPath = hlsDir // Path di lokal filesystem
+
+	// Format URL dengan benar untuk akses lokal
+	// Hapus semua referensi ke StoragePath dan pastikan URL mengacu langsung ke folder hls
+	// Karena server sudah di-configure untuk menyajikan langsung dari endpoint /hls
+
+	// Path server hls harus persis seperti endpoint yang dikonfigurasi di server.go: /hls/{uniqueID}
+	// hlsServerPath := fmt.Sprintf("hls/%s", uniqueID)
+
+	// Gunakan BaseURL dari konfigurasi
+	// hlsLocalURL = fmt.Sprintf("%s/%s/playlist.m3u8", s.config.BaseURL, hlsServerPath)
+
+	// Tambahan debug untuk memastikan URL yang dibuat sudah benar
+	// log.Printf("HLS Endpoint URL: %s", hlsLocalURL)
+
+	// Log semua nilai untuk debugging
+	log.Printf("HLS: Menyimpan ke database:")
+	// log.Printf("  - hls_path: %s", hlsLocalPath)
+	// log.Printf("  - hls_url: %s", hlsLocalURL)
+	// log.Printf("  - r2_hls_path: %s", r2HLSPath)
+	// log.Printf("  - r2_hls_url: %s", hlsURL)
 	// }
-	
+
 	// Get existing video metadata to preserve all fields
 	existingVideo, err := s.db.GetVideo(uniqueID)
 	if err != nil {
@@ -321,9 +334,9 @@ func (s *BookingVideoService) UploadProcessedVideo(
 			BookingID: bookingID,
 		}
 	}
-	
+
 	log.Printf("Current existing video with ID=%s, VideoType=%s", uniqueID, existingVideo.VideoType)
-	
+
 	// Update only the fields that need changing, preserving everything else
 	videoUpdate := *existingVideo
 	// log.Printf("videoUpdate.resolution: %s", videoUpdate.Resolution)
@@ -334,14 +347,14 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	videoUpdate.R2PreviewMP4URL = previewURL
 	videoUpdate.R2PreviewPNGPath = thumbnailR2Path
 	videoUpdate.R2PreviewPNGURL = thumbnailURL
-	videoUpdate.CameraName = cameraName    // Ensure this is still set
-	videoUpdate.LocalPath = videoPath      // Ensure this is still set
-	videoUpdate.R2MP4Path = mp4Path  
+	videoUpdate.CameraName = cameraName // Ensure this is still set
+	videoUpdate.LocalPath = videoPath   // Ensure this is still set
+	videoUpdate.R2MP4Path = mp4Path
 	// videoUpdate.Resolution = "720p"    // Ensure this is still set
-	
+
 	// Double check that VideoType is preserved
 	log.Printf("Updating video with ID=%s, VideoType=%s", uniqueID, videoUpdate.VideoType)
-	
+
 	// Salin field-field penting dari data yang sudah ada jika tersedia
 	if currentVideo != nil {
 		// Salin field yang tidak diset dalam pembaruan tapi ada di database
@@ -355,29 +368,29 @@ func (s *BookingVideoService) UploadProcessedVideo(
 			videoUpdate.CreatedAt = currentVideo.CreatedAt
 		}
 	}
-	
+
 	// Set CreatedAt jika masih kosong
 	if videoUpdate.CreatedAt.IsZero() {
 		videoUpdate.CreatedAt = time.Now()
 	}
-	
+
 	// Set timestamp upload dan finished
 	now := time.Now()
 	// videoUpdate.UploadedAt = &now
 	videoUpdate.FinishedAt = &now // Set finished time saat status ready
-	
+
 	log.Printf("Updating video metadata with complete fields for %s", uniqueID)
 	err = s.db.UpdateVideo(videoUpdate)
 	log.Printf("videoUpdate: %v", videoUpdate)
 	if err != nil {
 		log.Printf("Error updating database with all fields: %v", err)
 	}
-	
+
 	// Update status to ready
 	s.db.UpdateVideoStatus(uniqueID, database.StatusReady, "")
-	
+
 	log.Printf("Video metadata updated for %s", uniqueID)
-	
+
 	// Isi nilai HLS untuk dikembalikan ke caller
 	// hlsPath := ""
 	// if hlsDir != "" {
@@ -400,12 +413,12 @@ func (s *BookingVideoService) NotifyAyoAPI(
 ) error {
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
-		videoType, // videoType
-		previewURL, // previewPath
+		videoType,    // videoType
+		previewURL,   // previewPath
 		thumbnailURL, // imagePath
-		uniqueID, // uniqueID
-		startTime, // startTime
-		endTime, // endTime
+		uniqueID,     // uniqueID
+		startTime,    // startTime
+		endTime,      // endTime
 	)
 	return err
 }
@@ -435,18 +448,18 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, 
 		return fmt.Errorf("addWatermarkToVideo : failed to get watermark: %v", err)
 	}
 	log.Printf("addWatermarkToVideo : Watermark path: %s", watermarkPath)
-	
+
 	// Get watermark position settings
 	pos, margin, opacity := recording.GetWatermarkSettings()
 	log.Printf("addWatermarkToVideo : Watermark position: %s, margin: %d, opacity: %f", pos, margin, opacity)
-	
+
 	// Add watermark to video
 	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity, resolution)
 	if err != nil {
 		return fmt.Errorf("addWatermarkToVideo : failed to add watermark: %v", err)
 	}
 	log.Printf("addWatermarkToVideo : Watermark added successfully")
-	
+
 	return nil
 }
 
@@ -464,7 +477,7 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	// Define intervals based on video duration directly in seconds
 	// Each interval is a time range to extract (start_time, end_time)
 	intervals := determineIntervals(int(duration))
-
+	log.Printf("intervals: %v", intervals)
 	// Create a temporary directory for clip segments
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("preview_clips_%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
@@ -483,13 +496,13 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	// Extract each interval segment
 	for i, interval := range intervals {
 		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
-		
+
 		// Extract the clip using ffmpeg (using fast encoding but good quality)
 		cmd := exec.Command(
-			"ffmpeg", "-y", 
+			"ffmpeg", "-y",
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
-			"-to", interval.end,   // End time
+			"-to", interval.end, // End time
 			"-c:v", "libx264", "-c:a", "aac", // Use consistent codecs across all clips
 			"-crf", "22", // Good quality (lower number = better quality)
 			"-preset", "ultrafast", // Faster encoding
@@ -515,7 +528,7 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 		"-safe", "0",
 		"-i", clipListPath,
 		"-c:v", "libx264",
-		"-c:a", "aac", 
+		"-c:a", "aac",
 		"-crf", "22", // Good quality
 		"-preset", "ultrafast",
 		outputPath,
@@ -537,20 +550,32 @@ type timeInterval struct {
 
 // determineIntervals returns the appropriate time intervals for clipping based on video duration in seconds
 func determineIntervals(durationSeconds int) []timeInterval {
-	
+	// Konstanta durasi dalam detik
+	const (
+		fiveMinutesInSeconds   = 5 * 60      // 5 menit dalam detik
+		thirtyMinutesInSeconds = 30 * 60     // 30 menit dalam detik
+		oneHourInSeconds       = 60 * 60     // 1 jam dalam detik
+		twoHoursInSeconds      = 2 * 60 * 60 // 2 jam dalam detik
+		threeHoursInSeconds    = 3 * 60 * 60 // 3 jam dalam detik
+		fourHoursInSeconds     = 4 * 60 * 60 // 4 jam dalam detik
+		fiveHoursInSeconds     = 5 * 60 * 60 // 5 jam dalam detik
+		sixHoursInSeconds      = 6 * 60 * 60 // 6 jam dalam detik
+		sevenHoursInSeconds    = 7 * 60 * 60 // 7 jam dalam detik
+	)
+
 	// Helper function to create an interval
 	makeInterval := func(timeStr string) timeInterval {
 		// Parse the time string (format: H:MM:SS)
 		parts := strings.Split(timeStr, ":")
-		
+
 		// Create the end time (add 2 seconds)
 		minuteStr := parts[1]
 		secondStr := parts[2]
-		
+
 		// Calculate seconds for end time
 		second, _ := strconv.Atoi(secondStr)
 		second += 2
-		
+
 		// Handle overflow
 		if second >= 60 {
 			second -= 60
@@ -558,15 +583,15 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			minute++
 			minuteStr = fmt.Sprintf("%02d", minute)
 		}
-		
+
 		endTime := fmt.Sprintf("%s:%s:%02d", parts[0], minuteStr, second)
-		
+
 		return timeInterval{start: timeStr, end: endTime}
 	}
 
 	// Determine intervals based on video duration
 	intervals := []timeInterval{}
-	
+
 	// Always include the first interval at 0:00:00
 	intervals = append(intervals, makeInterval("0:00:00"))
 	log.Printf("Duration in seconds: %d", durationSeconds)
@@ -594,15 +619,15 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("0:00:20"),
 			makeInterval("0:00:40"),
 		}
-	} else if durationSeconds <= 1800 {
-		// 30 minutes
+	} else if durationSeconds <= thirtyMinutesInSeconds+fiveMinutesInSeconds {
+		// 30 menit + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:10:00"),
 			makeInterval("0:20:00"),
 		}
-	} else if durationSeconds <= 3600 {
-		// 1 hour
+	} else if durationSeconds <= oneHourInSeconds+fiveMinutesInSeconds {
+		// 1 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:12:00"),
@@ -610,8 +635,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("0:36:00"),
 			makeInterval("0:48:00"),
 		}
-	} else if durationSeconds <= 7200 {
-		// 2 hours
+	} else if durationSeconds <= twoHoursInSeconds+fiveMinutesInSeconds {
+		// 2 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:24:00"),
@@ -619,8 +644,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("1:12:00"),
 			makeInterval("1:36:00"),
 		}
-	} else if durationSeconds <= 10800 {
-		// 3 hours
+	} else if durationSeconds <= threeHoursInSeconds+fiveMinutesInSeconds {
+		// 3 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:36:00"),
@@ -628,8 +653,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("1:48:00"),
 			makeInterval("2:24:00"),
 		}
-	} else if durationSeconds <= 14400 {
-		// 4 hours
+	} else if durationSeconds <= fourHoursInSeconds+fiveMinutesInSeconds {
+		// 4 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:48:00"),
@@ -637,8 +662,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("2:24:00"),
 			makeInterval("3:12:00"),
 		}
-	} else if durationSeconds <= 18000 {
-		// 5 hours
+	} else if durationSeconds <= fiveHoursInSeconds+fiveMinutesInSeconds {
+		// 5 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:00:00"),
@@ -646,8 +671,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("3:00:00"),
 			makeInterval("4:00:00"),
 		}
-	} else if durationSeconds <= 21600 {
-		// 6 hours
+	} else if durationSeconds <= sixHoursInSeconds+fiveMinutesInSeconds {
+		// 6 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:12:00"),
@@ -655,8 +680,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("3:36:00"),
 			makeInterval("4:48:00"),
 		}
-	} else if durationSeconds <= 25200 {
-		// 7 hours
+	} else if durationSeconds <= sevenHoursInSeconds+fiveMinutesInSeconds {
+		// 7 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:24:00"),
@@ -777,24 +802,24 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 // GetVideoDuration gets the duration of a video file in seconds
 func (s *BookingVideoService) GetVideoDuration(videoPath string) (float64, error) {
 	cmd := exec.Command(
-		"ffprobe", 
-		"-v", "error", 
-		"-show_entries", "format=duration", 
-		"-of", "default=noprint_wrappers=1:nokey=1", 
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
 		videoPath,
 	)
-	
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("ffprobe failed: %v, output: %s", err, string(out))
 	}
-	
+
 	var duration float64
 	_, err = fmt.Sscanf(string(out), "%f", &duration)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse duration: %v", err)
 	}
-	
+
 	return duration, nil
 }
 
@@ -805,31 +830,31 @@ func (s *BookingVideoService) CombineDateTime(date time.Time, timeStr string) (t
 	if len(parts) != 3 {
 		return time.Time{}, fmt.Errorf("invalid time format: %s", timeStr)
 	}
-	
+
 	hour, err := strconv.Atoi(parts[0])
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid hour: %v", err)
 	}
-	
+
 	minute, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid minute: %v", err)
 	}
-	
+
 	second, err := strconv.Atoi(parts[2])
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid second: %v", err)
 	}
-	
+
 	// Combine date and time
 	return time.Date(
-		date.Year(), 
-		date.Month(), 
-		date.Day(), 
-		hour, 
-		minute, 
-		second, 
-		0, 
+		date.Year(),
+		date.Month(),
+		date.Day(),
+		hour,
+		minute,
+		second,
+		0,
 		date.Location(),
 	), nil
 }

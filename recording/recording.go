@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -65,7 +66,7 @@ func CaptureMultipleRTSPStreams(cfg *config.Config) error {
 		cameraID := i
 		go func(camera config.CameraConfig, id int) {
 			defer wg.Done()
-			captureRTSPStreamForCamera(cfg, camera, id)
+			captureRTSPStreamForCamera(context.Background(), cfg, camera, id)
 		}(camera, cameraID)
 	}
 
@@ -114,7 +115,7 @@ func TestRTSPConnection(cameraName, rtspURL string) (bool, error) {
 
 // captureRTSPStreamForCamera handles a single camera's RTSP stream
 // Now only records continuously to HLS. MP4 segmenter runs separately.
-func captureRTSPStreamForCamera(cfg *config.Config, camera config.CameraConfig, cameraID int) {
+func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera config.CameraConfig, cameraID int) {
 	// Construct the RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
 		camera.Username,
@@ -209,7 +210,7 @@ func captureRTSPStreamForCamera(cfg *config.Config, camera config.CameraConfig, 
 func CaptureRTSPSegments(cfg *config.Config) error {
 	if len(cfg.Cameras) > 0 {
 		camera := cfg.Cameras[0]
-		captureRTSPStreamForCamera(cfg, camera, 0)
+		captureRTSPStreamForCamera(context.Background(), cfg, camera, 0)
 		return nil
 	}
 	return fmt.Errorf("no cameras configured")

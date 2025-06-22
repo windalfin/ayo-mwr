@@ -16,6 +16,7 @@ const (
 	StatusFailed      VideoStatus = "failed"      // Video processing failed
 	StatusUnavailable VideoStatus = "unavailable" // Video has been auto-deleted
 	StatusCancelled   VideoStatus = "cancelled"   // Video processing cancelled
+	StatusInitial 	  VideoStatus = "initial"     // Video processing initial
 )
 
 // VideoMetadata represents the metadata for a recorded video
@@ -53,12 +54,30 @@ type VideoMetadata struct {
 	RequestID        string      `json:"requestId"`        // ID of the request for this video
 }
 
+// CameraConfig represents camera configuration stored in the database
+type CameraConfig struct {
+	Name       string `json:"name"`
+	IP         string `json:"ip"`
+	Port       string `json:"port"`
+	Path       string `json:"path"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Enabled    bool   `json:"enabled"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	FrameRate  int    `json:"frame_rate"`
+	Field      string `json:"field"`
+	Resolution string `json:"resolution"`
+	AutoDelete int    `json:"auto_delete"`
+}
+
 // Database defines the interface for database operations
 type Database interface {
 	// Video operations
 	CreateVideo(metadata VideoMetadata) error
 	GetVideo(id string) (*VideoMetadata, error)
 	UpdateVideo(metadata VideoMetadata) error
+	UpdateLocalPathVideo(metadata VideoMetadata) error
 	ListVideos(limit, offset int) ([]VideoMetadata, error)
 	DeleteVideo(id string) error
 
@@ -71,10 +90,14 @@ type Database interface {
 	GetVideosByBookingID(bookingID string) ([]VideoMetadata, error)
 	GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error)
 
+	// Camera configuration operations
+	GetCameras() ([]CameraConfig, error)
+	InsertCameras(cameras []CameraConfig) error
+
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
 	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
-	UpdateVideoRequestID(id, requestId string) error
+	UpdateVideoRequestID(id, requestId string, remove bool) error
 
 	// Helper operations
 	Close() error

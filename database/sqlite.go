@@ -70,7 +70,7 @@ func initTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Migrasi: Coba tambahkan kolom-kolom yang mungkin belum ada
 	// Ini akan gagal dengan error tetapi tidak kritis jika kolom sudah ada
 	_, migrationErr := db.Exec("ALTER TABLE videos ADD COLUMN camera_name TEXT")
@@ -79,7 +79,7 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom camera_name ke tabel videos")
 	}
-	
+
 	// Tambahkan kolom size jika belum ada
 	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN size INTEGER")
 	if migrationErr != nil {
@@ -94,7 +94,7 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom request_id ke tabel videos")
 	}
-	
+
 	// Tambahkan kolom duration jika belum ada
 	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN duration REAL")
 	if migrationErr != nil {
@@ -110,7 +110,7 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom resolution ke tabel videos")
 	}
-	
+
 	// Tambahkan kolom has_request jika belum ada dengan default false (0)
 	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN has_request BOOLEAN DEFAULT 0")
 	if migrationErr != nil {
@@ -118,7 +118,7 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom has_request ke tabel videos")
 	}
-	
+
 	// Tambahkan kolom last_check_file jika belum ada
 	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN last_check_file DATETIME")
 	if migrationErr != nil {
@@ -126,7 +126,7 @@ func initTables(db *sql.DB) error {
 	} else {
 		log.Printf("Success: Menambahkan kolom last_check_file ke tabel videos")
 	}
-	
+
 	// Tambahkan kolom video_type jika belum ada
 	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN video_type TEXT")
 	if migrationErr != nil {
@@ -245,7 +245,7 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	if finishedAt.Valid {
 		video.FinishedAt = &finishedAt.Time
 	}
-	
+
 	if uploadedAt.Valid {
 		video.UploadedAt = &uploadedAt.Time
 	}
@@ -284,6 +284,21 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	}
 
 	return &video, nil
+}
+
+func (s *SQLiteDB) UpdateLocalPathVideo(metadata VideoMetadata) error {
+	log.Printf("UpdateLocalPathVideo : Updating database entry for uniqueID: %s %s %s", metadata.LocalPath, metadata.Status, metadata.ID)
+	_, err := s.db.Exec(`
+		UPDATE videos SET
+			local_path = ?,
+			status = ?
+		WHERE id = ?`,
+		metadata.LocalPath,
+		metadata.Status,
+		metadata.ID,
+	)
+	log.Printf("UpdateLocalPathVideo : Database entry updated for uniqueID: %s", metadata.ID)
+	return err
 }
 
 // UpdateVideo updates an existing video record
@@ -355,11 +370,11 @@ func (s *SQLiteDB) UpdateVideoR2Paths(id, hlsPath, mp4Path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get video data for R2 path update: %v", err)
 	}
-	
+
 	// Update hanya path R2 tanpa mengubah field lain
 	currentVideo.R2HLSPath = hlsPath
 	currentVideo.R2MP4Path = mp4Path
-	
+
 	// Gunakan UpdateVideo untuk memastikan semua field tetap terjaga
 	return s.UpdateVideo(*currentVideo)
 }
@@ -371,13 +386,13 @@ func (s *SQLiteDB) UpdateVideoR2URLs(id, hlsURL, mp4URL string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get video data for R2 URL update: %v", err)
 	}
-	
+
 	// Update URL R2 dan timestamp upload
 	now := time.Now()
 	currentVideo.R2HLSURL = hlsURL
 	currentVideo.R2MP4URL = mp4URL
 	currentVideo.UploadedAt = &now
-	
+
 	// Gunakan UpdateVideo untuk memastikan semua field tetap terjaga
 	return s.UpdateVideo(*currentVideo)
 }
@@ -534,7 +549,7 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 			video.FinishedAt = &finishedAt.Time
 		}
 		if uploadedAt.Valid {
-			video.UploadedAt = &uploadedAt.Time 
+			video.UploadedAt = &uploadedAt.Time
 		}
 		if uniqueID.Valid {
 			video.UniqueID = uniqueID.String
@@ -563,7 +578,7 @@ func (s *SQLiteDB) GetVideosByStatus(status VideoStatus, limit, offset int) ([]V
 func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error {
 	var updateSQL string
 	var args []interface{}
-	
+
 	// If status is ready or failed, also update the finished_at time
 	if status == StatusReady || status == StatusFailed {
 		now := time.Now()
@@ -576,7 +591,7 @@ func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg str
 			WHERE id = ?
 		`
 		args = []interface{}{status, errorMsg, now, id}
-		
+
 		// Log for debugging purposes
 		log.Printf("Setting video %s status to %s with finished_at=%s", id, status, now.Format(time.RFC3339))
 	} else {
@@ -596,13 +611,13 @@ func (s *SQLiteDB) UpdateVideoStatus(id string, status VideoStatus, errorMsg str
 	if err != nil {
 		return fmt.Errorf("failed to update video status: %v", err)
 	}
-	
+
 	// Add debug logging to verify the update worked
 	updatedVideo, getErr := s.GetVideo(id)
 	if getErr == nil && updatedVideo != nil {
 		log.Printf("Updated video %s status to %s, VideoType=%s", id, status, updatedVideo.VideoType)
 	}
-	
+
 	return nil
 }
 
@@ -667,6 +682,8 @@ func (s *SQLiteDB) GetVideosByBookingID(bookingID string) ([]VideoMetadata, erro
 			video.Status = StatusReady
 		case "failed":
 			video.Status = StatusFailed
+		case "initial":
+			video.Status = StatusInitial
 		default:
 			video.Status = StatusPending
 		}

@@ -16,6 +16,7 @@ const (
 	StatusFailed      VideoStatus = "failed"      // Video processing failed
 	StatusUnavailable VideoStatus = "unavailable" // Video has been auto-deleted
 	StatusCancelled   VideoStatus = "cancelled"   // Video processing cancelled
+	StatusInitial 	  VideoStatus = "initial"     // Video processing initial
 )
 
 // VideoMetadata represents the metadata for a recorded video
@@ -59,6 +60,7 @@ type Database interface {
 	CreateVideo(metadata VideoMetadata) error
 	GetVideo(id string) (*VideoMetadata, error)
 	UpdateVideo(metadata VideoMetadata) error
+	UpdateLocalPathVideo(metadata VideoMetadata) error
 	ListVideos(limit, offset int) ([]VideoMetadata, error)
 	DeleteVideo(id string) error
 

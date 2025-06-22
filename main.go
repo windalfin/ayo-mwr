@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -166,87 +164,9 @@ func main() {
 	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
 	go apiServer.Start()
 
-	// Initialize Arduino signal handler
-	fmt.Println("[MAIN] About to initialize Arduino signal handler")
-	fmt.Printf("[MAIN] Arduino config: port=%s, baud rate=%d\n", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
-	log.Printf("Starting Arduino signal handler initialization with port: %s, baud rate: %d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
-
-	signalCallback := func(signal string) error {
-		log.Printf("Received signal from Arduino: %s", signal)
-		// Ignore semicolons as separate signals
-		if signal == ";" || strings.TrimSpace(signal) == ";" {
-			log.Printf("Ignoring semicolon as a separate signal")
-			return nil
-		}
-
-		// Ignore carriage return and newline characters
-		if strings.TrimSpace(signal) == "" || signal == "\r" || signal == "\n" || signal == "\r\n" {
-			log.Printf("Ignoring whitespace/control characters")
-			return nil
-		}
-
-		// Trim the trailing semicolon from the signal to get the button number
-		buttonNo := strings.TrimSuffix(strings.TrimSpace(signal), ";")
-
-		// Map button number to field ID using camera configuration
-		fieldID := buttonNo // Default to using button number as field ID
-
-		if cfg.CameraByButtonNo != nil {
-			if camera, exists := cfg.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
-				fieldID = camera.Field
-				log.Printf("Mapped button %s to field ID %s", buttonNo, fieldID)
-				fmt.Printf("[ARDUINO] Mapped button %s to field ID %s\n", buttonNo, fieldID)
-			} else {
-				log.Printf("Warning: No mapping found for button %s, using button number as field ID", buttonNo)
-				fmt.Printf("[ARDUINO] Warning: No mapping found for button %s, using button number as field ID\n", buttonNo)
-			}
-		} else {
-			log.Printf("Warning: Camera configuration not available, using button number as field ID")
-			fmt.Printf("[ARDUINO] Warning: Camera configuration not available, using button number as field ID\n", buttonNo)
-		}
-
-		// Call the API using the utility function
-		err := signaling.CallProcessBookingVideoAPI(fieldID)
-		if err != nil {
-			log.Printf("Error calling Process Booking Video API: %v", err)
-			fmt.Printf("[ARDUINO] Error calling Process Booking Video API: %v\n", err)
-			return fmt.Errorf("failed to process booking video API call: %w", err)
-		}
-
-		return nil
-	}
-
-	// Check if the Arduino port exists before trying to connect
-	fmt.Printf("[MAIN] Checking if Arduino port %s exists...\n", cfg.ArduinoCOMPort)
-	if _, err := os.Stat(cfg.ArduinoCOMPort); os.IsNotExist(err) {
-		fmt.Printf("[MAIN] ERROR: Arduino port %s does not exist!\n", cfg.ArduinoCOMPort)
-		// List available ports for debugging
-		fmt.Println("[MAIN] Available serial ports:")
-		ports, _ := filepath.Glob("/dev/tty.*")
-		for _, port := range ports {
-			fmt.Printf("[MAIN] - %s\n", port)
-		}
-	} else {
-		fmt.Printf("[MAIN] Arduino port %s exists, proceeding with connection\n", cfg.ArduinoCOMPort)
-	}
-
-	arduino, err := signaling.NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, signalCallback, &cfg)
-	if err != nil {
-		fmt.Printf("[MAIN] ERROR: Failed to initialize Arduino signal handler: %v\n", err)
-		log.Printf("ERROR: Failed to initialize Arduino signal handler: %v", err)
-	} else {
-		fmt.Println("[MAIN] Arduino signal handler initialized successfully, attempting to connect...")
-		log.Printf("Arduino signal handler initialized successfully, attempting to connect...")
-
-		connectErr := arduino.Connect()
-		if connectErr != nil {
-			fmt.Printf("[MAIN] ERROR: Failed to connect to Arduino: %v\n", connectErr)
-			log.Printf("ERROR: Failed to connect to Arduino: %v", connectErr)
-		} else {
-			fmt.Printf("[MAIN] Arduino connected successfully and listening for signals on port: %s\n", cfg.ArduinoCOMPort)
-			log.Printf("Arduino connected successfully and listening for signals on port: %s", cfg.ArduinoCOMPort)
-		}
-		defer arduino.Close()
+	// Initialize Arduino signal handler via signaling package
+	if _, err := signaling.InitArduino(&cfg); err != nil {
+		log.Printf("Warning: Arduino initialization failed: %v", err)
 	}
 
 	fmt.Println("[MAIN] Arduino setup complete, starting RTSP stream recording")

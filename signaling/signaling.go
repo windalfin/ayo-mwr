@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/tarm/serial"
-	
+
 	"ayo-mwr/config"
 )
 
@@ -115,16 +115,14 @@ func (a *ArduinoSignal) listen() {
 				log.Printf("ASCII: %s", asciiStr)
 				fmt.Printf("[ARDUINO] Received: HEX=%s ASCII='%s'\n", hexStr, asciiStr)
 
-				// Process the signal
+				// Process the signal using the handler (falls back to internal logic when callback is nil)
 				signal := string(buf[:n])
-				if a.callback != nil {
-					if err := a.callback(signal); err != nil {
-						log.Printf("Error handling signal: %v", err)
-						fmt.Printf("[ARDUINO] Error handling signal: %v\n", err)
-					} else {
-						log.Printf("Successfully processed signal: '%s'", signal)
-						fmt.Printf("[ARDUINO] Successfully processed signal: '%s'\n", signal)
-					}
+				if err := a.HandleSignal(signal); err != nil {
+					log.Printf("Error handling signal: %v", err)
+					fmt.Printf("[ARDUINO] Error handling signal: %v\n", err)
+				} else {
+					log.Printf("Successfully processed signal: '%s'", signal)
+					fmt.Printf("[ARDUINO] Successfully processed signal: '%s'\n", signal)
 				}
 			}
 		}
@@ -162,7 +160,7 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 
 	// Map button number to field ID using camera configuration
 	fieldID := buttonNo // Default to using button number as field ID
-	
+
 	if a.config != nil && a.config.CameraByButtonNo != nil {
 		if camera, exists := a.config.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
 			fieldID = camera.Field
@@ -173,7 +171,7 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 	} else {
 		log.Printf("Warning: Camera configuration not available, using button number as field ID")
 	}
-	
+
 	// Call the API using the utility function
 	err := CallProcessBookingVideoAPI(fieldID)
 	if err != nil {
@@ -220,4 +218,25 @@ func (f *FunctionSignal) HandleSignal(signal string) error {
 		return f.callback(signal)
 	}
 	return nil
+}
+
+// InitArduino sets up an ArduinoSignal based on application configuration and starts listening.
+func InitArduino(cfg *config.Config) (*ArduinoSignal, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	log.Printf("[SIGNALING] Initializing Arduino on port %s (baud %d)", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+
+	arduino, err := NewArduinoSignal(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate, nil, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ArduinoSignal: %w", err)
+	}
+
+	if err := arduino.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect Arduino: %w", err)
+	}
+
+	log.Printf("[SIGNALING] Arduino connected and listening on %s", cfg.ArduinoCOMPort)
+	return arduino, nil
 }

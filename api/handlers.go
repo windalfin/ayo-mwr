@@ -3,16 +3,19 @@ package api
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"ayo-mwr/monitoring"
-	"ayo-mwr/recording"
-	"ayo-mwr/signaling"
-	"ayo-mwr/transcode"
+	"ayo-mwr/config"
+	dbmod "ayo-mwr/database"
+	monitoring "ayo-mwr/monitoring"
+	recording "ayo-mwr/recording"
+	signaling "ayo-mwr/signaling"
+	transcode "ayo-mwr/transcode"
 
 	"github.com/gin-gonic/gin"
 )
@@ -241,13 +244,13 @@ func (s *Server) getSystemHealth(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{
-		"cpu": usage.CPUPercent,
-		"memory_used": usage.MemoryUsedMB,
-		"memory_total": usage.MemoryTotalMB,
+		"cpu":            usage.CPUPercent,
+		"memory_used":    usage.MemoryUsedMB,
+		"memory_total":   usage.MemoryTotalMB,
 		"memory_percent": usage.MemoryPercent,
-		"goroutines": usage.NumGoroutines,
-		"uptime": usage.Uptime,
-		"storage": usage.Storage,
+		"goroutines":     usage.NumGoroutines,
+		"uptime":         usage.Uptime,
+		"storage":        usage.Storage,
 	})
 }
 
@@ -279,4 +282,151 @@ func readLastNLines(path string, n int) (string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n"), scanner.Err()
+}
+
+// GET /api/admin/cameras-config
+// Get the current camera configuration from the database
+func (s *Server) getCamerasConfig(c *gin.Context) {
+	// Check if database is initialized
+	if s.db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
+		return
+	}
+
+	// Log database type for debugging
+	log.Printf("Database type: %T", s.db)
+
+	// Get cameras using the database interface
+	dbCams, err := s.db.GetCameras()
+	if err != nil {
+		log.Printf("Error getting cameras from DB: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to load cameras from database",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Convert to API response format (without passwords)
+	cameras := make([]config.CameraConfig, len(dbCams))
+	for i, cam := range dbCams {
+		cameras[i] = config.CameraConfig{
+			Name:       cam.Name,
+			IP:         cam.IP,
+			Port:       cam.Port,
+			Path:       cam.Path,
+			Username:   cam.Username,
+			Password:   cam.Password, // Include password in response for editing
+			Enabled:    cam.Enabled,
+			Width:      cam.Width,
+			Height:     cam.Height,
+			FrameRate:  cam.FrameRate,
+			Field:      cam.Field,
+			Resolution: cam.Resolution,
+			AutoDelete: cam.AutoDelete,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    cameras,
+	})
+}
+
+// PUT /api/admin/cameras-config
+// Update camera configuration in the database
+func (s *Server) updateCamerasConfig(c *gin.Context) {
+	sqldb, ok := s.db.(*dbmod.SQLiteDB)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database is not SQLiteDB"})
+		return
+	}
+
+	var request struct {
+		Cameras []dbmod.CameraConfig `json:"cameras"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
+		return
+	}
+
+	if len(request.Cameras) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No cameras provided"})
+		return
+	}
+
+	// Update the database
+	if err := sqldb.InsertCameras(request.Cameras); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to update cameras in DB",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Updated %d cameras", len(request.Cameras)),
+	})
+}
+
+// POST /api/admin/reload-cameras
+// Reload camera configuration into memory
+func (s *Server) reloadCameras(c *gin.Context) {
+	sqldb, ok := s.db.(*dbmod.SQLiteDB)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database is not SQLiteDB"})
+		return
+	}
+
+	dbCams, err := sqldb.GetCameras()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to load cameras from DB",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Convert DB rows to config.CameraConfig and reconcile running camera workers
+	newCams := make([]config.CameraConfig, len(dbCams))
+	for i, c := range dbCams {
+		newCams[i] = config.CameraConfig{
+			Name:       c.Name,
+			IP:         c.IP,
+			Port:       c.Port,
+			Path:       c.Path,
+			Username:   c.Username,
+			Password:   c.Password,
+			Enabled:    c.Enabled,
+			Width:      c.Width,
+			Height:     c.Height,
+			FrameRate:  c.FrameRate,
+			Field:      c.Field,
+			Resolution: c.Resolution,
+			AutoDelete: c.AutoDelete,
+		}
+	}
+
+	// Build desired set and start any new workers
+current := make(map[string]struct{})
+for i, cam := range newCams {
+    current[cam.Name] = struct{}{}
+    recording.StartCamera(s.config, cam, i)
+}
+// Stop workers that are no longer present
+for _, name := range recording.ListRunningWorkers() {
+    if _, ok := current[name]; !ok {
+        recording.StopCamera(name)
+    }
+}
+
+s.config.Cameras = newCams
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Reloaded %d cameras", len(newCams)),
+	})
 }

@@ -15,6 +15,51 @@ type SQLiteDB struct {
 	db *sql.DB
 }
 
+// InsertCameras inserts a slice of cameras into the database (replaces all)
+func (s *SQLiteDB) InsertCameras(cameras []CameraConfig) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Clear old
+	if _, err := tx.Exec("DELETE FROM cameras"); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO cameras (name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, c := range cameras {
+		_, err := stmt.Exec(c.Name, c.IP, c.Port, c.Path, c.Username, c.Password, c.Enabled, c.Width, c.Height, c.FrameRate, c.Field, c.Resolution, c.AutoDelete)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GetCameras loads all cameras from the DB
+func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
+	rows, err := s.db.Query(`SELECT name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete FROM cameras`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cameras []CameraConfig
+	for rows.Next() {
+		var c CameraConfig
+		err := rows.Scan(&c.Name, &c.IP, &c.Port, &c.Path, &c.Username, &c.Password, &c.Enabled, &c.Width, &c.Height, &c.FrameRate, &c.Field, &c.Resolution, &c.AutoDelete)
+		if err != nil {
+			return nil, err
+		}
+		cameras = append(cameras, c)
+	}
+	return cameras, nil
+}
+
+
 // NewSQLiteDB creates a new SQLite database instance
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 	db, err := sql.Open("sqlite3", dbPath)
@@ -34,8 +79,30 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 
 // initTables creates the necessary tables if they don't exist
 func initTables(db *sql.DB) error {
-	// Create videos table
+	// Create cameras table
 	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS cameras (
+			name TEXT PRIMARY KEY,
+			ip TEXT,
+			port TEXT,
+			path TEXT,
+			username TEXT,
+			password TEXT,
+			enabled BOOLEAN,
+			width INTEGER,
+			height INTEGER,
+			frame_rate INTEGER,
+			field TEXT,
+			resolution TEXT,
+			auto_delete INTEGER
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create videos table
+	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS videos (
 			id TEXT PRIMARY KEY,
 			camera_name TEXT,

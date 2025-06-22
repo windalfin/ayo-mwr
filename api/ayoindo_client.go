@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"sync"
 )
 
 // AyoIndoClient handles interactions with the AYO Indonesia API
@@ -103,8 +104,27 @@ func loadEnvFile() error {
 	return nil
 }
 
-// NewAyoIndoClient creates a new client for interacting with the AYO Indonesia API
+// defaultAyoIndoClient holds the singleton instance
+var (
+    defaultAyoIndoClient *AyoIndoClient
+    clientInitOnce       sync.Once
+)
+
+// NewAyoIndoClient returns a singleton AyoIndoClient instance. Subsequent calls
+// return the same instance to avoid repeated environment loading and duplicated
+// debug output.
 func NewAyoIndoClient() (*AyoIndoClient, error) {
+    var err error
+    clientInitOnce.Do(func() {
+        defaultAyoIndoClient, err = newAyoIndoClientInternal()
+    })
+    return defaultAyoIndoClient, err
+}
+
+// newAyoIndoClientInternal performs the actual construction logic that used to
+// be in NewAyoIndoClient. It is only executed once by the sync.Once wrapper
+// above.
+func newAyoIndoClientInternal() (*AyoIndoClient, error) {
 	// Try to explicitly load .env file first
 	_ = loadEnvFile()
 
@@ -130,7 +150,7 @@ func NewAyoIndoClient() (*AyoIndoClient, error) {
 		return nil, fmt.Errorf("missing required environment variables for AYO API client")
 	}
 
-	return &AyoIndoClient{
+	    return &AyoIndoClient{
 		baseURL:    baseURL,
 		apiToken:   apiToken,
 		venueCode:  venueCode,

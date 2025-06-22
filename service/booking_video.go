@@ -141,6 +141,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
 	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath, camera.Resolution)
 	if err != nil {
+		s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
 		return "", fmt.Errorf("failed to merge video segments: %v", err)
 	}
 
@@ -167,6 +168,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 
 	// Update database entry with processing status and local path
 	if err := s.db.UpdateLocalPathVideo(videoMeta); err != nil {
+		s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
 		return "", fmt.Errorf("ProcessVideoSegments: error updating database entry: %v", err)
 	}
 	log.Printf("ProcessVideoSegments : Database entry created for uniqueID: %s", uniqueID)
@@ -548,6 +550,18 @@ type timeInterval struct {
 
 // determineIntervals returns the appropriate time intervals for clipping based on video duration in seconds
 func determineIntervals(durationSeconds int) []timeInterval {
+	// Konstanta durasi dalam detik
+	const (
+		fiveMinutesInSeconds   = 5 * 60      // 5 menit dalam detik
+		thirtyMinutesInSeconds = 30 * 60     // 30 menit dalam detik
+		oneHourInSeconds       = 60 * 60     // 1 jam dalam detik
+		twoHoursInSeconds      = 2 * 60 * 60 // 2 jam dalam detik
+		threeHoursInSeconds    = 3 * 60 * 60 // 3 jam dalam detik
+		fourHoursInSeconds     = 4 * 60 * 60 // 4 jam dalam detik
+		fiveHoursInSeconds     = 5 * 60 * 60 // 5 jam dalam detik
+		sixHoursInSeconds      = 6 * 60 * 60 // 6 jam dalam detik
+		sevenHoursInSeconds    = 7 * 60 * 60 // 7 jam dalam detik
+	)
 
 	// Helper function to create an interval
 	makeInterval := func(timeStr string) timeInterval {
@@ -605,15 +619,15 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("0:00:20"),
 			makeInterval("0:00:40"),
 		}
-	} else if durationSeconds <= 1800 {
-		// 30 minutes
+	} else if durationSeconds <= thirtyMinutesInSeconds+fiveMinutesInSeconds {
+		// 30 menit + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:10:00"),
 			makeInterval("0:20:00"),
 		}
-	} else if durationSeconds <= 3600 {
-		// 1 hour
+	} else if durationSeconds <= oneHourInSeconds+fiveMinutesInSeconds {
+		// 1 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:12:00"),
@@ -621,8 +635,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("0:36:00"),
 			makeInterval("0:48:00"),
 		}
-	} else if durationSeconds <= 7200 {
-		// 2 hours
+	} else if durationSeconds <= twoHoursInSeconds+fiveMinutesInSeconds {
+		// 2 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:24:00"),
@@ -630,8 +644,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("1:12:00"),
 			makeInterval("1:36:00"),
 		}
-	} else if durationSeconds <= 10800 {
-		// 3 hours
+	} else if durationSeconds <= threeHoursInSeconds+fiveMinutesInSeconds {
+		// 3 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:36:00"),
@@ -639,8 +653,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("1:48:00"),
 			makeInterval("2:24:00"),
 		}
-	} else if durationSeconds <= 14400 {
-		// 4 hours
+	} else if durationSeconds <= fourHoursInSeconds+fiveMinutesInSeconds {
+		// 4 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("0:48:00"),
@@ -648,8 +662,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("2:24:00"),
 			makeInterval("3:12:00"),
 		}
-	} else if durationSeconds <= 18000 {
-		// 5 hours
+	} else if durationSeconds <= fiveHoursInSeconds+fiveMinutesInSeconds {
+		// 5 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:00:00"),
@@ -657,8 +671,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("3:00:00"),
 			makeInterval("4:00:00"),
 		}
-	} else if durationSeconds <= 21600 {
-		// 6 hours
+	} else if durationSeconds <= sixHoursInSeconds+fiveMinutesInSeconds {
+		// 6 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:12:00"),
@@ -666,8 +680,8 @@ func determineIntervals(durationSeconds int) []timeInterval {
 			makeInterval("3:36:00"),
 			makeInterval("4:48:00"),
 		}
-	} else if durationSeconds <= 25200 {
-		// 7 hours
+	} else if durationSeconds <= sevenHoursInSeconds+fiveMinutesInSeconds {
+		// 7 jam + 5 menit toleransi
 		return []timeInterval{
 			makeInterval("0:00:00"),
 			makeInterval("1:24:00"),

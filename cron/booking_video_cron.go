@@ -345,6 +345,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				)
 
 				if err != nil {
+					db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Notify AYO API failed: %v", err))
 					log.Printf("processBookings : Error notifying AYO API of successful upload for booking %s on camera %s: %v", bookingID, camera.Name, err)
 				}
 				log.Printf("processBookings : Notify AYO API of successful upload for booking %s on camera %s", bookingID, camera.Name)

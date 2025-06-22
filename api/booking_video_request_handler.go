@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ayo-mwr/config"
@@ -48,15 +49,22 @@ type BookingVideoRequestHandler struct {
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
+
+	// Rate limiting untuk mencegah klik berkali-kali dalam jangka waktu tertentu
+	lastRequestMutex sync.RWMutex
+	lastRequestTime  map[int]time.Time // Menyimpan waktu permintaan terakhir untuk setiap field_id
+	rateLimit        time.Duration     // Durasi minimum antara permintaan untuk field_id yang sama
 }
 
 // NewBookingVideoRequestHandler creates a new booking video request handler instance
 func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
 	return &BookingVideoRequestHandler{
-		config:        cfg,
-		db:            db,
-		r2Storage:     r2Storage,
-		uploadService: uploadService,
+		config:          cfg,
+		db:              db,
+		r2Storage:       r2Storage,
+		uploadService:   uploadService,
+		lastRequestTime: make(map[int]time.Time),
+		rateLimit:       30 * time.Second, // Rate limit 30 detik
 	}
 }
 
@@ -76,6 +84,33 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 	// Get field_id from request
 	fieldID := request.FieldID
+
+	// Check rate limiting untuk mencegah klik berkali-kali dalam jangka waktu tertentu
+	h.lastRequestMutex.RLock()
+	lastRequest, exists := h.lastRequestTime[fieldID]
+	h.lastRequestMutex.RUnlock()
+
+	if exists {
+		timeElapsed := time.Since(lastRequest)
+		if timeElapsed < h.rateLimit {
+			timeRemaining := h.rateLimit - timeElapsed
+			c.JSON(http.StatusTooManyRequests, ApiResponse{
+				Success: false,
+				Message: fmt.Sprintf("Harap tunggu %d detik sebelum meminta video lagi", int(timeRemaining.Seconds())),
+				Data: map[string]interface{}{
+					"wait_time_seconds": int(timeRemaining.Seconds()),
+					"field_id":          fieldID,
+				},
+			})
+			return
+		}
+	}
+
+	// Update waktu permintaan terakhir untuk field_id ini
+	h.lastRequestMutex.Lock()
+	h.lastRequestTime[fieldID] = time.Now()
+	h.lastRequestMutex.Unlock()
+
 	log.Printf("Processing video for field_id: %d", fieldID)
 
 	// Find camera with matching field_id in config
@@ -92,7 +127,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		for i, camera := range h.config.Cameras {
 			// Log camera details for debugging
 			log.Printf("Camera %d: Name=%s, Field=%s, Enabled=%v", i, camera.Name, camera.Field, camera.Enabled)
-			
+
 			// Convert camera field to int for comparison
 			cameraField, err := strconv.Atoi(camera.Field)
 			if err != nil {
@@ -154,7 +189,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	localNow := time.Now()
 	_, localOffset := localNow.Zone()
 	localOffsetHours := time.Duration(localOffset) * time.Second
-	
+
 	// Get current time in UTC and add the local timezone offset
 	endTime := time.Now().UTC().Add(localOffsetHours)
 	startTime := endTime.Add(-1 * time.Minute)
@@ -187,13 +222,13 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	var matchingBooking map[string]interface{}
 	var orderDetailID string
 	var bookingID string
-	
+
 	for _, item := range data {
 		booking, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
 		// Extract booking details
 		orderDetailIDFloat, _ := booking["order_detail_id"].(float64)
 		bookingFieldIDFloat, _ := booking["field_id"].(float64)
@@ -203,7 +238,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		endTimeStr, _ := booking["end_time"].(string)
 		statusVal, _ := booking["status"].(string)
 		status := strings.ToLower(statusVal) // convert to lowercase
-		
+
 		// Parse date and times
 		log.Printf("Date: %v", date)
 
@@ -214,14 +249,14 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			log.Printf("Booking %s is not success, skipping processing", bookingID)
 			continue
 		}
-		
+
 		bookingDate, err := time.Parse("2006-01-02", date)
 		log.Printf("Booking Date: %v", bookingDate)
 		if err != nil {
 			log.Printf("Error parsing date: %v", err)
 			continue
 		}
-		
+
 		// Combine date and time strings into time.Time objects
 		parseTime := func(timeStr string) (time.Time, error) {
 			parts := strings.Split(timeStr, ":")
@@ -233,13 +268,13 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			second, _ := strconv.Atoi(parts[2])
 			return time.Date(bookingDate.Year(), bookingDate.Month(), bookingDate.Day(), hour, minute, second, 0, time.Local), nil
 		}
-		
+
 		bookingStartTime, err := parseTime(startTimeStr)
 		if err != nil {
 			log.Printf("Error parsing start time: %v", err)
 			continue
 		}
-		
+
 		bookingEndTime, err := parseTime(endTimeStr)
 		if err != nil {
 			log.Printf("Error parsing end time: %v", err)
@@ -251,7 +286,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		log.Printf("Debug Booking Start Time: %v", bookingStartTime)
 		log.Printf("Debug Booking End Time: %v", bookingEndTime)
 		log.Printf("Debug End Time: %v", endTime)
-		log.Printf("Debug Start Time: %v", startTime)	
+		log.Printf("Debug Start Time: %v", startTime)
 		// Compare field_id and check if current time is within booking time range
 		if int(bookingFieldIDFloat) == fieldID && endTime.After(bookingStartTime) && startTime.Before(bookingEndTime) {
 			log.Printf("Found matching booking for field_id: %d at current time", fieldID)
@@ -262,7 +297,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		// matchingBooking = booking
 		// orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 	}
-	
+
 	// Check if matching booking was found
 	if matchingBooking == nil {
 		c.JSON(http.StatusNotFound, ApiResponse{
@@ -271,10 +306,10 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Find video directory for this camera
 	videoDirectory := filepath.Join(h.config.StoragePath, "recordings", targetCamera.Name, "mp4")
-	
+
 	// Check if directory exists
 	if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, ApiResponse{
@@ -283,7 +318,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Find segments for this camera in the time range
 	segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 	if err != nil || len(segments) == 0 {
@@ -293,9 +328,9 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	log.Printf("Found %d video segments for camera %s in the time range", len(segments), targetCamera.Name)
-	
+
 	// Generate a unique ID for this processing job
 	taskID := fmt.Sprintf("task_%s_%d", bookingID, time.Now().Unix())
 
@@ -304,7 +339,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		log.Printf("Starting background processing for task: %s, field_id: %d, booking_id: %s", taskID, fieldID, bookingID)
 		time.Sleep(30 * time.Second)
 		videoType := "clip"
-		
+
 		// Process video segments using service
 		uniqueID, err := bookingVideoService.ProcessVideoSegments(
 			*targetCamera,
@@ -354,6 +389,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 		if err != nil {
 			log.Printf("Error notifying AYO API of successful upload for task %s: %v", taskID, err)
+			h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Notify AYO API failed: %v", err))
 			// Continue anyway since the video was processed and uploaded successfully
 		}
 
@@ -365,12 +401,12 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		Success: true,
 		Message: "Video processing started in background",
 		Data: map[string]interface{}{
-			"task_id": taskID,
+			"task_id":    taskID,
 			"booking_id": bookingID,
 			"start_time": startTime.Format(time.RFC3339),
-			"end_time": endTime.Format(time.RFC3339),
-			"camera": targetCamera.Name,
-			"status": "processing",
+			"end_time":   endTime.Format(time.RFC3339),
+			"camera":     targetCamera.Name,
+			"status":     "processing",
 		},
 	})
 }

@@ -76,7 +76,7 @@ type Database interface {
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
 	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
-	UpdateVideoRequestID(id, requestId string) error
+	UpdateVideoRequestID(id, requestId string, remove bool) error
 
 	// Helper operations
 	Close() error

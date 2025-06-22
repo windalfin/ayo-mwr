@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -832,7 +833,7 @@ func (s *SQLiteDB) UpdateLastCheckFile(id string, lastCheckTime time.Time) error
 }
 
 // UpdateVideoRequestID updates the request_id for a video
-func (s *SQLiteDB) UpdateVideoRequestID(id string, requestID string) error {
+func (s *SQLiteDB) UpdateVideoRequestID(id string, requestID string, remove bool) error {
 	exists, err := s.GetVideo(id)
 	if err != nil {
 		return err
@@ -840,14 +841,32 @@ func (s *SQLiteDB) UpdateVideoRequestID(id string, requestID string) error {
 	if exists == nil {
 		return fmt.Errorf("video with ID %s does not exist", id)
 	}
-	if exists.RequestID != "" {
-		requestID = exists.RequestID + "," + requestID
+
+	var finalRequestID string
+	if remove {
+		// Jika remove true, hapus requestID dari daftar
+		requestIDs := strings.Split(exists.RequestID, ",")
+		var newRequestIDs []string
+		for _, rid := range requestIDs {
+			if rid != requestID {
+				newRequestIDs = append(newRequestIDs, rid)
+			}
+		}
+		finalRequestID = strings.Join(newRequestIDs, ",")
+	} else {
+		// Jika remove false, tambahkan requestID ke daftar
+		if exists.RequestID != "" {
+			finalRequestID = exists.RequestID + "," + requestID
+		} else {
+			finalRequestID = requestID
+		}
 	}
+
 	_, err = s.db.Exec(`
 		UPDATE videos SET
 			request_id = ?
 		WHERE id = ?
-	`, requestID, id)
+	`, finalRequestID, id)
 
 	return err
 }

@@ -101,7 +101,19 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
-	// Create videos table
+	// Create arduino_config table (single-row table, id always 1)
+    _, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS arduino_config (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            port TEXT,
+            baud_rate INTEGER
+        )
+    `)
+    if err != nil {
+        return err
+    }
+
+    // Create videos table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS videos (
 			id TEXT PRIMARY KEY,

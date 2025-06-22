@@ -460,6 +460,11 @@
   <div class="container">
     <!-- Summary Cards -->
     <div class="summary-cards" id="summary-cards">
+      <!-- Arduino Status Card -->
+      <div class="card" id="arduino-status-card" style="flex:1 1 250px;cursor:pointer">
+        <h2 id="arduino-status-text">Disconnected</h2>
+        <span id="arduino-status-details">Port: -</span>
+      </div>
       <div class="card">
         <h2>4</h2>
         <span>Cameras</span>
@@ -1264,5 +1269,89 @@
       initPasswordToggles();
     });
   </script>
+  <!-- Arduino Config Modal -->
+  <div id="arduino-modal" class="modal">
+    <div class="modal-content">
+      <span class="close" id="close-arduino-modal">&times;</span>
+      <h3>Arduino Configuration</h3>
+      <div class="form-group">
+        <label for="arduino-port">COM Port</label>
+        <input type="text" id="arduino-port">
+      </div>
+      <div class="form-group">
+        <label for="arduino-baud">Baud Rate</label>
+        <input type="number" id="arduino-baud">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" id="save-arduino-btn">Save</button>
+        <button class="btn btn-secondary" id="cancel-arduino-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ---------- Arduino status ----------
+async function fetchArduinoStatus() {
+  try {
+    const res = await fetch('/api/arduino-status');
+    const data = await res.json();
+    const card = document.getElementById('arduino-status-card');
+    const txt = document.getElementById('arduino-status-text');
+    const details = document.getElementById('arduino-status-details');
+    txt.textContent = data.connected ? 'Connected' : 'Disconnected';
+    details.textContent = `Port: ${data.port || '-'} | Baud: ${data.baud_rate || '-'}`;
+    card.style.background = data.connected ? 'var(--success-color)' : 'var(--danger-color)';
+    txt.style.color = '#fff';
+    details.style.color = '#fff';
+  } catch(e) {
+    console.error('Failed to fetch Arduino status', e);
+  }
+}
+setInterval(fetchArduinoStatus, 60000);
+fetchArduinoStatus();
+
+// open config modal
+const arduinoCard = document.getElementById('arduino-status-card');
+const arduinoModal = document.getElementById('arduino-modal');
+const closeArduinoModal = document.getElementById('close-arduino-modal');
+const cancelArduinoBtn = document.getElementById('cancel-arduino-btn');
+arduinoCard.addEventListener('click', () => {
+  loadArduinoConfig();
+  arduinoModal.style.display='block';
+});
+closeArduinoModal.onclick = cancelArduinoBtn.onclick = () => {
+  arduinoModal.style.display='none';
+};
+
+async function loadArduinoConfig(){
+  try{
+    const res = await fetch('/api/arduino-status');
+    const d = await res.json();
+    document.getElementById('arduino-port').value = d.port || '';
+    document.getElementById('arduino-baud').value = d.baud_rate || '';
+  }catch(e){console.error(e);}
+}
+
+document.getElementById('save-arduino-btn').addEventListener('click', async ()=>{
+  const port = document.getElementById('arduino-port').value.trim();
+  const baud = parseInt(document.getElementById('arduino-baud').value,10);
+  if(!port || !baud){showNotification('Port and baud required','warning');return;}
+  try{
+    const res = await fetch('/api/admin/arduino-config',{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({port:port, baud_rate: baud})
+    });
+    const txt = await res.text();
+    if(res.ok){
+      showNotification('Arduino config saved','success');
+      arduinoModal.style.display='none';
+      fetchArduinoStatus();
+    }else{
+      showNotification('Error: '+txt,'error');
+    }
+  }catch(e){showNotification('Request failed','error');}
+});
+</script>
 </body>
 </html>

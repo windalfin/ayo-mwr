@@ -372,8 +372,48 @@ func (s *Server) updateCamerasConfig(c *gin.Context) {
 	})
 }
 
-// POST /api/admin/reload-cameras
-// Reload camera configuration into memory
+// ---------- Arduino handlers ----------
+// GET /api/arduino-status
+func (s *Server) getArduinoStatus(c *gin.Context) {
+    status := signaling.GetArduinoStatus()
+    c.JSON(200, status)
+}
+
+// PUT /api/admin/arduino-config
+type arduinoConfigRequest struct {
+    Port     string `json:"port"`
+    BaudRate int    `json:"baud_rate"`
+}
+
+func (s *Server) updateArduinoConfig(c *gin.Context) {
+    var req arduinoConfigRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"error": "invalid json"})
+        return
+    }
+    if req.Port == "" || req.BaudRate == 0 {
+        c.JSON(400, gin.H{"error": "port and baud_rate required"})
+        return
+    }
+    // persist to DB if possible
+    if sqlDB, ok := s.db.(*dbmod.SQLiteDB); ok {
+        if err := sqlDB.UpsertArduinoConfig(req.Port, req.BaudRate); err != nil {
+            c.JSON(500, gin.H{"error": err.Error()})
+            return
+        }
+    }
+    // update in-memory config
+    s.config.ArduinoCOMPort = req.Port
+    s.config.ArduinoBaudRate = req.BaudRate
+    // reload arduino (may fail if device not present)
+    if err := signaling.ReloadArduino(s.config); err != nil {
+        log.Printf("[WARN] Arduino reload failed: %v", err)
+        c.JSON(200, gin.H{"status": "saved", "connected": false, "message": "Config saved but device not connected", "error": err.Error()})
+        return
+    }
+    c.JSON(200, gin.H{"status": "updated and reloaded", "connected": true})
+}
+
 func (s *Server) reloadCameras(c *gin.Context) {
 	sqldb, ok := s.db.(*dbmod.SQLiteDB)
 	if !ok {

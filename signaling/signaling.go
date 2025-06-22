@@ -18,16 +18,33 @@ type SignalHandler interface {
 }
 
 // ArduinoSignal handles signals from Arduino via COM port
-type ArduinoSignal struct {
+// ArduinoStatus represents current connection state
+ type ArduinoStatus struct {
+     Port       string    `json:"port"`
+     BaudRate   int       `json:"baud_rate"`
+     Connected  bool      `json:"connected"`
+     LastSignal time.Time `json:"last_signal"`
+ }
+
+ // ArduinoSignal handles signals from Arduino via COM port
+ type ArduinoSignal struct {
 	port     *serial.Port
 	portName string
 	baud     int
 	mutex    sync.Mutex
 	callback func(string) error
 	config   *config.Config // Reference to application config
+    connected bool
+    lastSignal time.Time
 }
 
 // NewArduinoSignal creates a new Arduino signal handler
+var (
+    activeArduino *ArduinoSignal
+    activeMutex   sync.Mutex
+    defaultCfg    *config.Config
+)
+
 func NewArduinoSignal(portName string, baud int, callback func(string) error, cfg *config.Config) (*ArduinoSignal, error) {
 	return &ArduinoSignal{
 		portName: portName,
@@ -61,8 +78,12 @@ func (a *ArduinoSignal) Connect() error {
 	}
 
 	a.port = port
+	a.connected = true
+	a.lastSignal = time.Now()
 	log.Printf("Successfully connected to Arduino on port %s, now listening for signals", a.portName)
 
+	// Heartbeat watchdog
+	go a.heartbeat()
 	// Start listening for signals in a goroutine
 	go a.listen()
 
@@ -70,6 +91,44 @@ func (a *ArduinoSignal) Connect() error {
 }
 
 // listen continuously reads from the serial port
+func (a *ArduinoSignal) heartbeat() {
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		if !a.connected {
+			continue
+		}
+		if time.Since(a.lastSignal) > 10*time.Second {
+			// no recent signal, test write
+			a.mutex.Lock()
+			if a.port != nil {
+				_, err := a.port.Write([]byte{0})
+				if err != nil {
+					log.Printf("[Arduino] Heartbeat failed, marking disconnected: %v", err)
+					a.connected = false
+				}
+			}
+			a.mutex.Unlock()
+		}
+	}
+    for range ticker.C {
+        if !a.connected {
+            continue
+        }
+        if time.Since(a.lastSignal) > 10*time.Second {
+            // no recent signal, test write
+            a.mutex.Lock()
+            if a.port != nil {
+                _, err := a.port.Write([]byte{0})
+                if err != nil {
+                    log.Printf("[Arduino] Heartbeat failed, marking disconnected: %v", err)
+                    a.connected = false
+                }
+            }
+            a.mutex.Unlock()
+        }
+    }
+}
+
 func (a *ArduinoSignal) listen() {
 	log.Printf("Arduino listener started on port %s with baud rate %d - waiting for signals...", a.portName, a.baud)
 
@@ -99,6 +158,7 @@ func (a *ArduinoSignal) listen() {
 			}
 
 			if n > 0 {
+                a.lastSignal = time.Now()
 				// Print both hex and ASCII representation of received bytes
 				log.Printf("Received %d bytes from Arduino", n)
 				hexStr := ""
@@ -187,6 +247,35 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 	return nil
 }
 
+// GetStatus returns a snapshot of the current connection status
+func GetArduinoStatus() ArduinoStatus {
+    activeMutex.Lock()
+    defer activeMutex.Unlock()
+    if activeArduino == nil {
+        if defaultCfg != nil {
+            return ArduinoStatus{Port: defaultCfg.ArduinoCOMPort, BaudRate: defaultCfg.ArduinoBaudRate, Connected: false}
+        }
+        return ArduinoStatus{}
+    }
+    return ArduinoStatus{
+        Port:       activeArduino.portName,
+        BaudRate:   activeArduino.baud,
+        Connected:  activeArduino.connected,
+        LastSignal: activeArduino.lastSignal,
+    }
+}
+
+// ReloadArduino closes existing connection (if any) and reinitializes using cfg.
+func ReloadArduino(cfg *config.Config) error {
+    activeMutex.Lock()
+    if activeArduino != nil {
+        _ = activeArduino.Close()
+    }
+    activeMutex.Unlock()
+    _, err := InitArduino(cfg)
+    return err
+}
+
 // Close closes the serial port connection
 func (a *ArduinoSignal) Close() error {
 	a.mutex.Lock()
@@ -222,6 +311,8 @@ func (f *FunctionSignal) HandleSignal(signal string) error {
 
 // InitArduino sets up an ArduinoSignal based on application configuration and starts listening.
 func InitArduino(cfg *config.Config) (*ArduinoSignal, error) {
+    // set default even if connection fails later
+    defaultCfg = cfg
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
@@ -238,5 +329,10 @@ func InitArduino(cfg *config.Config) (*ArduinoSignal, error) {
 	}
 
 	log.Printf("[SIGNALING] Arduino connected and listening on %s", cfg.ArduinoCOMPort)
-	return arduino, nil
+	// store as active
+    defaultCfg = cfg
+    activeMutex.Lock()
+    activeArduino = arduino
+    activeMutex.Unlock()
+    return arduino, nil
 }

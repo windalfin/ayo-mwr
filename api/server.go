@@ -86,6 +86,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	api := r.Group("/api")
 	{
 		api.GET("/streams", s.listStreams)
+        api.GET("/arduino-status", s.getArduinoStatus)
 		api.GET("/streams/:id", s.getStream)
 		api.POST("/upload", s.handleUpload)
 		api.GET("/cameras", s.listCameras)
@@ -98,6 +99,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		admin := api.Group("/admin")
 		{
 			admin.GET("/cameras-config", s.getCamerasConfig)
+            admin.PUT("/arduino-config", s.updateArduinoConfig)
 			admin.PUT("/cameras-config", s.updateCamerasConfig)
 			admin.POST("/reload-cameras", s.reloadCameras)
 		}

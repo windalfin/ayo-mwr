@@ -125,7 +125,27 @@ func main() {
 			}
 		}()
 	}
-	// Initialize AyoIndo API client for video cleanup
+	// ---- Arduino configuration load ----
+    // Try to load port/baud from database; fall back to env and persist if missing
+    port, baud, err := db.GetArduinoConfig()
+    if err == nil {
+        cfg.ArduinoCOMPort = port
+        cfg.ArduinoBaudRate = baud
+        log.Printf("[Arduino] Loaded config from DB: port=%s baud=%d", port, baud)
+    } else {
+        // Likely sql.ErrNoRows
+        log.Printf("[Arduino] No config in DB, using env values and persisting: port=%s baud=%d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+        if upErr := db.UpsertArduinoConfig(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate); upErr != nil {
+            log.Printf("[Arduino] Failed to persist initial config: %v", upErr)
+        }
+    }
+
+    // Initialize Arduino using the (possibly updated) cfg
+    if _, err := signaling.InitArduino(&cfg); err != nil {
+        log.Printf("Warning: Arduino initialization failed: %v", err)
+    }
+
+    // Initialize AyoIndo API client for video cleanup
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)

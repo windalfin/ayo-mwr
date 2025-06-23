@@ -281,7 +281,7 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	if res, found := resolutions[resolution]; found {
 		// Use transcoding with specified resolution
 		ffmpegArgs = append(ffmpegArgs,
-			"-c:v", "libx264", "-preset", "fast", 
+			"-c:v", "libx264", "-preset", "fast",
 			"-vf", fmt.Sprintf("scale=%s:%s", res.width, res.height),
 			"-c:a", "aac", outputPath,
 		)
@@ -296,6 +296,140 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	if err != nil {
 		return fmt.Errorf("ffmpeg concat failed: %v\nOutput: %s", err, string(output))
 	}
+	return nil
+}
+
+// MergeAndWatermark combines video segments and adds watermark in a single FFmpeg operation
+// This is more efficient than running MergeSessionVideos followed by AddWatermarkWithPosition
+func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPath, watermarkPath string,
+	position WatermarkPosition, margin int, opacity float64, resolution string) error {
+
+	log.Printf("MergeAndWatermark : Merging video segments and adding watermark in one operation")
+	// Find segments in range of the startTime and endTime
+	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
+	if err != nil {
+		return fmt.Errorf("failed to find segments: %w", err)
+	}
+	if len(segments) == 0 {
+		return fmt.Errorf("no video segments found in the specified range")
+	}
+
+	// Ensure output directory exists
+	outDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Create concat list file in project folder (next to output)
+	concatListPath := filepath.Join(outDir, "segments_concat_list.txt")
+	tmpFile, err := os.Create(concatListPath)
+	if err != nil {
+		return fmt.Errorf("failed to create concat list file: %w", err)
+	}
+	defer os.Remove(concatListPath)
+
+	for _, seg := range segments {
+		absSeg, err := filepath.Abs(seg)
+		if err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to get absolute path for segment: %w", err)
+		}
+		line := fmt.Sprintf("file '%s'\n", absSeg)
+		if _, err := tmpFile.WriteString(line); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to concat list: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	// Verify watermark file exists and is readable
+	if _, err := os.Stat(watermarkPath); err != nil {
+		log.Printf("MergeAndWatermark : WARNING - Watermark file not found or not accessible: %s", watermarkPath)
+		return fmt.Errorf("watermark file not found or not accessible: %v", err)
+	}
+
+	// Validate opacity value
+	if opacity < 0.0 {
+		opacity = 0.0
+	} else if opacity > 1.0 {
+		opacity = 1.0
+	}
+
+	// Define overlay expression based on position
+	var overlayExpr string
+	switch position {
+	case TopLeft:
+		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
+	case TopRight:
+		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:%d", margin, margin)
+	case BottomLeft:
+		overlayExpr = fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
+	case BottomRight:
+		overlayExpr = fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
+	}
+
+	// Tambahkan parameter opasitas ke filter watermark
+	filter := fmt.Sprintf("%s:enable='between(t,0,999999)':alpha=%.1f", overlayExpr, opacity)
+
+	// Run FFmpeg command from project root
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get project root: %w", err)
+	}
+
+	// Define supported resolutions
+	resolutions := map[string]struct {
+		width  string
+		height string
+	}{
+		"360":  {"640", "360"},
+		"480":  {"854", "480"},
+		"720":  {"1280", "720"},
+		"1080": {"1920", "1080"},
+	}
+
+	// Base FFmpeg command - match arguments with MergeSessionVideos
+	ffmpegArgs := []string{
+		"-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", concatListPath,
+		"-i", watermarkPath,
+	}
+
+	// Add resolution parameters if a valid resolution is provided - match with MergeSessionVideos
+	if res, found := resolutions[resolution]; found {
+		// Complete filter with scaling and overlay watermark
+		completeFilter := fmt.Sprintf("scale=%s:%s,%s", res.width, res.height, filter)
+
+		// Use transcoding with specified resolution - same as MergeSessionVideos
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-filter_complex", completeFilter,
+			"-c:a", "aac",
+			outputPath,
+		)
+	} else {
+		// Use copy codec (no transcoding) if no valid resolution specified
+		// but still apply watermark filter
+		ffmpegArgs = append(ffmpegArgs,
+			"-filter_complex", filter,
+			"-c:a", "copy",
+			outputPath)
+	}
+
+	log.Printf("MergeAndWatermark : Executing ffmpeg with combined merge and watermark operations")
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
+	cmd.Dir = projectRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg merge and watermark failed: %v\nOutput: %s", err, string(output))
+	}
+	log.Printf("MergeAndWatermark : Video segments merged and watermark added successfully")
+
 	return nil
 }
 

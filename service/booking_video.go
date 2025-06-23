@@ -134,29 +134,39 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	// Tentukan direktori tempat segment berada (ambil dari segment pertama)
 	segmentDir := filepath.Dir(segments[0])
 
-	// Buat path untuk file output, menggunakan struktur folder yang rapi
-	mergedVideoPath := s.getTempPath(TmpTypeMerged, uniqueID, ".mp4")
-
-	// Langkah 1: Gabungkan video segments
-	log.Printf("ProcessVideoSegments : Merging video segments to: %s", mergedVideoPath)
-	err := recording.MergeSessionVideos(segmentDir, startTime, endTime, mergedVideoPath, camera.Resolution)
-	if err != nil {
-		s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
-		return "", fmt.Errorf("failed to merge video segments: %v", err)
-	}
-
-	// Langkah 2: Tambahkan watermark (di folder watermark)
+	// Gabungkan video segments dan tambahkan watermark dalam satu operasi FFmpeg
 	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
-	log.Printf("ProcessVideoSegments : Adding watermark, output to: %s", watermarkedVideoPath)
-	watermarkErr := s.addWatermarkToVideo(mergedVideoPath, watermarkedVideoPath, camera.Resolution)
-
-	// Use merged video if watermarking fails
-	videoPathForNextStep := watermarkedVideoPath
+	log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
+	
+	// Mendapatkan watermark dan pengaturannya
+	watermarkPath, watermarkErr := s.ayoClient.GetWatermark(camera.Resolution)
 	if watermarkErr != nil {
-		log.Printf("ProcessVideoSegments : Warning: Failed to add watermark: %v, continuing with unwatermarked video", watermarkErr)
-		// Use original merged video instead
-		videoPathForNextStep = mergedVideoPath
+		log.Printf("ProcessVideoSegments : Warning: Failed to get watermark: %v, continuing with merge only", watermarkErr)
+		// Jika gagal mendapatkan watermark, lakukan merge saja
+		err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
+		if err != nil {
+			s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
+			return "", fmt.Errorf("failed to merge video segments: %v", err)
+		}
+	} else {
+		// Dapatkan pengaturan watermark
+		pos, margin, opacity := recording.GetWatermarkSettings()
+		
+		// Lakukan merge dan tambahkan watermark dalam satu operasi
+		err := recording.MergeAndWatermark(segmentDir, startTime, endTime, watermarkedVideoPath, 
+			watermarkPath, pos, margin, opacity, camera.Resolution)
+		if err != nil {
+			log.Printf("ProcessVideoSegments : Warning: Failed to merge and add watermark: %v, falling back to merge only", err)
+			// Jika gagal, coba lakukan hanya merge saja
+			err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
+			if err != nil {
+				s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
+				return "", fmt.Errorf("failed to merge video segments in fallback mode: %v", err)
+			}
+		}
 	}
+	
+	videoPathForNextStep := watermarkedVideoPath
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
 	// Step 3: update video metadata

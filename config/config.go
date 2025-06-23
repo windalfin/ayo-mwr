@@ -209,6 +209,9 @@ func LoadConfig() Config {
 	}
 	// --- END CAMERA CONFIG LOAD ---
 
+    // Build lookup map now that cameras are loaded
+    cfg.buildCameraLookup()
+
 	// If no cameras configured, use legacy camera settings
 	if len(cfg.Cameras) == 0 {
 		log.Println("No cameras configured, using legacy camera settings")
@@ -226,6 +229,9 @@ func LoadConfig() Config {
 			Resolution: cfg.Resolution,
 			AutoDelete: cfg.AutoDelete,
 		})
+
+        // Rebuild lookup map to include legacy camera
+        cfg.buildCameraLookup()
 	}
 
 	// Log configuration
@@ -313,6 +319,27 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// buildCameraLookup constructs the CameraByButtonNo map for quick lookup.
+// Call this whenever cfg.Cameras may have changed.
+func (cfg *Config) buildCameraLookup() {
+    if cfg == nil {
+        return
+    }
+    if cfg.CameraByButtonNo == nil {
+        cfg.CameraByButtonNo = make(map[string]*CameraConfig)
+    }
+    // clear existing
+    for k := range cfg.CameraByButtonNo {
+        delete(cfg.CameraByButtonNo, k)
+    }
+    for i := range cfg.Cameras {
+        cam := &cfg.Cameras[i]
+        if cam.ButtonNo != "" {
+            cfg.CameraByButtonNo[cam.ButtonNo] = cam
+        }
+    }
 }
 
 // EnsurePaths creates necessary paths

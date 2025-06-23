@@ -180,8 +180,20 @@ func LoadConfig() Config {
 					dbCams := make([]database.CameraConfig, len(envCams))
 					for i, c := range envCams {
 						dbCams[i] = database.CameraConfig{
-							Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
-							Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
+							ButtonNo: c.ButtonNo,
+							Name:     c.Name,
+							IP:       c.IP,
+							Port:     c.Port,
+							Path:     c.Path,
+							Username: c.Username,
+							Password: c.Password,
+							Enabled:  c.Enabled,
+							Width:    c.Width,
+							Height:   c.Height,
+							FrameRate: c.FrameRate,
+							Field:     c.Field,
+							Resolution: c.Resolution,
+							AutoDelete: c.AutoDelete,
 						}
 					}
 					if err := db.InsertCameras(dbCams); err != nil {
@@ -198,7 +210,8 @@ func LoadConfig() Config {
 		cfg.Cameras = make([]CameraConfig, len(cameras))
 		for i, c := range cameras {
 			cfg.Cameras[i] = CameraConfig{
-				Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
+                ButtonNo: c.ButtonNo,
+                Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
 				Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
 			}
 		}

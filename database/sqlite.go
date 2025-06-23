@@ -26,13 +26,13 @@ func (s *SQLiteDB) InsertCameras(cameras []CameraConfig) error {
 	if _, err := tx.Exec("DELETE FROM cameras"); err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO cameras (name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO cameras (button_no, name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, c := range cameras {
-		_, err := stmt.Exec(c.Name, c.IP, c.Port, c.Path, c.Username, c.Password, c.Enabled, c.Width, c.Height, c.FrameRate, c.Field, c.Resolution, c.AutoDelete)
+		_, err := stmt.Exec(c.ButtonNo, c.Name, c.IP, c.Port, c.Path, c.Username, c.Password, c.Enabled, c.Width, c.Height, c.FrameRate, c.Field, c.Resolution, c.AutoDelete)
 		if err != nil {
 			return err
 		}
@@ -42,7 +42,7 @@ func (s *SQLiteDB) InsertCameras(cameras []CameraConfig) error {
 
 // GetCameras loads all cameras from the DB
 func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
-	rows, err := s.db.Query(`SELECT name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete FROM cameras`)
+	rows, err := s.db.Query(`SELECT button_no, name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete FROM cameras`)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
 	var cameras []CameraConfig
 	for rows.Next() {
 		var c CameraConfig
-		err := rows.Scan(&c.Name, &c.IP, &c.Port, &c.Path, &c.Username, &c.Password, &c.Enabled, &c.Width, &c.Height, &c.FrameRate, &c.Field, &c.Resolution, &c.AutoDelete)
+		err := rows.Scan(&c.ButtonNo, &c.Name, &c.IP, &c.Port, &c.Path, &c.Username, &c.Password, &c.Enabled, &c.Width, &c.Height, &c.FrameRate, &c.Field, &c.Resolution, &c.AutoDelete)
 		if err != nil {
 			return nil, err
 		}
@@ -82,6 +82,7 @@ func initTables(db *sql.DB) error {
 	// Create cameras table
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS cameras (
+			button_no TEXT,
 			name TEXT PRIMARY KEY,
 			ip TEXT,
 			port TEXT,
@@ -99,6 +100,14 @@ func initTables(db *sql.DB) error {
 	`)
 	if err != nil {
 		return err
+	}
+
+	// Try to add button_no column if missing
+	_, migrationErr := db.Exec("ALTER TABLE cameras ADD COLUMN button_no TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for button_no: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added button_no column to cameras table")
 	}
 
 	// Create arduino_config table (single-row table, id always 1)
@@ -153,7 +162,7 @@ func initTables(db *sql.DB) error {
 
 	// Migrasi: Coba tambahkan kolom-kolom yang mungkin belum ada
 	// Ini akan gagal dengan error tetapi tidak kritis jika kolom sudah ada
-	_, migrationErr := db.Exec("ALTER TABLE videos ADD COLUMN camera_name TEXT")
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN camera_name TEXT")
 	if migrationErr != nil {
 		log.Printf("Info: Migration for camera_name: %v (bisa abaikan jika kolom sudah ada)", migrationErr)
 	} else {

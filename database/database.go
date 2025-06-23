@@ -56,6 +56,7 @@ type VideoMetadata struct {
 
 // CameraConfig represents camera configuration stored in the database
 type CameraConfig struct {
+	ButtonNo   string `json:"button_no"`
 	Name       string `json:"name"`
 	IP         string `json:"ip"`
 	Port       string `json:"port"`

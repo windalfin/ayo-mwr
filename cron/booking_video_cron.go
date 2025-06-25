@@ -149,6 +149,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		endTimeStr, _ := booking["end_time"].(string)
 		statusVal, _ := booking["status"].(string)
 		status := strings.ToLower(statusVal) // convert to lowercase
+		field_id, _ := booking["field_id"].(float64)
 
 		// date := "2025-05-05T00:00:00Z"
 		// endTimeStr := "06:00:00"
@@ -264,8 +265,12 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			// Process each camera
 			for _, camera := range cfg.Cameras {
 				// Skip disabled cameras
-				if !camera.Enabled {
-					log.Printf("processBookings : Skipping disabled camera: %s", camera.Name)
+				// if !camera.Enabled {
+				// 	log.Printf("processBookings : Skipping disabled camera: %s", camera.Name)
+				// 	continue
+				// }
+				if camera.Field != strconv.Itoa(int(field_id)) {
+					log.Printf("processBookings : Skipping camera %s for booking %s", camera.Name, bookingID)
 					continue
 				}
 

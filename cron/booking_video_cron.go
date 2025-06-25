@@ -255,7 +255,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Process this booking in a separate goroutine
 		wg.Add(1)
 		go func(booking map[string]interface{}, bookingID string, startTime, endTime time.Time,
-			orderDetailID float64, localOffsetHours time.Duration) {
+			orderDetailID float64, localOffsetHours time.Duration, field_id float64) {
 			defer wg.Done()
 			defer sem.Release(1) // Release semaphore when done
 
@@ -374,7 +374,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			} else {
 				log.Printf("processBookings : No camera videos found for booking %s in the specified time range", bookingID)
 			}
-		}(booking, bookingID, startTime, endTime, orderDetailID, localOffsetHours) // Pass variables to goroutine
+		}(booking, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id) // Pass variables to goroutine
 	}
 
 	// Wait for all booking processing goroutines to complete

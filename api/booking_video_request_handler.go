@@ -306,9 +306,9 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
-
+	BaseDir := filepath.Join(h.config.StoragePath, "recordings", targetCamera.Name)
 	// Find video directory for this camera
-	videoDirectory := filepath.Join(h.config.StoragePath, "recordings", targetCamera.Name, "mp4")
+	videoDirectory := filepath.Join(BaseDir, "mp4")
 
 	// Check if directory exists
 	if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
@@ -358,7 +358,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		}
 
 		// Get path to watermarked video
-		watermarkedVideoPath := filepath.Join(h.config.StoragePath, "tmp", "watermark", uniqueID+".mp4")
+		watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
 
 		// Upload processed video
 		previewURL, thumbnailURL, err := bookingVideoService.UploadProcessedVideo(

@@ -213,9 +213,10 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				return
 			}
 			db.UpdateVideoRequestID(uniqueID, videoRequestID, false)
-
+			cameraName := matchingVideo.CameraName
+			BaseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 			// Buat direktori HLS untuk video ini di folder hls
-			hlsParentDir := filepath.Join(cfg.StoragePath, "hls")
+			hlsParentDir := filepath.Join(BaseDir, "hls")
 			os.MkdirAll(hlsParentDir, 0755)
 			hlsDir := filepath.Join(hlsParentDir, uniqueID)
 			hlsURL := ""

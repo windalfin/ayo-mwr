@@ -269,8 +269,12 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// 	log.Printf("processBookings : Skipping disabled camera: %s", camera.Name)
 				// 	continue
 				// }
-				if camera.Field != strconv.Itoa(int(field_id)) {
+				// log.Printf(camera)
+				cameraField, err := strconv.Atoi(camera.Field)
+				if err != nil || cameraField != int(field_id) {
 					log.Printf("processBookings : Skipping camera %s for booking %s", camera.Name, bookingID)
+					log.Println("camera.Field", camera.Field)
+					log.Println("field_id", strconv.Itoa(int(field_id)))
 					continue
 				}
 
@@ -317,7 +321,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("processBookings : uniqueID %s", uniqueID)
 
 				// Ambil path file watermarked yang akan digunakan
-				watermarkedVideoPath := filepath.Join(cfg.StoragePath, "tmp", "watermark", uniqueID+".mp4")
+				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
 				log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
 				// Upload processed video
 				// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database

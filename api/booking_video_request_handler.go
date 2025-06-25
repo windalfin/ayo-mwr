@@ -23,7 +23,8 @@ import (
 
 // Request struct for the process booking video endpoint
 type ProcessBookingVideoRequest struct {
-	FieldID int `json:"field_id" binding:"required"`
+	FieldID    int    `json:"field_id" binding:"required"`
+	CameraName string `json:"camera_name,omitempty"` // optional camera name override
 }
 
 // Response struct for the API
@@ -113,12 +114,26 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 	log.Printf("Processing video for field_id: %d", fieldID)
 
-	// Find camera with matching field_id in config
+	// Determine target camera. Prefer camera_name when provided for precise mapping.
 	var targetCamera *config.CameraConfig
+
+	if request.CameraName != "" {
+		for i := range h.config.Cameras {
+			if h.config.Cameras[i].Name == request.CameraName && h.config.Cameras[i].Enabled {
+				targetCamera = &h.config.Cameras[i]
+				log.Printf("Camera selected by name: %s", request.CameraName)
+				break
+			}
+		}
+		if targetCamera == nil {
+			log.Printf("Warning: camera_name '%s' not found or disabled, falling back to field_id mapping", request.CameraName)
+		}
+	}
+
+	// If still not found, fall back to field_id based lookup
 	log.Printf("Looking for camera with field_id: %d, found %d cameras in config", fieldID, len(h.config.Cameras))
 
-	// Since we only have one enabled camera as per the logs, let's simply use it
-	// This is a temporary workaround
+	// If only one camera enabled, fallback to that (legacy behaviour)
 	if len(h.config.Cameras) > 0 && h.config.Cameras[0].Enabled {
 		targetCamera = &h.config.Cameras[0]
 		log.Printf("Using the first enabled camera as a fallback: %s", targetCamera.Name)

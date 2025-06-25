@@ -84,7 +84,9 @@ func FindClosestVideo(storagePath string, cameraName string, targetTime time.Tim
 }
 
 // CallProcessBookingVideoAPI sends a POST request to the booking video process API.
-func CallProcessBookingVideoAPI(fieldID string) error {
+// cameraName can be empty; when provided it is included in the request body so that
+// backend can precisely identify the camera that generated the signal.
+func CallProcessBookingVideoAPI(fieldID string, cameraName string) error {
 	fmt.Printf("[ARDUINO] CallProcessBookingVideoAPI called with field_id: %s\n", fieldID)
 
 	// Prepare data for the API call
@@ -94,7 +96,11 @@ func CallProcessBookingVideoAPI(fieldID string) error {
 		fmt.Printf("[ARDUINO] Error converting field_id to integer: %v\n", err)
 		return fmt.Errorf("error converting field_id to integer: %w", err)
 	}
-	requestBodyMap := map[string]int{"field_id": fieldIDInt}
+	// Build request body dynamically so that camera_name is only included when non-empty.
+	requestBodyMap := map[string]interface{}{"field_id": fieldIDInt}
+	if cameraName != "" {
+		requestBodyMap["camera_name"] = cameraName
+	}
 	requestBodyBytes, err := json.Marshal(requestBodyMap)
 	if err != nil {
 		fmt.Printf("[ARDUINO] Error marshaling JSON for API call: %v\n", err)

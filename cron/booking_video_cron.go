@@ -275,9 +275,9 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 
 				log.Printf("processBookings : Checking camera %s for booking %s", camera.Name, bookingID)
-
+				BaseDir := filepath.Join(cfg.StoragePath, "recordings", camera.Name)
 				// Find video segments directory for this camera
-				videoDirectory := filepath.Join(cfg.StoragePath, "recordings", camera.Name, "mp4")
+				videoDirectory := filepath.Join(BaseDir, "mp4")
 
 				// Check if directory exists
 				if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {

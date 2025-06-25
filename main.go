@@ -96,6 +96,15 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
+
+	// Initialize disk management system
+	diskManager := storage.NewDiskManager(db)
+	
+	// Setup initial disk - register current storage path as first disk
+	err = setupInitialDisk(diskManager, &cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to setup initial disk: %v", err)
+	}
 	// Start config update cron job (every 24 hours)
 	cron.StartConfigUpdateCron(&cfg)
 	// delay 15 seconds before first run
@@ -112,6 +121,16 @@ func main() {
 
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
+
+	// Start disk management cron job (nightly at 2 AM)
+	diskCron := cron.NewDiskManagementCron(db, diskManager)
+	diskCron.Start()
+	log.Println("Started disk management cron job")
+
+	// Start HLS cleanup cron job (nightly at 3 AM)
+	hlsCron := cron.NewHLSCleanupCron(db)
+	hlsCron.Start()
+	log.Println("Started HLS cleanup cron job")
 
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
@@ -198,4 +217,53 @@ func main() {
 	// Keep main alive
 	select {}
 
+}
+
+// setupInitialDisk registers the current storage path as the first disk if no disks exist
+func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) error {
+	// Check if any disks are already registered
+	disks, err := diskManager.ListDisks()
+	if err != nil {
+		return fmt.Errorf("failed to list existing disks: %v", err)
+	}
+
+	if len(disks) > 0 {
+		log.Printf("Found %d existing storage disks, skipping initial setup", len(disks))
+		
+		// Run a manual scan to update disk space
+		err = diskManager.ScanAndUpdateDiskSpace()
+		if err != nil {
+			log.Printf("Warning: Failed to scan existing disks: %v", err)
+		}
+		
+		// Ensure we have an active disk
+		err = diskManager.SelectActiveDisk()
+		if err != nil {
+			log.Printf("Warning: Failed to select active disk: %v", err)
+		}
+		
+		return nil
+	}
+
+	// No disks exist, register the current storage path as the first disk
+	log.Printf("No storage disks found, registering current storage path as first disk: %s", cfg.StoragePath)
+	
+	err = diskManager.RegisterDisk(cfg.StoragePath, 1)
+	if err != nil {
+		return fmt.Errorf("failed to register initial disk: %v", err)
+	}
+
+	// Run initial scan and selection
+	err = diskManager.ScanAndUpdateDiskSpace()
+	if err != nil {
+		log.Printf("Warning: Failed to scan initial disk: %v", err)
+	}
+
+	err = diskManager.SelectActiveDisk()
+	if err != nil {
+		log.Printf("Warning: Failed to select initial disk: %v", err)
+	}
+
+	log.Println("Initial disk setup completed successfully")
+	return nil
 }

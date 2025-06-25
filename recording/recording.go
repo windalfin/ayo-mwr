@@ -9,10 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"ayo-mwr/config"
+	"ayo-mwr/database"
+	"ayo-mwr/storage"
 )
 
 // ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
@@ -495,4 +498,207 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
 		}
 	}()
+}
+
+// captureRTSPStreamForCameraEnhanced captures an RTSP stream with multi-disk support and MP4-only recording
+func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config, camera config.CameraConfig, cameraID int, db database.Database, diskManager *storage.DiskManager) {
+	// Construct the RTSP URL
+	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+		camera.Username,
+		camera.Password,
+		camera.IP,
+		camera.Port,
+		camera.Path,
+	)
+
+	cameraName := camera.Name
+	if cameraName == "" {
+		cameraName = fmt.Sprintf("camera_%d", cameraID)
+	}
+
+	// Get recording path from active disk
+	recordingDir, activeDiskID, err := diskManager.GetRecordingPath(cameraName)
+	if err != nil {
+		log.Printf("[%s] Error getting recording path: %v", cameraName, err)
+		return
+	}
+
+	// Create camera-specific directories - MP4 and logs only (no HLS)
+	cameraLogsDir := filepath.Join(recordingDir, "logs")
+	cameraMP4Dir := filepath.Join(recordingDir, "mp4")
+
+	// Create required directories
+	for _, dir := range []string{cameraLogsDir, cameraMP4Dir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
+		}
+	}
+
+	// Start the enhanced MP4 segmenter that records directly to database
+	StartEnhancedMP4Segmenter(cameraName, cameraMP4Dir, activeDiskID, db)
+
+	log.Printf("Starting enhanced capture for camera: %s on disk: %s (path: %s)", cameraName, activeDiskID, recordingDir)
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s] Context cancelled, stopping camera capture", cameraName)
+			return
+		default:
+			// Create log file for this session
+			logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
+			if err != nil {
+				log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// FFmpeg arguments for direct MP4 segmented recording
+			ffmpegArgs := []string{
+				"-rtsp_transport", "tcp",
+				"-timeout", "5000000",
+				"-fflags", "nobuffer+discardcorrupt",
+				"-analyzeduration", "2000000",
+				"-probesize", "1000000",
+				"-re",
+				"-i", rtspURL,
+				"-c:v", "libx264",
+				"-preset", "ultrafast",
+				"-tune", "zerolatency",
+				"-profile:v", "baseline",
+				"-pix_fmt", "yuv420p",
+				"-color_range", "tv",
+				"-b:v", "2M",
+				"-bufsize", "4M",
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+				"-max_muxing_queue_size", "1024",
+				"-f", "segment",
+				"-segment_time", "60", // 1-minute segments
+				"-segment_format", "mp4",
+				"-segment_list_flags", "cache",
+				"-strftime", "1",
+				"-segment_filename", filepath.Join(cameraMP4Dir, fmt.Sprintf("%s_%%Y%%m%%d_%%H%%M%%S.mp4", cameraName)),
+				"-reset_timestamps", "1",
+				"-avoid_negative_ts", "make_zero",
+				"-y", // Overwrite existing files
+				filepath.Join(cameraMP4Dir, "output.m3u8"), // Placeholder output (not used but required)
+			}
+
+			// Execute FFmpeg command
+			cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+
+			log.Printf("[%s] Starting FFmpeg with direct MP4 segmentation", cameraName)
+			err = cmd.Run()
+
+			logFile.Close()
+
+			if ctx.Err() != nil {
+				log.Printf("[%s] Context cancelled during FFmpeg execution", cameraName)
+				return
+			}
+
+			if err != nil {
+				log.Printf("[%s] FFmpeg error: %v", cameraName, err)
+			}
+
+			log.Printf("[%s] FFmpeg stopped, restarting in 5 seconds...", cameraName)
+			time.Sleep(5 * time.Second)
+		}
+	}
+}
+
+// StartEnhancedMP4Segmenter monitors MP4 segment creation and records them in the database
+func StartEnhancedMP4Segmenter(cameraName, mp4Dir, diskID string, db database.Database) {
+	go func() {
+		log.Printf("[%s] Enhanced MP4 segmenter started for disk: %s", cameraName, diskID)
+
+		// Keep track of processed files to avoid duplicates
+		processedFiles := make(map[string]bool)
+
+		for {
+			time.Sleep(30 * time.Second) // Check every 30 seconds for new segments
+
+			entries, err := os.ReadDir(mp4Dir)
+			if err != nil {
+				log.Printf("[%s] Enhanced MP4 segmenter: failed to read MP4 dir: %v", cameraName, err)
+				continue
+			}
+
+			for _, entry := range entries {
+				if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".mp4" {
+					continue
+				}
+
+				// Skip if already processed
+				if processedFiles[entry.Name()] {
+					continue
+				}
+
+				// Parse segment information from filename
+				segmentStart, segmentEnd, err := parseSegmentTime(entry.Name())
+				if err != nil {
+					log.Printf("[%s] Enhanced MP4 segmenter: failed to parse segment time from %s: %v", cameraName, entry.Name(), err)
+					continue
+				}
+
+				// Get file size
+				fileInfo, err := entry.Info()
+				if err != nil {
+					log.Printf("[%s] Enhanced MP4 segmenter: failed to get file info for %s: %v", cameraName, entry.Name(), err)
+					continue
+				}
+
+				// Create recording segment record
+				segment := database.RecordingSegment{
+					ID:            fmt.Sprintf("%s_%s_%d", cameraName, segmentStart.Format("20060102_150405"), time.Now().Unix()),
+					CameraName:    cameraName,
+					StorageDiskID: diskID,
+					MP4Path:       filepath.Join("recordings", cameraName, "mp4", entry.Name()), // Relative path
+					SegmentStart:  segmentStart,
+					SegmentEnd:    segmentEnd,
+					FileSizeBytes: fileInfo.Size(),
+					CreatedAt:     time.Now(),
+				}
+
+				// Save to database
+				err = db.CreateRecordingSegment(segment)
+				if err != nil {
+					log.Printf("[%s] Enhanced MP4 segmenter: failed to save segment to database: %v", cameraName, err)
+					continue
+				}
+
+				processedFiles[entry.Name()] = true
+				log.Printf("[%s] Enhanced MP4 segmenter: recorded segment %s (%d bytes)", cameraName, entry.Name(), fileInfo.Size())
+			}
+		}
+	}()
+}
+
+// parseSegmentTime extracts start and end times from segment filename
+func parseSegmentTime(filename string) (time.Time, time.Time, error) {
+	// Expected format: camera_name_YYYYMMDD_HHMMSS.mp4
+	parts := strings.Split(filename, "_")
+	if len(parts) < 3 {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid filename format: %s", filename)
+	}
+
+	// Get the last two parts (date and time)
+	dateStr := parts[len(parts)-2]
+	timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
+
+	// Parse the timestamp
+	timestampStr := dateStr + "_" + timeStr
+	segmentStart, err := time.Parse("20060102_150405", timestampStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timestampStr, err)
+	}
+
+	// Assume 1-minute segments
+	segmentEnd := segmentStart.Add(1 * time.Minute)
+
+	return segmentStart, segmentEnd, nil
 }

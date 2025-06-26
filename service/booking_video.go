@@ -45,9 +45,10 @@ const (
 )
 
 // getTempPath mengembalikan path file sementara berdasarkan tipe dan uniqueID
-func (s *BookingVideoService) getTempPath(fileType string, uniqueID string, extension string) string {
+func (s *BookingVideoService) getTempPath(fileType string, uniqueID string, extension string, cameraName string) string {
 	// Buat struktur folder untuk tipe
-	folderPath := filepath.Join(s.config.StoragePath, "tmp", fileType)
+	baseDir := filepath.Join(s.config.StoragePath, "recordings", cameraName)
+	folderPath := filepath.Join(baseDir, "tmp", fileType)
 	os.MkdirAll(folderPath, 0755)
 
 	// Format nama file dengan benar (extension harus include titik jika diperlukan)
@@ -135,9 +136,9 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	segmentDir := filepath.Dir(segments[0])
 
 	// Gabungkan video segments dan tambahkan watermark dalam satu operasi FFmpeg
-	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4")
+	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4", camera.Name)
 	log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
-	
+
 	// Mendapatkan watermark dan pengaturannya
 	watermarkPath, watermarkErr := s.ayoClient.GetWatermark(camera.Resolution)
 	if watermarkErr != nil {
@@ -151,9 +152,9 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	} else {
 		// Dapatkan pengaturan watermark
 		pos, margin, opacity := recording.GetWatermarkSettings()
-		
+
 		// Lakukan merge dan tambahkan watermark dalam satu operasi
-		err := recording.MergeAndWatermark(segmentDir, startTime, endTime, watermarkedVideoPath, 
+		err := recording.MergeAndWatermark(segmentDir, startTime, endTime, watermarkedVideoPath,
 			watermarkPath, pos, margin, opacity, camera.Resolution)
 		if err != nil {
 			log.Printf("ProcessVideoSegments : Warning: Failed to merge and add watermark: %v, falling back to merge only", err)
@@ -165,7 +166,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 			}
 		}
 	}
-	
+
 	videoPathForNextStep := watermarkedVideoPath
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
@@ -196,7 +197,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	// getVideoMeta := s.db.GetVideo(uniqueID)
 
 	// Create preview video (di folder preview)
-	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4")
+	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4", cameraName)
 	log.Printf("Creating preview video at: %s", previewVideoPath)
 	err := s.CreateVideoPreview(videoPath, previewVideoPath)
 	if err != nil {
@@ -205,7 +206,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	}
 
 	// Create thumbnail (di folder thumbnail)
-	thumbnailPath := s.getTempPath(TmpTypeThumbnail, uniqueID, ".png")
+	thumbnailPath := s.getTempPath(TmpTypeThumbnail, uniqueID, ".png", cameraName)
 	log.Printf("Creating thumbnail at: %s", thumbnailPath)
 	err = s.CreateThumbnail(videoPath, thumbnailPath)
 	if err != nil {

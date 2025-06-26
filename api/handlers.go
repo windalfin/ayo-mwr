@@ -312,6 +312,7 @@ func (s *Server) getCamerasConfig(c *gin.Context) {
 	cameras := make([]config.CameraConfig, len(dbCams))
 	for i, cam := range dbCams {
 		cameras[i] = config.CameraConfig{
+			ButtonNo:   cam.ButtonNo,
 			Name:       cam.Name,
 			IP:         cam.IP,
 			Port:       cam.Port,
@@ -434,6 +435,7 @@ func (s *Server) reloadCameras(c *gin.Context) {
 	newCams := make([]config.CameraConfig, len(dbCams))
 	for i, c := range dbCams {
 		newCams[i] = config.CameraConfig{
+			ButtonNo:   c.ButtonNo,
 			Name:       c.Name,
 			IP:         c.IP,
 			Port:       c.Port,
@@ -464,6 +466,9 @@ for _, name := range recording.ListRunningWorkers() {
 }
 
 s.config.Cameras = newCams
+
+	// Rebuild camera lookup map with new button numbers
+	s.config.BuildCameraLookup()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

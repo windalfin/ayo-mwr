@@ -557,6 +557,8 @@
             <th>Port</th>
             <th>Path</th>
             <th>Username</th>
+            <th>Field ID</th>
+            <th>Button No</th>
             <th>Enabled</th>
             <th>Actions</th>
           </tr>
@@ -601,6 +603,14 @@
                   <span class="eye-icon">🙈</span>
                 </button>
               </div>
+            </div>
+            <div class="form-group">
+              <label for="camera-field-id">Field ID</label>
+              <input type="text" id="camera-field-id" placeholder="e.g., field_1, main, court_a">
+            </div>
+            <div class="form-group">
+              <label for="camera-button-no">Button Number</label>
+              <input type="text" id="camera-button-no" placeholder="e.g., 1, 2, 3">
             </div>
             <div class="form-group">
               <label for="camera-enabled">
@@ -1015,11 +1025,12 @@
         ...(document.getElementById('camera-password').value && { 
           password: document.getElementById('camera-password').value 
         }),
+        field: document.getElementById('camera-field-id').value || 'main',
+        button_no: document.getElementById('camera-button-no').value || '',
         enabled: document.getElementById('camera-enabled').checked,
         width: 1920, // Default values, can be made configurable
         height: 1080,
         frame_rate: 30,
-        field: 'main',
         resolution: '1080p',
         auto_delete: 7 // Default 7 days
       };
@@ -1064,6 +1075,8 @@
         document.getElementById('camera-path').value = camera.path || '/video/mjpg.cgi';
         document.getElementById('camera-username').value = camera.username || '';
         document.getElementById('camera-password').value = camera.password || ''; // Include password for editing
+        document.getElementById('camera-field-id').value = camera.field || '';
+        document.getElementById('camera-button-no').value = camera.button_no || '';
         document.getElementById('camera-enabled').checked = camera.enabled !== false;
       } else {
         modalTitle.textContent = 'Add Camera';
@@ -1088,7 +1101,7 @@
       
       if (cameraConfig.cameras.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="7" style="text-align: center;">No cameras configured</td>';
+        row.innerHTML = '<td colspan="9" style="text-align: center;">No cameras configured</td>';
         cameraTableBody.appendChild(row);
         return;
       }
@@ -1101,6 +1114,8 @@
           <td>${camera.port || '80'}</td>
           <td>${camera.path || ''}</td>
           <td>${camera.username || ''}</td>
+          <td>${camera.field || ''}</td>
+          <td>${camera.button_no || ''}</td>
           <td>${camera.enabled ? '✅' : '❌'}</td>
           <td class="camera-actions">
             <button class="btn btn-primary btn-sm edit-camera" data-index="${index}">Edit</button>
@@ -1162,6 +1177,7 @@
           username: camera.username,
           // Only include password if it was changed (not empty)
           ...(camera.password && { password: camera.password }),
+          button_no: camera.button_no || '',
           enabled: camera.enabled,
           width: camera.width || 1920,
           height: camera.height || 1080,
@@ -1185,7 +1201,25 @@
         }
         
         const result = await response.json();
-        showNotification(result.message || 'Camera configuration saved successfully', 'success');
+        
+        // Automatically reload cameras after saving to apply new configuration
+        try {
+          const reloadResponse = await fetch('/api/admin/reload-cameras', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          });
+          
+          if (reloadResponse.ok) {
+            showNotification('Camera configuration saved and reloaded successfully', 'success');
+          } else {
+            showNotification('Camera configuration saved, but reload failed. Please manually reload.', 'warning');
+          }
+        } catch (reloadError) {
+          console.error('Error reloading cameras:', reloadError);
+          showNotification('Camera configuration saved, but reload failed. Please manually reload.', 'warning');
+        }
         
         // Update local config with the saved data
         cameraConfig.cameras = result.data || camerasToSave;

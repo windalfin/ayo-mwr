@@ -223,7 +223,7 @@ func LoadConfig() Config {
 	// --- END CAMERA CONFIG LOAD ---
 
     // Build lookup map now that cameras are loaded
-    cfg.buildCameraLookup()
+    cfg.BuildCameraLookup()
 
 	// If no cameras configured, use legacy camera settings
 	if len(cfg.Cameras) == 0 {
@@ -244,7 +244,7 @@ func LoadConfig() Config {
 		})
 
         // Rebuild lookup map to include legacy camera
-        cfg.buildCameraLookup()
+        cfg.BuildCameraLookup()
 	}
 
 	// Log configuration
@@ -334,9 +334,9 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// buildCameraLookup constructs the CameraByButtonNo map for quick lookup.
+// BuildCameraLookup constructs the CameraByButtonNo map for quick lookup.
 // Call this whenever cfg.Cameras may have changed.
-func (cfg *Config) buildCameraLookup() {
+func (cfg *Config) BuildCameraLookup() {
     if cfg == nil {
         return
     }

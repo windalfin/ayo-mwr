@@ -23,7 +23,8 @@ import (
 
 // Request struct for the process booking video endpoint
 type ProcessBookingVideoRequest struct {
-	FieldID int `json:"field_id" binding:"required"`
+	FieldID    int    `json:"field_id" binding:"required"`
+	CameraName string `json:"camera_name,omitempty"` // optional camera name override
 }
 
 // Response struct for the API
@@ -113,31 +114,51 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 	log.Printf("Processing video for field_id: %d", fieldID)
 
-	// Find camera with matching field_id in config
+	// Determine target camera. Prefer camera_name when provided for precise mapping.
 	var targetCamera *config.CameraConfig
+
+	if request.CameraName != "" {
+		for i := range h.config.Cameras {
+			if h.config.Cameras[i].Name == request.CameraName && h.config.Cameras[i].Enabled {
+				targetCamera = &h.config.Cameras[i]
+				log.Printf("Camera selected by name: %s", request.CameraName)
+				break
+			}
+		}
+		if targetCamera == nil {
+			log.Printf("Warning: camera_name '%s' not found or disabled, falling back to field_id mapping", request.CameraName)
+		}
+	}
+
+	// If still not found, fall back to field_id based lookup
 	log.Printf("Looking for camera with field_id: %d, found %d cameras in config", fieldID, len(h.config.Cameras))
 
-	// Since we only have one enabled camera as per the logs, let's simply use it
-	// This is a temporary workaround
-	if len(h.config.Cameras) > 0 && h.config.Cameras[0].Enabled {
-		targetCamera = &h.config.Cameras[0]
-		log.Printf("Using the first enabled camera as a fallback: %s", targetCamera.Name)
-	} else {
-		// Original logic as fallback
+	// --- Step 1: try name (already attempted above) ---
+
+	// --- Step 2: if still nil, try field_id mapping ---
+	if targetCamera == nil {
 		for i, camera := range h.config.Cameras {
 			// Log camera details for debugging
 			log.Printf("Camera %d: Name=%s, Field=%s, Enabled=%v", i, camera.Name, camera.Field, camera.Enabled)
-
-			// Convert camera field to int for comparison
 			cameraField, err := strconv.Atoi(camera.Field)
 			if err != nil {
 				log.Printf("Error converting field value '%s' to int: %v", camera.Field, err)
 				continue
 			}
-
-			log.Printf("Comparing field_id %d with camera field %d", fieldID, cameraField)
 			if cameraField == fieldID && camera.Enabled {
 				targetCamera = &h.config.Cameras[i]
+				log.Printf("Camera selected by field_id mapping: %s", camera.Name)
+				break
+			}
+		}
+	}
+
+	// --- Step 3: final fallback to first enabled camera ---
+	if targetCamera == nil {
+		for i := range h.config.Cameras {
+			if h.config.Cameras[i].Enabled {
+				targetCamera = &h.config.Cameras[i]
+				log.Printf("Fallback: using first enabled camera: %s", targetCamera.Name)
 				break
 			}
 		}

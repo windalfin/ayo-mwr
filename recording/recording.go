@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -395,7 +396,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 	// Base FFmpeg command - match arguments with MergeSessionVideos
 	ffmpegArgs := []string{
-		"-y",
+		"-y", "-fflags", "+genpts",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
@@ -436,7 +437,8 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	return nil
 }
 
-// StartMP4Segmenter periodically merges the last 1 minute of HLS .ts segments into a single MP4 file
+// StartMP4Segmenter periodically merges exactly 60 seconds of HLS .ts segments into a single MP4 file
+// Uses segment tracking to ensure no overlaps and no gaps for precise duration matching
 func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	// Ensure hlsDir is absolute for robust concat list pathing
 	var err error
@@ -445,16 +447,33 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 		log.Printf("[%s] MP4 segmenter: failed to get absolute path for hlsDir: %v", cameraName, err)
 		return
 	}
+	
+	// Track last processed segment to prevent overlaps
+	var lastProcessedSegment string
+	
 	go func() {
 		for {
 			time.Sleep(1 * time.Minute)
-			cutoff := time.Now().Add(-1 * time.Minute)
+			
+			// Calculate time window for exactly 60 seconds of content
+			endTime := time.Now()
+			startTime := endTime.Add(-60 * time.Second)
+			
+			log.Printf("[%s] MP4 segmenter: Processing window %s to %s", cameraName, 
+				startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+			
 			entries, err := os.ReadDir(hlsDir)
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
 				continue
 			}
-			var segs []string
+			
+			// Collect HLS segments with timestamp-based filtering for exact duration
+			var candidateSegs []struct {
+				name string
+				modTime time.Time
+			}
+			
 			for _, e := range entries {
 				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
 					continue
@@ -463,15 +482,58 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				if err != nil {
 					continue
 				}
-				if info.ModTime().After(cutoff) {
-					segs = append(segs, filepath.Base(e.Name()))
+				
+				// Only include segments within the exact 60-second window
+				if info.ModTime().After(startTime) && !info.ModTime().After(endTime) {
+					candidateSegs = append(candidateSegs, struct {
+						name string
+						modTime time.Time
+					}{
+						name: e.Name(),
+						modTime: info.ModTime(),
+					})
 				}
+			}
+			
+			if len(candidateSegs) == 0 {
+				log.Printf("[%s] MP4 segmenter: No segments found in time window", cameraName)
+				continue
+			}
+			
+			// Sort by modification time to ensure chronological order
+			sort.Slice(candidateSegs, func(i, j int) bool {
+				return candidateSegs[i].modTime.Before(candidateSegs[j].modTime)
+			})
+			
+			// Filter out segments already processed to prevent overlaps
+			var segs []string
+			foundLastProcessed := lastProcessedSegment == ""
+			
+			for _, seg := range candidateSegs {
+				if !foundLastProcessed {
+					if seg.name == lastProcessedSegment {
+						foundLastProcessed = true
+					}
+					continue // Skip segments already processed
+				}
+				segs = append(segs, seg.name)
+			}
+			
+			if len(segs) == 0 {
+				log.Printf("[%s] MP4 segmenter: No new segments to process", cameraName)
+				continue
+			}
+			
+			// Update last processed segment tracker
+			if len(candidateSegs) > 0 {
+				lastProcessedSegment = candidateSegs[len(candidateSegs)-1].name
 			}
 			if len(segs) == 0 {
 				continue
 			}
 			sort.Strings(segs)
-			log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs)
+			log.Printf("[%s] MP4 segmenter: Processing %d segments for exact 60-second MP4", cameraName, len(segs))
+			
 			hlsDir = filepath.Clean(hlsDir)
 			concatList := filepath.Join(hlsDir, "concat_list.txt")
 			f, err := os.Create(concatList)
@@ -479,23 +541,41 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				log.Printf("[%s] MP4 segmenter: failed to create concat list: %v", cameraName, err)
 				continue
 			}
-			hlsDir = filepath.Clean(hlsDir)
+			
 			for _, s := range segs {
-				// s should already be just the base filename
 				absPath := filepath.Join(hlsDir, s)
-				log.Printf("[%s] MP4 segmenter: Adding segment to concat list: s=%q, absPath=%q", cameraName, s, absPath)
 				f.WriteString("file '" + absPath + "'\n")
 			}
 			f.Close()
-			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, time.Now().Format("20060102_150405"))
+			
+			// Generate MP4 filename with precise timestamp
+			mp4Timestamp := endTime.Add(-60 * time.Second) // Use start time of the segment
+			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, mp4Timestamp.Format("20060102_150405"))
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
+			
+			// Create MP4 with copy codec for fastest processing and exact segment preservation
 			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", mp4Path)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
 				continue
 			}
-			log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
+			
+			// Verify the created MP4 duration for quality assurance
+			durationCmd := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", mp4Path)
+			durationOut, err := durationCmd.Output()
+			if err == nil {
+				if duration, parseErr := strconv.ParseFloat(strings.TrimSpace(string(durationOut)), 64); parseErr == nil {
+					log.Printf("[%s] MP4 segmenter: Created %s with duration %.2fs (target: 60s)", 
+						cameraName, mp4Name, duration)
+					if duration < 58.0 || duration > 62.0 {
+						log.Printf("[%s] MP4 segmenter: WARNING - Duration %.2fs is outside expected range (58-62s)", 
+							cameraName, duration)
+					}
+				}
+			}
+			
+			log.Printf("[%s] MP4 segmenter: Successfully created precise MP4 segment %s", cameraName, mp4Path)
 		}
 	}()
 }

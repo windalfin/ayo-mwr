@@ -218,22 +218,26 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 	// Trim the trailing semicolon from the signal to get the button number
 	buttonNo := strings.TrimSuffix(strings.TrimSpace(signal), ";")
 
-	// Map button number to field ID using camera configuration
-	fieldID := buttonNo // Default to using button number as field ID
+    // Map button number to field ID and camera name using configuration
+    fieldID := buttonNo // Default fallback
+    cameraName := ""   // Empty means not provided
 
-	if a.config != nil && a.config.CameraByButtonNo != nil {
-		if camera, exists := a.config.CameraByButtonNo[buttonNo]; exists && camera.Field != "" {
-			fieldID = camera.Field
-			log.Printf("Mapped button %s to field ID %s", buttonNo, fieldID)
-		} else {
-			log.Printf("Warning: No mapping found for button %s, using button number as field ID", buttonNo)
-		}
-	} else {
-		log.Printf("Warning: Camera configuration not available, using button number as field ID")
-	}
+    if a.config != nil && a.config.CameraByButtonNo != nil {
+        if cam, ok := a.config.CameraByButtonNo[buttonNo]; ok {
+            if cam.Field != "" {
+                fieldID = cam.Field
+            }
+            cameraName = cam.Name
+            log.Printf("Mapped button %s -> fieldID=%s, cameraName=%s", buttonNo, fieldID, cameraName)
+        } else {
+            log.Printf("Warning: No camera mapping found for button %s", buttonNo)
+        }
+    } else {
+        log.Printf("Warning: Camera configuration not available, using defaults")
+    }
 
-	// Call the API using the utility function
-	err := CallProcessBookingVideoAPI(fieldID)
+    // Call the API using the utility function, supplying both field ID and camera name (if available)
+    err := CallProcessBookingVideoAPI(fieldID, cameraName)
 	if err != nil {
 		// The utility function already logs the specific error,
 		// so we can just return a general error or the specific one.

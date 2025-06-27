@@ -228,13 +228,15 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			endTime.Format("2006-01-02 15:04:05"), endTime.Location())
 
 		// Direct comparison without conversion
-		if now.After(endTime) {
-			log.Printf("processBookings : Booking %s end time (%s) is in the past, proceeding with processing. Current time: %s",
-				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
+		// Add a 3-minute tolerance to endTime for processing
+		tolerantEndTime := endTime.Add(3 * time.Minute)
+		if now.After(tolerantEndTime) {
+			log.Printf("processBookings : Booking %s end time (%s) with 3-min tolerance (%s) is in the past, proceeding with processing. Current time: %s",
+				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 		} else {
 			// Skip bookings that haven't ended yet
-			log.Printf("processBookings : Skipping booking %s: booking end time (%s) is in the future, because now is %s",
-				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
+			log.Printf("processBookings : Skipping booking %s: booking end time (%s) with 3-min tolerance (%s) is in the future, because now is %s",
+				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
 

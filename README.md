@@ -198,5 +198,3 @@ Set the `HW_ACCEL` environment variable to enable hardware acceleration.
 
 ## License
 This app belong to Ayo Indonesia
-
-ini test commit saja

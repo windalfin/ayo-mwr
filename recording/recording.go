@@ -470,7 +470,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				continue
 			}
 			sort.Strings(segs)
-			log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs)
+				// log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs) // Noise reduced
 			hlsDir = filepath.Clean(hlsDir)
 			concatList := filepath.Join(hlsDir, "concat_list.txt")
 			f, err := os.Create(concatList)
@@ -482,7 +482,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			for _, s := range segs {
 				// s should already be just the base filename
 				absPath := filepath.Join(hlsDir, s)
-				log.Printf("[%s] MP4 segmenter: Adding segment to concat list: s=%q, absPath=%q", cameraName, s, absPath)
+				// Detailed per-segment log removed to reduce noise
 				f.WriteString("file '" + absPath + "'\n")
 			}
 			f.Close()

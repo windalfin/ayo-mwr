@@ -34,10 +34,13 @@ type R2Config struct {
 const (
 	// 5MB is the minimum chunk size for multipart uploads in R2/S3
 	minPartSize = 5 * 1024 * 1024 // 5MB
-	// Files larger than this will use multipart upload
-	multipartThreshold = 100 * 1024 * 1024 // 100MB 
-	// Use this number of goroutines for concurrent chunk uploads
+	// Files larger than this will use multipart upload (legacy path – no longer used but kept for reference)
+	multipartThreshold = 100 * 1024 * 1024 // 100MB
+	// Use this number of goroutines for concurrent chunk uploads (legacy path)
 	maxUploadConcurrency = 10
+
+	// Number of attempts for UploadFile retry loop
+	maxUploadAttempts = 3
 )
 
 type R2Storage struct {
@@ -74,8 +77,14 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 	// Create S3 client
 	client := s3.New(sess)
 
-	// Create uploader
-	uploader := s3manager.NewUploader(sess)
+	// Create uploader with single-connection concurrency to respect limited bandwidth
+	// We set PartSize to 10 MB (must be ≥ 5 MB) and Concurrency to 1 so that multipart
+	// uploads are performed sequentially, ensuring only **one** HTTP connection is
+	// active at a time.
+	uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
+		u.PartSize = 10 * 1024 * 1024 // 10 MB
+		u.Concurrency = 1             // single connection / no parallel parts
+	})
 
 	return &R2Storage{
 		config:   config,
@@ -105,7 +114,7 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 	case ".mp4":
 		contentType = "video/mp4"
 	case ".ts":
-		contentType = "video/MP2T"
+		contentType = "video/mp2t"
 	case ".m3u8":
 		contentType = "application/vnd.apple.mpegurl"
 	case ".png":
@@ -121,29 +130,22 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 		"FileSize":         aws.String(fmt.Sprintf("%d", fileInfo.Size())),
 	}
 
-	// Use multipart upload for large files
-	if fileInfo.Size() > multipartThreshold {
-		log.Printf("Using multipart upload for large file (%.2f MB): %s", float64(fileInfo.Size())/1024/1024, localPath)
-		// Reset file pointer to the beginning
+	// --- Single-connection upload (standard or multipart handled by SDK) ---
+	log.Printf("Uploading file (%.2f MB) via single-connection uploader: %s", float64(fileInfo.Size())/1024/1024, localPath)
+
+	// Ensure we read from the beginning
+	if _, err := file.Seek(0, 0); err != nil {
+		return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxUploadAttempts; attempt++ {
+		// Ensure we start reading from the beginning each attempt
 		if _, err := file.Seek(0, 0); err != nil {
 			return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
 		}
-		
-		// Upload large file in chunks
-		_, err = r.uploadLargeFile(file, remotePath, contentType, metadata, fileInfo.Size())
-		if err != nil {
-			return "", fmt.Errorf("multipart upload failed: %v", err)
-		}
-	} else {
-		// Use standard upload for smaller files
-		log.Printf("Using standard upload for file (%.2f MB): %s", float64(fileInfo.Size())/1024/1024, localPath)
-		
-		// Reset file pointer to the beginning
-		if _, err := file.Seek(0, 0); err != nil {
-			return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
-		}
-		
-		_, uploadErr := r.uploader.Upload(&s3manager.UploadInput{
+
+		_, lastErr = r.uploader.Upload(&s3manager.UploadInput{
 			Bucket:      aws.String(r.config.Bucket),
 			Key:         aws.String(remotePath),
 			Body:        file,
@@ -151,9 +153,16 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 			Metadata:    metadata,
 		})
 
-		if uploadErr != nil {
-			return "", fmt.Errorf("failed to upload file to R2: %v", uploadErr)
+		if lastErr == nil {
+			break // success
 		}
+
+		log.Printf("Upload attempt %d/%d failed for %s: %v", attempt, maxUploadAttempts, localPath, lastErr)
+		// Exponential backoff: 2s, 4s, ...
+		time.Sleep(time.Duration(1<<uint(attempt)) * time.Second)
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("failed to upload file to R2 after %d attempts: %v", maxUploadAttempts, lastErr)
 	}
 
 	// Generate public URL

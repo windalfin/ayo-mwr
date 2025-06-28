@@ -15,6 +15,9 @@ import (
 	"ayo-mwr/config"
 )
 
+// per-camera locks to avoid race when writing concat list & mp4
+var segmenterLocks sync.Map
+
 // ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
 // Uses ffprobe to get duration, ffmpeg to extract frame. Returns error if any step fails.
 func ExtractThumbnail(videoPath, outPath string) error {
@@ -468,31 +471,49 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				continue
 			}
 			sort.Strings(segs)
-				// log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs) // Noise reduced
+			// log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs) // Noise reduced
 			hlsDir = filepath.Clean(hlsDir)
-			concatList := filepath.Join(hlsDir, "concat_list.txt")
-			f, err := os.Create(concatList)
+
+			// ---- Concurrency control ----
+			l, _ := segmenterLocks.LoadOrStore(cameraName, &sync.Mutex{})
+			mutex := l.(*sync.Mutex)
+			mutex.Lock()
+			// ensure unlock even on early continue
+			defer mutex.Unlock()
+
+			// ---- build concat list in a unique tmp file then process ----
+			tmpConcat, err := os.CreateTemp(hlsDir, "concat_*.txt")
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to create concat list: %v", cameraName, err)
 				continue
 			}
 			hlsDir = filepath.Clean(hlsDir)
 			for _, s := range segs {
-				// s should already be just the base filename
 				absPath := filepath.Join(hlsDir, s)
-				// Detailed per-segment log removed to reduce noise
-				f.WriteString("file '" + absPath + "'\n")
+				tmpConcat.WriteString("file '" + absPath + "'\n")
 			}
-			f.Close()
+			tmpConcat.Close()
+
 			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, time.Now().Format("20060102_150405"))
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
-			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", mp4Path)
+			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
+
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", mp4Tmp)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
+				os.Remove(tmpConcat.Name())
+				os.Remove(mp4Tmp)
 				continue
 			}
-			log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
+
+			// rename tmp MP4 atomically
+			if err := os.Rename(mp4Tmp, mp4Path); err != nil {
+				log.Printf("[%s] MP4 segmenter: failed to rename temp MP4: %v", cameraName, err)
+			} else {
+				log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
+			}
+			os.Remove(tmpConcat.Name())
 		}
 	}()
 }

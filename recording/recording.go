@@ -478,16 +478,15 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			l, _ := segmenterLocks.LoadOrStore(cameraName, &sync.Mutex{})
 			mutex := l.(*sync.Mutex)
 			mutex.Lock()
-			// ensure unlock even on early continue
-			defer mutex.Unlock()
 
 			// ---- build concat list in a unique tmp file then process ----
 			tmpConcat, err := os.CreateTemp(hlsDir, "concat_*.txt")
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to create concat list: %v", cameraName, err)
+				mutex.Unlock()
 				continue
 			}
-			hlsDir = filepath.Clean(hlsDir)
+
 			for _, s := range segs {
 				absPath := filepath.Join(hlsDir, s)
 				tmpConcat.WriteString("file '" + absPath + "'\n")
@@ -498,12 +497,13 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
 			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
 
-			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", mp4Tmp)
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-f", "mp4", mp4Tmp)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
 				os.Remove(tmpConcat.Name())
 				os.Remove(mp4Tmp)
+				mutex.Unlock()
 				continue
 			}
 
@@ -514,6 +514,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				log.Printf("[%s] MP4 segmenter: wrote MP4 %s", cameraName, mp4Path)
 			}
 			os.Remove(tmpConcat.Name())
+			mutex.Unlock()
 		}
 	}()
 }

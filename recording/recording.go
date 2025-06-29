@@ -447,8 +447,14 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	}
 	go func() {
 		for {
-			time.Sleep(1 * time.Minute)
-			cutoff := time.Now().Add(-1 * time.Minute)
+            // sleep until the next wall-clock minute boundary plus 2-second buffer
+            now := time.Now()
+            next := now.Truncate(time.Minute).Add(time.Minute)
+            time.Sleep(time.Until(next) + 2*time.Second)
+
+            // we build MP4 for the previous minute window [startWindow, endWindow)
+            startWindow := next.Add(-1 * time.Minute)
+            endWindow := next
 			entries, err := os.ReadDir(hlsDir)
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
@@ -463,7 +469,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				if err != nil {
 					continue
 				}
-				if info.ModTime().After(cutoff) {
+				if !info.ModTime().Before(startWindow) && info.ModTime().Before(endWindow) {
 					segs = append(segs, filepath.Base(e.Name()))
 				}
 			}

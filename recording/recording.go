@@ -450,7 +450,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
             // sleep until the next wall-clock minute boundary plus 2-second buffer
             now := time.Now()
             next := now.Truncate(time.Minute).Add(time.Minute)
-            time.Sleep(time.Until(next) + 2*time.Second)
+            time.Sleep(time.Until(next) + 6*time.Second)
 
             // we build MP4 for the previous minute window [startWindow, endWindow)
             startWindow := next.Add(-1 * time.Minute)
@@ -503,7 +503,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
 			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
 
-			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-f", "mp4", mp4Tmp)
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-t", "60", "-f", "mp4", mp4Tmp)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))

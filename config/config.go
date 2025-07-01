@@ -56,7 +56,7 @@ type Config struct {
 	AutoDelete      int
 
 	// Storage Configuration
-	StoragePath   string
+	StoragePath   string // Primary storage path (multi-disk managed automatically)
 	HardwareAccel string
 	Codec         string
 
@@ -180,18 +180,18 @@ func LoadConfig() Config {
 					dbCams := make([]database.CameraConfig, len(envCams))
 					for i, c := range envCams {
 						dbCams[i] = database.CameraConfig{
-							ButtonNo: c.ButtonNo,
-							Name:     c.Name,
-							IP:       c.IP,
-							Port:     c.Port,
-							Path:     c.Path,
-							Username: c.Username,
-							Password: c.Password,
-							Enabled:  c.Enabled,
-							Width:    c.Width,
-							Height:   c.Height,
-							FrameRate: c.FrameRate,
-							Field:     c.Field,
+							ButtonNo:   c.ButtonNo,
+							Name:       c.Name,
+							IP:         c.IP,
+							Port:       c.Port,
+							Path:       c.Path,
+							Username:   c.Username,
+							Password:   c.Password,
+							Enabled:    c.Enabled,
+							Width:      c.Width,
+							Height:     c.Height,
+							FrameRate:  c.FrameRate,
+							Field:      c.Field,
 							Resolution: c.Resolution,
 							AutoDelete: c.AutoDelete,
 						}
@@ -210,8 +210,8 @@ func LoadConfig() Config {
 		cfg.Cameras = make([]CameraConfig, len(cameras))
 		for i, c := range cameras {
 			cfg.Cameras[i] = CameraConfig{
-                ButtonNo: c.ButtonNo,
-                Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
+				ButtonNo: c.ButtonNo,
+				Name:     c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
 				Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
 			}
 		}
@@ -222,8 +222,8 @@ func LoadConfig() Config {
 	}
 	// --- END CAMERA CONFIG LOAD ---
 
-    // Build lookup map now that cameras are loaded
-    cfg.BuildCameraLookup()
+	// Build lookup map now that cameras are loaded
+	cfg.BuildCameraLookup()
 
 	// If no cameras configured, use legacy camera settings
 	if len(cfg.Cameras) == 0 {
@@ -243,8 +243,8 @@ func LoadConfig() Config {
 			AutoDelete: cfg.AutoDelete,
 		})
 
-        // Rebuild lookup map to include legacy camera
-        cfg.BuildCameraLookup()
+		// Rebuild lookup map to include legacy camera
+		cfg.BuildCameraLookup()
 	}
 
 	// Log configuration
@@ -254,7 +254,7 @@ func LoadConfig() Config {
 			i+1, camera.Name, camera.IP, camera.Port, camera.Path, camera.Enabled)
 	}
 
-	log.Printf("Storage Path: %s", cfg.StoragePath)
+	log.Printf("Storage Path: %s (multi-disk managed automatically)", cfg.StoragePath)
 	log.Printf("Server running on port %s with base URL %s", cfg.ServerPort, cfg.BaseURL)
 	log.Printf("R2 Storage Enabled: %v", cfg.R2Enabled)
 	log.Printf("Arduino COM Port: %s", cfg.ArduinoCOMPort)
@@ -337,22 +337,22 @@ func getEnv(key, fallback string) string {
 // BuildCameraLookup constructs the CameraByButtonNo map for quick lookup.
 // Call this whenever cfg.Cameras may have changed.
 func (cfg *Config) BuildCameraLookup() {
-    if cfg == nil {
-        return
-    }
-    if cfg.CameraByButtonNo == nil {
-        cfg.CameraByButtonNo = make(map[string]*CameraConfig)
-    }
-    // clear existing
-    for k := range cfg.CameraByButtonNo {
-        delete(cfg.CameraByButtonNo, k)
-    }
-    for i := range cfg.Cameras {
-        cam := &cfg.Cameras[i]
-        if cam.ButtonNo != "" {
-            cfg.CameraByButtonNo[cam.ButtonNo] = cam
-        }
-    }
+	if cfg == nil {
+		return
+	}
+	if cfg.CameraByButtonNo == nil {
+		cfg.CameraByButtonNo = make(map[string]*CameraConfig)
+	}
+	// clear existing
+	for k := range cfg.CameraByButtonNo {
+		delete(cfg.CameraByButtonNo, k)
+	}
+	for i := range cfg.Cameras {
+		cam := &cfg.Cameras[i]
+		if cam.ButtonNo != "" {
+			cfg.CameraByButtonNo[cam.ButtonNo] = cam
+		}
+	}
 }
 
 // EnsurePaths creates necessary paths

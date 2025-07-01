@@ -99,7 +99,7 @@ func main() {
 
 	// Initialize disk management system
 	diskManager := storage.NewDiskManager(db)
-	
+
 	// Setup initial disk - register current storage path as first disk
 	err = setupInitialDisk(diskManager, &cfg)
 	if err != nil {
@@ -145,26 +145,26 @@ func main() {
 		}()
 	}
 	// ---- Arduino configuration load ----
-    // Try to load port/baud from database; fall back to env and persist if missing
-    port, baud, err := db.GetArduinoConfig()
-    if err == nil {
-        cfg.ArduinoCOMPort = port
-        cfg.ArduinoBaudRate = baud
-        log.Printf("[Arduino] Loaded config from DB: port=%s baud=%d", port, baud)
-    } else {
-        // Likely sql.ErrNoRows
-        log.Printf("[Arduino] No config in DB, using env values and persisting: port=%s baud=%d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
-        if upErr := db.UpsertArduinoConfig(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate); upErr != nil {
-            log.Printf("[Arduino] Failed to persist initial config: %v", upErr)
-        }
-    }
+	// Try to load port/baud from database; fall back to env and persist if missing
+	port, baud, err := db.GetArduinoConfig()
+	if err == nil {
+		cfg.ArduinoCOMPort = port
+		cfg.ArduinoBaudRate = baud
+		log.Printf("[Arduino] Loaded config from DB: port=%s baud=%d", port, baud)
+	} else {
+		// Likely sql.ErrNoRows
+		log.Printf("[Arduino] No config in DB, using env values and persisting: port=%s baud=%d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+		if upErr := db.UpsertArduinoConfig(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate); upErr != nil {
+			log.Printf("[Arduino] Failed to persist initial config: %v", upErr)
+		}
+	}
 
-    // Initialize Arduino using the (possibly updated) cfg
-    if _, err := signaling.InitArduino(&cfg); err != nil {
-        log.Printf("Warning: Arduino initialization failed: %v", err)
-    }
+	// Initialize Arduino using the (possibly updated) cfg
+	if _, err := signaling.InitArduino(&cfg); err != nil {
+		log.Printf("Warning: Arduino initialization failed: %v", err)
+	}
 
-    // Initialize AyoIndo API client for video cleanup
+	// Initialize AyoIndo API client for video cleanup
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
@@ -229,25 +229,25 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 
 	if len(disks) > 0 {
 		log.Printf("Found %d existing storage disks, skipping initial setup", len(disks))
-		
+
 		// Run a manual scan to update disk space
 		err = diskManager.ScanAndUpdateDiskSpace()
 		if err != nil {
 			log.Printf("Warning: Failed to scan existing disks: %v", err)
 		}
-		
+
 		// Ensure we have an active disk
 		err = diskManager.SelectActiveDisk()
 		if err != nil {
 			log.Printf("Warning: Failed to select active disk: %v", err)
 		}
-		
+
 		return nil
 	}
 
 	// No disks exist, register the current storage path as the first disk
 	log.Printf("No storage disks found, registering current storage path as first disk: %s", cfg.StoragePath)
-	
+
 	err = diskManager.RegisterDisk(cfg.StoragePath, 1)
 	if err != nil {
 		return fmt.Errorf("failed to register initial disk: %v", err)

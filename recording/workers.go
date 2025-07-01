@@ -6,6 +6,8 @@ import (
     "sync"
 
     "ayo-mwr/config"
+    "ayo-mwr/database"
+    "ayo-mwr/storage"
 )
 
 // registry tracks running camera workers.
@@ -16,6 +18,35 @@ var (
 
 // StartCamera launches capture goroutine for cam if not running. Returns true if started.
 func StartCamera(cfg *config.Config, cam config.CameraConfig, idx int) bool {
+    // Use basic capture for backward compatibility
+    return startCameraBasic(cfg, cam, idx)
+}
+
+// StartCameraEnhanced launches enhanced capture with database tracking
+func StartCameraEnhanced(cfg *config.Config, cam config.CameraConfig, idx int, db database.Database, diskManager *storage.DiskManager) bool {
+    mu.Lock()
+    if _, ok := workers[cam.Name]; ok {
+        mu.Unlock()
+        return false
+    }
+    ctx, cancel := context.WithCancel(context.Background())
+    workers[cam.Name] = cancel
+    mu.Unlock()
+
+    go func() {
+        defer func() {
+            mu.Lock()
+            delete(workers, cam.Name)
+            mu.Unlock()
+        }()
+        captureRTSPStreamForCameraEnhanced(ctx, cfg, cam, idx, db, diskManager)
+    }()
+    log.Printf("[workers] started enhanced camera %s", cam.Name)
+    return true
+}
+
+// startCameraBasic launches basic capture (original implementation)
+func startCameraBasic(cfg *config.Config, cam config.CameraConfig, idx int) bool {
     mu.Lock()
     if _, ok := workers[cam.Name]; ok {
         mu.Unlock()
@@ -69,5 +100,15 @@ func StartAllCameras(cfg *config.Config) {
             continue
         }
         StartCamera(cfg, cam, i)
+    }
+}
+
+// StartAllCamerasEnhanced kicks off enhanced workers with database tracking
+func StartAllCamerasEnhanced(cfg *config.Config, db database.Database, diskManager *storage.DiskManager) {
+    for i, cam := range cfg.Cameras {
+        if !cam.Enabled {
+            continue
+        }
+        StartCameraEnhanced(cfg, cam, i, db, diskManager)
     }
 }

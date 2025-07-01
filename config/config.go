@@ -56,7 +56,7 @@ type Config struct {
 	AutoDelete      int
 
 	// Storage Configuration
-	StoragePath   string // Primary storage path (multi-disk managed automatically)
+	StoragePath   string
 	HardwareAccel string
 	Codec         string
 

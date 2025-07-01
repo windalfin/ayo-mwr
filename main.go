@@ -199,8 +199,13 @@ func main() {
 	// Initialize upload service
 	uploadService := service.NewUploadService(db, r2Storage, &cfg)
 
-	// Initialize and start API server
-	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
+	// Initialize resilience manager
+	resilienceManager := recording.NewResilienceManager(&cfg, db, diskManager)
+	resilienceManager.Start()
+	defer resilienceManager.Stop()
+
+	// Initialize and start API server with resilience manager
+	apiServer := api.NewServerWithResilience(&cfg, db, r2Storage, uploadService, resilienceManager, embeddedDashboardFS)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler via signaling package
@@ -209,11 +214,16 @@ func main() {
 	}
 
 	fmt.Println("[MAIN] Arduino setup complete, starting RTSP stream recording")
-	log.Println("Starting 24/7 RTSP stream recording")
+	log.Println("Starting 24/7 RTSP stream recording with resilience")
 
-	// Start capturing from all cameras
-	fmt.Println("[MAIN] Starting camera workers")
-	recording.StartAllCameras(&cfg)
+	// Start capturing from all cameras with resilience
+	fmt.Println("[MAIN] Starting camera workers with resilience")
+	for i, camera := range cfg.Cameras {
+		if camera.Enabled {
+			resilienceManager.StartCameraWithResilience(camera, i)
+		}
+	}
+	
 	// Keep main alive
 	select {}
 

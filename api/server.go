@@ -21,6 +21,7 @@ type Server struct {
 	r2Storage           *storage.R2Storage
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
+	resilienceManager   interface{} // Interface to avoid circular import
 	dashboardFS         embed.FS
 }
 
@@ -34,6 +35,21 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		r2Storage:           r2Storage,
 		uploadService:       uploadService,
 		videoRequestHandler: videoRequestHandler,
+		dashboardFS:         dashboardFS,
+	}
+}
+
+func NewServerWithResilience(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, resilienceManager interface{}, dashboardFS embed.FS) *Server {
+	// Initialize video request handler
+	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
+
+	return &Server{
+		config:              cfg,
+		db:                  db,
+		r2Storage:           r2Storage,
+		uploadService:       uploadService,
+		videoRequestHandler: videoRequestHandler,
+		resilienceManager:   resilienceManager,
 		dashboardFS:         dashboardFS,
 	}
 }
@@ -92,6 +108,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/cameras", s.listCameras)
 		api.GET("/videos", s.listVideos)
 		api.GET("/system_health", s.getSystemHealth)
+		api.GET("/resilience", s.getResilienceStatus)
 		api.GET("/logs", s.getLogs)
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 		

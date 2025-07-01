@@ -254,6 +254,39 @@ func (s *Server) getSystemHealth(c *gin.Context) {
 	})
 }
 
+// GET /api/resilience
+func (s *Server) getResilienceStatus(c *gin.Context) {
+	if s.resilienceManager == nil {
+		c.JSON(500, gin.H{"error": "Resilience manager not available"})
+		return
+	}
+	
+	// Use type assertion to get the worker status
+	// We need to use reflection or interfaces to avoid circular imports
+	type WorkerStatus struct {
+		CameraName      string        `json:"camera_name"`
+		IsHealthy       bool          `json:"is_healthy"`
+		RestartCount    int           `json:"restart_count"`
+		LastRestart     time.Time     `json:"last_restart"`
+		LastHealthCheck time.Time     `json:"last_health_check"`
+		BackoffDelay    time.Duration `json:"backoff_delay"`
+	}
+	
+	type ResilienceManagerInterface interface {
+		GetWorkerStatus() map[string]WorkerStatus
+	}
+	
+	if rm, ok := s.resilienceManager.(ResilienceManagerInterface); ok {
+		status := rm.GetWorkerStatus()
+		c.JSON(200, gin.H{
+			"workers": status,
+			"timestamp": time.Now(),
+		})
+	} else {
+		c.JSON(500, gin.H{"error": "Unable to get resilience status"})
+	}
+}
+
 // GET /api/logs
 func (s *Server) getLogs(c *gin.Context) {
 	logPath := "server.log"

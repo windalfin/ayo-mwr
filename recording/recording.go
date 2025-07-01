@@ -165,6 +165,9 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 			continue
 		}
 
+		// Detect stream info first to choose appropriate filters
+		streamInfo := detectStreamInfo(rtspURL, cameraName)
+		
 		ffmpegArgs := []string{
 			"-rtsp_transport", "tcp",
 			"-timeout", "5000000",
@@ -174,11 +177,35 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 			"-re",
 			"-i", rtspURL,
 			"-c:v", "copy",
-			"-bsf:v", "h264_mp4toannexb",
-			"-flags", "+global_header",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-ar", "44100",
+		}
+		
+		// Add appropriate bitstream filter based on video codec
+		if streamInfo.VideoCodec == "h264" {
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
+			log.Printf("[%s] 🔧 Using H.264 bitstream filter", cameraName)
+		} else if streamInfo.VideoCodec == "hevc" {
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
+			log.Printf("[%s] 🔧 Using HEVC bitstream filter", cameraName)
+		} else {
+			log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
+		}
+		
+		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header")
+		
+		// Add audio settings only if audio stream is detected
+		if streamInfo.HasAudio {
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+			)
+			log.Printf("[%s] 🔊 Including audio stream in HLS", cameraName)
+		} else {
+			ffmpegArgs = append(ffmpegArgs, "-an") // Disable audio
+			log.Printf("[%s] 🔇 Disabling audio (no audio stream detected)", cameraName)
+		}
+		
+		ffmpegArgs = append(ffmpegArgs,
 			"-max_muxing_queue_size", "1024",
 			"-f", "hls",
 			"-hls_time", "2",
@@ -186,7 +213,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 			"-strftime", "1",
 			"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
 			hlsPlaylistPath,
-		}
+		)
 
 		log.Printf("[%s] Starting continuous HLS FFmpeg recording", cameraName)
 
@@ -204,6 +231,66 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		log.Printf("[%s] FFmpeg process exited normally, restarting in 2 seconds...", cameraName)
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// StreamInfo holds information about detected streams
+type StreamInfo struct {
+	VideoCodec string
+	HasAudio   bool
+}
+
+// detectStreamInfo detects the video codec and audio presence of an RTSP stream
+func detectStreamInfo(rtspURL, cameraName string) StreamInfo {
+	log.Printf("[%s] 🔍 Detecting stream info...", cameraName)
+	
+	// Use ffprobe to detect stream information
+	cmd := exec.Command("ffprobe", 
+		"-v", "quiet", 
+		"-show_entries", "stream=codec_type,codec_name", 
+		"-of", "csv=p=0", 
+		"-rtsp_transport", "tcp",
+		"-timeout", "10000000", // 10 second timeout
+		rtspURL,
+	)
+	
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[%s] ⚠️ WARNING: Failed to detect stream info: %v", cameraName, err)
+		return StreamInfo{VideoCodec: "unknown", HasAudio: false}
+	}
+	
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	info := StreamInfo{VideoCodec: "unknown", HasAudio: false}
+	
+	for _, line := range lines {
+		parts := strings.Split(line, ",")
+		if len(parts) >= 2 {
+			streamType := parts[0]
+			codecName := parts[1]
+			
+			if streamType == "video" {
+				switch codecName {
+				case "h264":
+					info.VideoCodec = "h264"
+				case "hevc", "h265":
+					info.VideoCodec = "hevc"
+				default:
+					log.Printf("[%s] ⚠️ WARNING: Unknown video codec '%s'", cameraName, codecName)
+					info.VideoCodec = "unknown"
+				}
+				log.Printf("[%s] 📹 VIDEO: Detected codec: %s", cameraName, codecName)
+			} else if streamType == "audio" {
+				info.HasAudio = true
+				log.Printf("[%s] 🔊 AUDIO: Detected audio stream: %s", cameraName, codecName)
+			}
+		}
+	}
+	
+	if !info.HasAudio {
+		log.Printf("[%s] 🔇 AUDIO: No audio stream detected", cameraName)
+	}
+	
+	return info
 }
 
 // CaptureRTSPSegments is the legacy single-camera capture function

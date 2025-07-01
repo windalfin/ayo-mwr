@@ -14,6 +14,7 @@ import (
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/offline"
 	"ayo-mwr/recording"
 	"ayo-mwr/service"
 	"ayo-mwr/storage"
@@ -44,12 +45,62 @@ func getBookingJSON(booking map[string]interface{}) string {
 	return string(jsonBytes)
 }
 
+// isRetryableError menentukan apakah error layak untuk di-retry
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// RETRY SEMUA ERROR - karena mayoritas error bisa temporary
+	// Hanya skip retry untuk error yang benar-benar nil
+	log.Printf("🔄 RETRY: Will retry error: %v", err)
+	return true
+}
+
+// cleanRetryWithBackoff melakukan retry dengan logging yang bersih dan emoji
+func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName string) error {
+	var lastErr error
+	var retryCount int
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := operation()
+		if err == nil {
+			// Hanya log jika ada retry sebelumnya
+			if retryCount > 0 {
+				log.Printf("🔄 RETRY: %s ✅ Berhasil setelah %d kali retry", operationName, retryCount)
+			}
+			return nil
+		}
+		
+		lastErr = err
+		
+		// Log retry attempt - semua error akan di-retry
+		isRetryableError(err) // Ini akan log error yang akan di-retry
+		
+		// Increment retry count untuk semua attempts setelah yang pertama
+		if attempt > 1 {
+			retryCount++
+		}
+		
+		// Jika masih ada percobaan lagi, tunggu tanpa log noise
+		if attempt < maxRetries {
+			waitTime := time.Duration(3*attempt) * time.Second
+			time.Sleep(waitTime)
+		}
+	}
+	
+	// Log final failure dengan summary
+	log.Printf("🔄 RETRY: %s ❌ Gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
+	return fmt.Errorf("%s gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
+}
+
 // BookingVideoRequestHandler handles booking video processing requests
 type BookingVideoRequestHandler struct {
 	config        *config.Config
 	db            database.Database
 	r2Storage     *storage.R2Storage
 	uploadService *service.UploadService
+	queueManager  *offline.QueueManager
 
 	// Rate limiting untuk mencegah klik berkali-kali dalam jangka waktu tertentu
 	lastRequestMutex sync.RWMutex
@@ -59,11 +110,28 @@ type BookingVideoRequestHandler struct {
 
 // NewBookingVideoRequestHandler creates a new booking video request handler instance
 func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
+	log.Printf("📦 OFFLINE QUEUE: Initializing offline queue system...")
+	
+	// Initialize AYO client for queue manager
+	ayoClient, err := NewAyoIndoClient()
+	if err != nil {
+		log.Printf("❌ ERROR: Failed to initialize AYO client for queue manager: %v", err)
+		// Use a dummy client or handle this error appropriately
+	}
+	
+	// Initialize queue manager
+	queueManager := offline.NewQueueManager(db, uploadService, r2Storage, ayoClient, cfg)
+	queueManager.Start()
+	
+	log.Printf("📦 OFFLINE QUEUE: ✅ Offline queue system started successfully")
+	log.Printf("🌐 CONNECTIVITY: System will automatically handle online/offline transitions")
+
 	return &BookingVideoRequestHandler{
 		config:          cfg,
 		db:              db,
 		r2Storage:       r2Storage,
 		uploadService:   uploadService,
+		queueManager:    queueManager,
 		lastRequestTime: make(map[int]time.Time),
 		rateLimit:       30 * time.Second, // Rate limit 30 detik
 	}
@@ -121,12 +189,12 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		for i := range h.config.Cameras {
 			if h.config.Cameras[i].Name == request.CameraName && h.config.Cameras[i].Enabled {
 				targetCamera = &h.config.Cameras[i]
-				log.Printf("Camera selected by name: %s", request.CameraName)
+				log.Printf("📹 CAMERA: Selected by name: %s", request.CameraName)
 				break
 			}
 		}
 		if targetCamera == nil {
-			log.Printf("Warning: camera_name '%s' not found or disabled, falling back to field_id mapping", request.CameraName)
+			log.Printf("⚠️ WARNING: camera_name '%s' not found, falling back to field_id mapping", request.CameraName)
 		}
 	}
 
@@ -147,7 +215,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			}
 			if cameraField == fieldID && camera.Enabled {
 				targetCamera = &h.config.Cameras[i]
-				log.Printf("Camera selected by field_id mapping: %s", camera.Name)
+				log.Printf("📹 CAMERA: Selected by field_id mapping: %s", camera.Name)
 				break
 			}
 		}
@@ -158,7 +226,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		for i := range h.config.Cameras {
 			if h.config.Cameras[i].Enabled {
 				targetCamera = &h.config.Cameras[i]
-				log.Printf("Fallback: using first enabled camera: %s", targetCamera.Name)
+				log.Printf("📹 CAMERA: Fallback to first enabled: %s", targetCamera.Name)
 				break
 			}
 		}
@@ -260,14 +328,11 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		statusVal, _ := booking["status"].(string)
 		status := strings.ToLower(statusVal) // convert to lowercase
 
-		// Parse date and times
-		log.Printf("Date: %v", date)
-
 		if status == "cancelled" {
-			log.Printf("Booking %s is cancelled, skipping processing", bookingID)
+			log.Printf("⏭️ SKIP: Booking %s is cancelled", bookingID)
 			continue
 		} else if status != "success" {
-			log.Printf("Booking %s is not success, skipping processing", bookingID)
+			log.Printf("⏭️ SKIP: Booking %s status is not success", bookingID)
 			continue
 		}
 
@@ -310,7 +375,8 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		log.Printf("Debug Start Time: %v", startTime)
 		// Compare field_id and check if current time is within booking time range
 		if int(bookingFieldIDFloat) == fieldID && endTime.After(bookingStartTime) && startTime.Before(bookingEndTime) {
-			log.Printf("Found matching booking for field_id: %d at current time", fieldID)
+			log.Printf("🎯 BOOKING: Found matching booking %s (field: %d, time: %s-%s)", 
+				bookingID, fieldID, startTimeStr, endTimeStr)
 			matchingBooking = booking
 			orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 			break
@@ -350,71 +416,182 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Found %d video segments for camera %s in the time range", len(segments), targetCamera.Name)
+	log.Printf("🎬 SEGMENTS: Found %d video segments for camera %s", len(segments), targetCamera.Name)
 
 	// Generate a unique ID for this processing job
 	taskID := fmt.Sprintf("task_%s_%d", bookingID, time.Now().Unix())
 
 	// Start processing in background goroutine
 	go func() {
-		log.Printf("Starting background processing for task: %s, field_id: %d, booking_id: %s", taskID, fieldID, bookingID)
+		log.Printf("🚀 TASK: Starting background processing for %s (field: %d, booking: %s)", taskID, fieldID, bookingID)
 		time.Sleep(30 * time.Second)
 		videoType := "clip"
 
-		// Process video segments using service
-		uniqueID, err := bookingVideoService.ProcessVideoSegments(
-			*targetCamera,
-			bookingID,
-			orderDetailID,
-			segments,
-			startTime,
-			endTime,
-			getBookingJSON(matchingBooking),
-			videoType,
-		)
+		// Step 1: Process video segments dengan retry (max 3 kali)
+		var uniqueID string
+		err := cleanRetryWithBackoff(func() error {
+			var err error
+			uniqueID, err = bookingVideoService.ProcessVideoSegments(
+				*targetCamera,
+				bookingID,
+				orderDetailID,
+				segments,
+				startTime,
+				endTime,
+				getBookingJSON(matchingBooking),
+				videoType,
+			)
+			return err
+		}, 3, "Video Processing")
 
 		if err != nil {
-			log.Printf("Error processing video segments for task %s: %v", taskID, err)
+			log.Printf("❌ ERROR: Video processing failed for task %s after retries: %v", taskID, err)
 			return
 		}
 
-		// Get path to watermarked video
+		log.Printf("🎬 SUCCESS: Video processing completed for task %s (ID: %s)", taskID, uniqueID)
+
+		// Get paths to processed files
 		watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
+		previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
+		thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
-		// Upload processed video
-		previewURL, thumbnailURL, err := bookingVideoService.UploadProcessedVideo(
-			uniqueID,
-			watermarkedVideoPath,
-			bookingID,
-			targetCamera.Name,
-		)
+		// Step 2: Try direct upload with internet connectivity check
+		connectivityChecker := offline.NewConnectivityChecker()
+		
+		if connectivityChecker.IsOnline() {
+			log.Printf("🌐 CONNECTIVITY: Online - mencoba upload langsung...")
+			
+			// Try direct upload with retry
+			var previewURL, thumbnailURL string
+			err = cleanRetryWithBackoff(func() error {
+				var err error
+				previewURL, thumbnailURL, err = bookingVideoService.UploadProcessedVideo(
+					uniqueID,
+					watermarkedVideoPath,
+					bookingID,
+					targetCamera.Name,
+				)
+				return err
+			}, 5, "File Upload")
 
-		if err != nil {
-			log.Printf("Error uploading processed video for task %s: %v", taskID, err)
-			// Update status to failed
-			h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed: %v", err))
-			return
+			if err != nil {
+				log.Printf("⚠️ WARNING: Direct upload failed for task %s: %v", taskID, err)
+				log.Printf("📦 QUEUE: Menambahkan task upload ke offline queue...")
+				
+				// Add to offline queue
+				err = h.queueManager.EnqueueR2Upload(
+					uniqueID,
+					watermarkedVideoPath,
+					previewPath,
+					thumbnailPath,
+					fmt.Sprintf("mp4/%s.mp4", uniqueID),
+					fmt.Sprintf("preview/%s.mp4", uniqueID),
+					fmt.Sprintf("thumbnail/%s.png", uniqueID),
+				)
+				
+				if err != nil {
+					log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
+					h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed and queue error: %v", err))
+					return
+				}
+				
+				// Update status to uploading (will be processed by queue)
+				h.db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
+				log.Printf("📦 QUEUE: Upload task queued for video %s", uniqueID)
+				return
+			}
+
+			log.Printf("📤 SUCCESS: Direct upload completed for task %s", taskID)
+
+			// Step 3: Try direct API notification
+			// Get video to calculate duration
+			video, err := h.db.GetVideo(uniqueID)
+			var duration float64 = 60.0 // Default 60 seconds
+			if err == nil && video != nil {
+				duration = video.Duration
+			}
+			
+			err = cleanRetryWithBackoff(func() error {
+				return h.uploadService.NotifyAyoAPI(
+					uniqueID,
+					"", // mp4URL will be filled by queue manager
+					previewURL,
+					thumbnailURL,
+					duration,
+				)
+			}, 3, "API Notification")
+
+			if err != nil {
+				log.Printf("⚠️ WARNING: Direct API notification failed for task %s: %v", taskID, err)
+				log.Printf("📦 QUEUE: Menambahkan task notifikasi API ke offline queue...")
+				
+				// Add API notification to queue
+				err = h.queueManager.EnqueueAyoAPINotify(
+					uniqueID,
+					uniqueID,
+					"", // MP4 URL will be updated when available
+					previewURL,
+					thumbnailURL,
+					duration,
+				)
+				
+				if err != nil {
+					log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
+				} else {
+					log.Printf("📦 QUEUE: API notification task queued for video %s", uniqueID)
+				}
+			} else {
+				log.Printf("🔔 SUCCESS: Direct API notification sent for task %s", taskID)
+			}
+		} else {
+			log.Printf("🌐 CONNECTIVITY: Offline - menambahkan semua task ke queue...")
+			
+			// Add both upload and API notification to queue since we're offline
+			err = h.queueManager.EnqueueR2Upload(
+				uniqueID,
+				watermarkedVideoPath,
+				previewPath,
+				thumbnailPath,
+				fmt.Sprintf("mp4/%s.mp4", uniqueID),
+				fmt.Sprintf("preview/%s.mp4", uniqueID),
+				fmt.Sprintf("thumbnail/%s.png", uniqueID),
+			)
+			
+			if err != nil {
+				log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
+				h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Offline queue error: %v", err))
+				return
+			}
+			
+			// Get video duration
+			video, err := h.db.GetVideo(uniqueID)
+			var duration float64 = 60.0 // Default 60 seconds
+			if err == nil && video != nil {
+				duration = video.Duration
+			}
+			
+			err = h.queueManager.EnqueueAyoAPINotify(
+				uniqueID,
+				uniqueID,
+				"", // MP4 URL will be updated when upload completes
+				"", // Preview URL will be updated when upload completes
+				"", // Thumbnail URL will be updated when upload completes
+				duration,
+			)
+			
+			if err != nil {
+				log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
+			} else {
+				log.Printf("📦 QUEUE: API notification task queued untuk video %s", uniqueID)
+			}
+			
+			// Update status to uploading (will be processed by queue when online)
+			h.db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
+			log.Printf("📦 QUEUE: Tasks queued untuk video %s - akan diproses saat online", uniqueID)
 		}
-		var startTimeBooking = startTime.Add(localOffsetHours * -1)
-		var endTimeBooking = endTime.Add(localOffsetHours * -1)
-		// Notify AYO API of successful upload
-		err = bookingVideoService.NotifyAyoAPI(
-			bookingID,
-			uniqueID,
-			previewURL,
-			thumbnailURL,
-			startTimeBooking,
-			endTimeBooking,
-			videoType,
-		)
 
-		if err != nil {
-			log.Printf("Error notifying AYO API of successful upload for task %s: %v", taskID, err)
-			h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Notify AYO API failed: %v", err))
-			// Continue anyway since the video was processed and uploaded successfully
-		}
-
-		log.Printf("Completed background processing for task: %s, unique_id: %s", taskID, uniqueID)
+		log.Printf("🎉 COMPLETED: Background processing finished for task %s (video: %s)", taskID, uniqueID)
 	}()
 
 	// Return immediate success response
@@ -430,4 +607,29 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			"status":     "processing",
 		},
 	})
+}
+
+// GetQueueStatus returns the current status of the offline queue
+func (h *BookingVideoRequestHandler) GetQueueStatus(c *gin.Context) {
+	queueStats, err := h.queueManager.GetQueueStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ApiResponse{
+			Success: false,
+			Message: "Failed to get queue statistics: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ApiResponse{
+		Success: true,
+		Message: "Queue status retrieved successfully (async processing)",
+		Data:    queueStats,
+	})
+}
+
+func getConnectivityStatusString(isOnline bool) string {
+	if isOnline {
+		return "ONLINE ✅"
+	}
+	return "OFFLINE ❌"
 }

@@ -284,6 +284,21 @@ func initTables(db *sql.DB) error {
 		log.Printf("Success: Added deprecated_hls column to videos table")
 	}
 
+	// Add start_time and end_time columns for clip time tracking
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN start_time DATETIME")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for start_time: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added start_time column to videos table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN end_time DATETIME")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for end_time: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added end_time column to videos table")
+	}
+
 	// Create indexes
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_videos_status ON videos (status)
@@ -313,6 +328,40 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Create pending_tasks table for offline queue
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_tasks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_type TEXT NOT NULL,
+			task_data TEXT NOT NULL,
+			attempts INTEGER DEFAULT 0,
+			max_attempts INTEGER DEFAULT 5,
+			next_retry_at DATETIME,
+			status TEXT DEFAULT 'pending',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			error_msg TEXT
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for pending_tasks
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_pending_tasks_status ON pending_tasks (status)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_pending_tasks_next_retry ON pending_tasks (next_retry_at)
+	`)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -325,8 +374,8 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file, video_type, storage_disk_id, mp4_full_path, deprecated_hls
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size, duration, resolution, has_request, last_check_file, video_type, storage_disk_id, mp4_full_path, deprecated_hls, start_time, end_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metadata.ID,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -358,6 +407,8 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 		metadata.StorageDiskID,
 		metadata.MP4FullPath,
 		metadata.DeprecatedHLS,
+		metadata.StartTime,
+		metadata.EndTime,
 	)
 	return err
 }
@@ -365,7 +416,7 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 // GetVideo retrieves a video record by ID
 func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	var video VideoMetadata
-	var finishedAt, uploadedAt, lastCheckFile sql.NullTime
+	var finishedAt, uploadedAt, lastCheckFile, startTime, endTime sql.NullTime
 	var cameraName, uniqueID, orderDetailID, bookingID, rawJSON, videoType, requestID, storageDiskID, mp4FullPath sql.NullString
 	var deprecatedHLS sql.NullBool
 
@@ -374,7 +425,7 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file, video_type, request_id, storage_disk_id, mp4_full_path, deprecated_hls
+			size, duration, resolution, has_request, last_check_file, video_type, request_id, storage_disk_id, mp4_full_path, deprecated_hls, start_time, end_time
 		FROM videos WHERE id = ?`, id).Scan(
 		&video.ID,
 		&cameraName,
@@ -408,6 +459,8 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		&storageDiskID,
 		&mp4FullPath,
 		&deprecatedHLS,
+		&startTime,
+		&endTime,
 	)
 
 	if err == sql.ErrNoRows {
@@ -476,6 +529,14 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		video.DeprecatedHLS = deprecatedHLS.Bool
 	}
 
+	// Set StartTime and EndTime if valid
+	if startTime.Valid {
+		video.StartTime = &startTime.Time
+	}
+	if endTime.Valid {
+		video.EndTime = &endTime.Time
+	}
+
 	return &video, nil
 }
 
@@ -523,7 +584,9 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 			resolution = ?,
 			has_request = ?,
 			last_check_file = ?,
-			video_type = ?
+			video_type = ?,
+			start_time = ?,
+			end_time = ?
 		WHERE id = ?`,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -551,6 +614,8 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 		metadata.HasRequest,
 		metadata.LastCheckFile,
 		metadata.VideoType,
+		metadata.StartTime,
+		metadata.EndTime,
 		metadata.ID,
 	)
 	return err
@@ -1308,4 +1373,144 @@ func (s *SQLiteDB) Close() error {
 // GetDB returns the underlying *sql.DB instance
 func (s *SQLiteDB) GetDB() *sql.DB {
 	return s.db
+}
+
+// Offline Queue Methods
+
+// CreatePendingTask creates a new pending task
+func (s *SQLiteDB) CreatePendingTask(task PendingTask) error {
+	_, err := s.db.Exec(`
+		INSERT INTO pending_tasks (
+			task_type, task_data, attempts, max_attempts, next_retry_at, 
+			status, created_at, updated_at, error_msg
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.TaskType,
+		task.TaskData,
+		task.Attempts,
+		task.MaxAttempts,
+		task.NextRetryAt,
+		task.Status,
+		task.CreatedAt,
+		task.UpdatedAt,
+		task.ErrorMsg,
+	)
+	return err
+}
+
+// GetPendingTasks retrieves pending tasks ready for execution
+func (s *SQLiteDB) GetPendingTasks(limit int) ([]PendingTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, task_type, task_data, attempts, max_attempts, next_retry_at,
+			   status, created_at, updated_at, error_msg
+		FROM pending_tasks 
+		WHERE status IN ('pending', 'failed') 
+		  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime'))
+		ORDER BY created_at ASC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []PendingTask
+	for rows.Next() {
+		var task PendingTask
+		var nextRetryAt sql.NullTime
+		var errorMsg sql.NullString
+
+		err := rows.Scan(
+			&task.ID,
+			&task.TaskType,
+			&task.TaskData,
+			&task.Attempts,
+			&task.MaxAttempts,
+			&nextRetryAt,
+			&task.Status,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+			&errorMsg,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if nextRetryAt.Valid {
+			task.NextRetryAt = nextRetryAt.Time
+		}
+		if errorMsg.Valid {
+			task.ErrorMsg = errorMsg.String
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// UpdateTaskStatus updates the status of a task
+func (s *SQLiteDB) UpdateTaskStatus(taskID int, status string, errorMsg string) error {
+	_, err := s.db.Exec(`
+		UPDATE pending_tasks 
+		SET status = ?, error_msg = ?, updated_at = datetime('now', 'localtime')
+		WHERE id = ?`,
+		status, errorMsg, taskID)
+	return err
+}
+
+// UpdateTaskNextRetry updates the next retry time and attempt count
+func (s *SQLiteDB) UpdateTaskNextRetry(taskID int, nextRetryAt time.Time, attempts int) error {
+	_, err := s.db.Exec(`
+		UPDATE pending_tasks 
+		SET next_retry_at = ?, attempts = ?, status = 'failed', updated_at = datetime('now', 'localtime')
+		WHERE id = ?`,
+		nextRetryAt, attempts, taskID)
+	return err
+}
+
+// DeleteCompletedTasks removes completed tasks older than specified time
+func (s *SQLiteDB) DeleteCompletedTasks(olderThan time.Time) error {
+	_, err := s.db.Exec(`
+		DELETE FROM pending_tasks 
+		WHERE status = 'completed' AND updated_at < ?`,
+		olderThan)
+	return err
+}
+
+// GetTaskByID retrieves a specific task by ID
+func (s *SQLiteDB) GetTaskByID(taskID int) (*PendingTask, error) {
+	var task PendingTask
+	var nextRetryAt sql.NullTime
+	var errorMsg sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, task_type, task_data, attempts, max_attempts, next_retry_at,
+			   status, created_at, updated_at, error_msg
+		FROM pending_tasks WHERE id = ?`, taskID).Scan(
+		&task.ID,
+		&task.TaskType,
+		&task.TaskData,
+		&task.Attempts,
+		&task.MaxAttempts,
+		&nextRetryAt,
+		&task.Status,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+		&errorMsg,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if nextRetryAt.Valid {
+		task.NextRetryAt = nextRetryAt.Time
+	}
+	if errorMsg.Valid {
+		task.ErrorMsg = errorMsg.String
+	}
+
+	return &task, nil
 }

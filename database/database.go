@@ -28,6 +28,8 @@ type VideoMetadata struct {
 	Status           VideoStatus `json:"status"`           // Current status
 	Duration         float64     `json:"duration"`         // Duration in seconds
 	Size             int64       `json:"size"`             // Size in bytes
+	StartTime        *time.Time  `json:"startTime,omitempty"`  // Actual start time of the clip (from booking)
+	EndTime          *time.Time  `json:"endTime,omitempty"`    // Actual end time of the clip (from booking)
 	LocalPath        string      `json:"localPath"`        // Path to local file
 	HLSPath          string      `json:"hlsPath"`          // Path to HLS stream directory
 	HLSURL           string      `json:"hlsUrl"`           // URL to HLS playlist
@@ -99,6 +101,55 @@ type RecordingSegment struct {
 	CreatedAt     time.Time `json:"createdAt"`     // When this segment record was created
 }
 
+// PendingTask represents a task waiting to be executed
+type PendingTask struct {
+	ID          int       `json:"id"`
+	TaskType    string    `json:"taskType"`    // "upload_r2", "notify_ayo_api"
+	TaskData    string    `json:"taskData"`    // JSON encoded task-specific data
+	Attempts    int       `json:"attempts"`    // Number of attempts made
+	MaxAttempts int       `json:"maxAttempts"` // Maximum number of attempts
+	NextRetryAt time.Time `json:"nextRetryAt"` // When to retry next
+	Status      string    `json:"status"`      // "pending", "processing", "completed", "failed"
+	CreatedAt   time.Time `json:"createdAt"`   // When task was created
+	UpdatedAt   time.Time `json:"updatedAt"`   // When task was last updated
+	ErrorMsg    string    `json:"errorMsg"`    // Last error message
+}
+
+// Task types
+const (
+	TaskUploadR2     = "upload_r2"
+	TaskNotifyAyoAPI = "notify_ayo_api"
+)
+
+// Task statuses
+const (
+	TaskStatusPending    = "pending"
+	TaskStatusProcessing = "processing"
+	TaskStatusCompleted  = "completed"
+	TaskStatusFailed     = "failed"
+)
+
+// R2UploadTaskData represents data for R2 upload task
+type R2UploadTaskData struct {
+	VideoID         string `json:"videoId"`
+	LocalMP4Path    string `json:"localMp4Path"`
+	LocalPreviewPath string `json:"localPreviewPath"`
+	LocalThumbnailPath string `json:"localThumbnailPath"`
+	R2Key           string `json:"r2Key"`
+	R2PreviewKey    string `json:"r2PreviewKey"`
+	R2ThumbnailKey  string `json:"r2ThumbnailKey"`
+}
+
+// AyoAPINotifyTaskData represents data for AYO API notification task
+type AyoAPINotifyTaskData struct {
+	VideoID     string `json:"videoId"`
+	UniqueID    string `json:"uniqueId"`
+	MP4URL      string `json:"mp4Url"`
+	PreviewURL  string `json:"previewUrl"`
+	ThumbnailURL string `json:"thumbnailUrl"`
+	Duration    float64 `json:"duration"`
+}
+
 // Database defines the interface for database operations
 type Database interface {
 	// Video operations
@@ -140,6 +191,14 @@ type Database interface {
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error
 	UpdateVideoR2URLs(id, hlsURL, mp4URL string) error
 	UpdateVideoRequestID(id, requestId string, remove bool) error
+
+	// Offline queue operations
+	CreatePendingTask(task PendingTask) error
+	GetPendingTasks(limit int) ([]PendingTask, error)
+	UpdateTaskStatus(taskID int, status string, errorMsg string) error
+	UpdateTaskNextRetry(taskID int, nextRetryAt time.Time, attempts int) error
+	DeleteCompletedTasks(olderThan time.Time) error
+	GetTaskByID(taskID int) (*PendingTask, error)
 
 	// Helper operations
 	Close() error

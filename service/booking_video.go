@@ -123,6 +123,8 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		Resolution:    camera.Resolution,
 		HasRequest:    false,     // Explicitly set default to false
 		VideoType:     videoType, // Set from the parameter
+		StartTime:     &startTime, // Store actual clip start time
+		EndTime:       &endTime,   // Store actual clip end time
 	}
 
 	// Create initial database entry

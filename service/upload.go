@@ -23,11 +23,14 @@ type QueuedVideo struct {
 	FailReason  string
 }
 
+// Note: AyoAPIClient interface is already defined in booking_video.go
+
 // UploadService handles uploading videos to R2 storage
 type UploadService struct {
 	db           database.Database
 	r2Storage    *storage.R2Storage
 	config       *config.Config
+	ayoClient    AyoAPIClient
 	uploadQueue  []QueuedVideo
 	queueMutex   sync.Mutex
 	maxRetries   int
@@ -35,11 +38,17 @@ type UploadService struct {
 }
 
 // NewUploadService creates a new upload service
-func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *config.Config) *UploadService {
+// ayoClient can be nil if AYO API is not available
+func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *config.Config, ayoClient AyoAPIClient) *UploadService {
+	if ayoClient == nil {
+		log.Printf("⚠️ WARNING: UploadService initialized without AYO API client - API notifications will be disabled")
+	}
+	
 	return &UploadService{
 		db:           db,
 		r2Storage:    r2Storage,
 		config:       cfg,
+		ayoClient:    ayoClient,
 		uploadQueue:  make([]QueuedVideo, 0),
 		maxRetries:   5,               // Maximum number of retry attempts
 		retryBackoff: 5 * time.Minute, // Time to wait between retries
@@ -457,4 +466,83 @@ func (s *UploadService) checkInternetConnectivity() bool {
 	// Try to connect to Cloudflare's reliable DNS service
 	_, err := client.Get("https://1.1.1.1")
 	return err == nil
+}
+
+// NotifyAyoAPI sends notification to AYO API using actual implementation
+// This method retrieves video data from database and calls the real AYO API
+func (s *UploadService) NotifyAyoAPI(uniqueID, mp4URL, previewURL, thumbnailURL string, duration float64) error {
+	log.Printf("📡 AYO API: Starting notification for video %s", uniqueID)
+	
+	// Get video data from database to retrieve booking information
+	video, err := s.db.GetVideo(uniqueID)
+	if err != nil {
+		return fmt.Errorf("failed to get video data from database: %v", err)
+	}
+	
+	if video == nil {
+		return fmt.Errorf("video not found in database: %s", uniqueID)
+	}
+	
+	// Check if we have required booking information
+	if video.BookingID == "" {
+		return fmt.Errorf("no booking ID found for video: %s", uniqueID)
+	}
+	
+	// Use actual start and end times from the clip booking (stored in database)
+	var startTime, endTime time.Time
+	
+	if video.StartTime != nil && video.EndTime != nil {
+		// Use actual booking clip times
+		startTime = *video.StartTime
+		endTime = *video.EndTime
+		log.Printf("📡 AYO API: Using actual clip times from database")
+	} else {
+		// Fallback to calculated times if clip times not available
+		startTime = video.CreatedAt
+		endTime = startTime.Add(time.Duration(duration) * time.Second)
+		log.Printf("📡 AYO API: ⚠️ Using fallback calculated times (no clip times in database)")
+		
+		// If we have finished time, use that for more accurate end time
+		if video.FinishedAt != nil {
+			endTime = *video.FinishedAt
+		}
+	}
+	
+	// Determine video type (default to "clip" if not specified)
+	videoType := video.VideoType
+	if videoType == "" {
+		videoType = "clip"
+	}
+	
+	log.Printf("📡 AYO API: Calling SaveVideoAvailable...")
+	log.Printf("📡 AYO API: - Booking ID: %s", video.BookingID)
+	log.Printf("📡 AYO API: - Video Type: %s", videoType)
+	log.Printf("📡 AYO API: - Preview URL: %s", previewURL)
+	log.Printf("📡 AYO API: - Thumbnail URL: %s", thumbnailURL)
+	log.Printf("📡 AYO API: - Unique ID: %s", uniqueID)
+	log.Printf("📡 AYO API: - Start Time: %s", startTime.Format(time.RFC3339))
+	log.Printf("📡 AYO API: - End Time: %s", endTime.Format(time.RFC3339))
+	
+	// Check if AYO client is available
+	if s.ayoClient == nil {
+		return fmt.Errorf("AYO API client not initialized")
+	}
+	
+	// Call the actual AYO API
+	_, err = s.ayoClient.SaveVideoAvailable(
+		video.BookingID, // bookingID
+		videoType,       // videoType
+		previewURL,      // previewPath  
+		thumbnailURL,    // imagePath
+		uniqueID,        // uniqueID
+		startTime,       // startTime
+		endTime,         // endTime
+	)
+	
+	if err != nil {
+		return fmt.Errorf("AYO API call failed: %v", err)
+	}
+	
+	log.Printf("📡 AYO API: ✅ Successfully notified AYO API for video %s", uniqueID)
+	return nil
 }

@@ -168,6 +168,7 @@ func main() {
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
+		apiClient = nil // Explicitly set to nil for clarity
 	} else {
 		// Start video cleanup cron job (every 24 hours)
 		// delay 10 seconds before first run
@@ -196,8 +197,8 @@ func main() {
 		log.Printf("Warning: Failed to initialize R2 storage: %v", err)
 	}
 
-	// Initialize upload service
-	uploadService := service.NewUploadService(db, r2Storage, &cfg)
+	// Initialize upload service with AYO API client
+	uploadService := service.NewUploadService(db, r2Storage, &cfg, apiClient)
 
 	// Initialize and start API server
 	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)

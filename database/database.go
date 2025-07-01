@@ -52,6 +52,9 @@ type VideoMetadata struct {
 	LastCheckFile    *time.Time  `json:"lastCheckFile"`    // When the file was last checked for existence
 	VideoType        string      `json:"videoType"`        // Type of video: "clip" or "full"
 	RequestID        string      `json:"requestId"`        // ID of the request for this video
+	StorageDiskID    string      `json:"storageDiskId"`    // ID of the storage disk where this video is stored
+	MP4FullPath      string      `json:"mp4FullPath"`      // Complete path to MP4 file including disk
+	DeprecatedHLS    bool        `json:"deprecatedHls"`    // Whether HLS files have been deprecated/cleaned up
 }
 
 // CameraConfig represents camera configuration stored in the database
@@ -70,6 +73,30 @@ type CameraConfig struct {
 	Field      string `json:"field"`
 	Resolution string `json:"resolution"`
 	AutoDelete int    `json:"auto_delete"`
+}
+
+// StorageDisk represents a storage disk for recording data
+type StorageDisk struct {
+	ID               string    `json:"id"`               // Unique identifier for the disk
+	Path             string    `json:"path"`             // Mount path of the disk
+	TotalSpaceGB     int64     `json:"totalSpaceGb"`     // Total disk space in GB
+	AvailableSpaceGB int64     `json:"availableSpaceGb"` // Available disk space in GB
+	IsActive         bool      `json:"isActive"`         // Whether this disk is currently active for recording
+	PriorityOrder    int       `json:"priorityOrder"`    // Priority order for disk selection (lower = higher priority)
+	LastScan         time.Time `json:"lastScan"`         // When this disk was last scanned
+	CreatedAt        time.Time `json:"createdAt"`        // When this disk was added to the system
+}
+
+// RecordingSegment represents an individual MP4 recording segment
+type RecordingSegment struct {
+	ID            string    `json:"id"`            // Unique identifier for the segment
+	CameraName    string    `json:"cameraName"`    // Name of the camera that recorded this segment
+	StorageDiskID string    `json:"storageDiskId"` // ID of the storage disk where this segment is stored
+	MP4Path       string    `json:"mp4Path"`       // Relative path to the MP4 file on the storage disk
+	SegmentStart  time.Time `json:"segmentStart"`  // Start time of the recording segment
+	SegmentEnd    time.Time `json:"segmentEnd"`    // End time of the recording segment
+	FileSizeBytes int64     `json:"fileSizeBytes"` // Size of the MP4 file in bytes
+	CreatedAt     time.Time `json:"createdAt"`     // When this segment record was created
 }
 
 // Database defines the interface for database operations
@@ -94,6 +121,20 @@ type Database interface {
 	// Camera configuration operations
 	GetCameras() ([]CameraConfig, error)
 	InsertCameras(cameras []CameraConfig) error
+
+	// Storage disk operations
+	CreateStorageDisk(disk StorageDisk) error
+	GetStorageDisks() ([]StorageDisk, error)
+	GetActiveDisk() (*StorageDisk, error)
+	UpdateDiskSpace(id string, totalGB, availableGB int64) error
+	SetActiveDisk(id string) error
+	GetStorageDisk(id string) (*StorageDisk, error)
+
+	// Recording segment operations
+	CreateRecordingSegment(segment RecordingSegment) error
+	GetRecordingSegments(cameraName string, start, end time.Time) ([]RecordingSegment, error)
+	DeleteRecordingSegment(id string) error
+	GetRecordingSegmentsByDisk(diskID string) ([]RecordingSegment, error)
 
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error

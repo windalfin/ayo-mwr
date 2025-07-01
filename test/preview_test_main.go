@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Create a service instance
-	bookingService := service.NewBookingVideoService(nil, nil, nil, cfg)
+	bookingService := service.NewBookingVideoService(nil, nil, nil, &cfg)
 
 	// Verify input file exists
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {

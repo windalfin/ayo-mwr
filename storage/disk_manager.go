@@ -2,9 +2,12 @@ package storage
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +17,21 @@ import (
 
 const (
 	MinimumFreeSpaceGB = 100 // Minimum free space in GB required for a disk to be active
+	
+	// Priority ranges for different disk types
+	PriorityExternal    = 1   // External USB/removable disks: 1-100
+	PriorityInternalNVMe = 101 // Internal NVMe disks: 101-200  
+	PriorityInternalSATA = 201 // Internal SATA disks: 201-300
+)
+
+// DiskType represents the type of storage disk
+type DiskType string
+
+const (
+	DiskTypeExternal    DiskType = "external"    // External USB/removable disk
+	DiskTypeInternalNVMe DiskType = "internal_nvme" // Internal NVMe SSD
+	DiskTypeInternalSATA DiskType = "internal_sata" // Internal SATA disk
+	DiskTypeUnknown     DiskType = "unknown"     // Unknown disk type
 )
 
 // DiskManager handles storage disk management and selection
@@ -106,7 +124,7 @@ func (dm *DiskManager) GetActiveDiskPath() (string, error) {
 	return activeDisk.Path, nil
 }
 
-// RegisterDisk adds a new storage disk to the system
+// RegisterDisk adds a new storage disk to the system with automatic priority detection
 func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
 	// Verify the path exists and is accessible
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -119,6 +137,16 @@ func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
 		return fmt.Errorf("failed to get disk space: %v", err)
 	}
 
+	// Auto-detect disk type and assign priority if not manually specified
+	finalPriority := priorityOrder
+	diskType := DiskTypeUnknown
+	
+	if priorityOrder == 0 {
+		diskType = dm.detectDiskType(path)
+		finalPriority = dm.getAutoPriority(diskType)
+		log.Printf("Auto-detected disk type: %s, assigned priority: %d", diskType, finalPriority)
+	}
+
 	// Create storage disk record
 	disk := database.StorageDisk{
 		ID:               uuid.New().String(),
@@ -126,7 +154,7 @@ func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
 		TotalSpaceGB:     totalGB,
 		AvailableSpaceGB: availableGB,
 		IsActive:         false,
-		PriorityOrder:    priorityOrder,
+		PriorityOrder:    finalPriority,
 		LastScan:         time.Now(),
 		CreatedAt:        time.Now(),
 	}
@@ -136,8 +164,8 @@ func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
 		return fmt.Errorf("failed to create storage disk: %v", err)
 	}
 
-	log.Printf("Registered new storage disk: %s (%s) - %dGB total, %dGB available",
-		disk.ID, disk.Path, disk.TotalSpaceGB, disk.AvailableSpaceGB)
+	log.Printf("Registered new storage disk: %s (%s) - %dGB total, %dGB available, type: %s, priority: %d",
+		disk.ID, disk.Path, disk.TotalSpaceGB, disk.AvailableSpaceGB, diskType, disk.PriorityOrder)
 
 	return nil
 }
@@ -269,4 +297,146 @@ func (dm *DiskManager) GetDiskUsageStats() (map[string]interface{}, error) {
 	stats["overall_usage_percent"] = float64(totalSpace-availableSpace) / float64(totalSpace) * 100
 
 	return stats, nil
+}
+
+// detectDiskType detects the type of disk based on the mount path (Linux only)
+func (dm *DiskManager) detectDiskType(mountPath string) DiskType {
+	if runtime.GOOS != "linux" {
+		log.Printf("Disk type detection is only supported on Linux, got: %s", runtime.GOOS)
+		return DiskTypeUnknown
+	}
+
+	// Find the block device for this mount path
+	blockDevice := dm.findBlockDevice(mountPath)
+	if blockDevice == "" {
+		log.Printf("Could not find block device for mount path: %s", mountPath)
+		return DiskTypeUnknown
+	}
+
+	log.Printf("Found block device %s for mount path %s", blockDevice, mountPath)
+
+	// Check if it's a removable/external device
+	if dm.isRemovableDevice(blockDevice) {
+		return DiskTypeExternal
+	}
+
+	// Check if it's rotational (SATA) or non-rotational (NVMe/SSD)
+	if dm.isRotationalDevice(blockDevice) {
+		return DiskTypeInternalSATA
+	}
+
+	return DiskTypeInternalNVMe
+}
+
+// findBlockDevice finds the block device name for a given mount path
+func (dm *DiskManager) findBlockDevice(mountPath string) string {
+	// Get absolute path
+	absPath, err := filepath.Abs(mountPath)
+	if err != nil {
+		log.Printf("Failed to get absolute path for %s: %v", mountPath, err)
+		return ""
+	}
+
+	// Use findmnt to get the device for this mount point
+	// This is more reliable than parsing /proc/mounts
+	content, err := ioutil.ReadFile("/proc/mounts")
+	if err != nil {
+		log.Printf("Failed to read /proc/mounts: %v", err)
+		return ""
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var bestMatch struct {
+		device string
+		path   string
+		length int
+	}
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		device := fields[0]
+		mountPoint := fields[1]
+
+		// Skip non-block devices
+		if !strings.HasPrefix(device, "/dev/") {
+			continue
+		}
+
+		// Check if this mount point is a parent of our path
+		if strings.HasPrefix(absPath, mountPoint) && len(mountPoint) > bestMatch.length {
+			bestMatch.device = device
+			bestMatch.path = mountPoint
+			bestMatch.length = len(mountPoint)
+		}
+	}
+
+	if bestMatch.device == "" {
+		return ""
+	}
+
+	// Extract the base device name (e.g., /dev/sda1 -> sda)
+	deviceName := filepath.Base(bestMatch.device)
+	
+	// Remove partition numbers (e.g., sda1 -> sda, nvme0n1p1 -> nvme0n1)
+	if strings.Contains(deviceName, "nvme") {
+		// NVMe devices: nvme0n1p1 -> nvme0n1
+		parts := strings.Split(deviceName, "p")
+		if len(parts) > 1 {
+			deviceName = parts[0]
+		}
+	} else {
+		// Traditional devices: sda1 -> sda
+		deviceName = strings.TrimRightFunc(deviceName, func(r rune) bool {
+			return r >= '0' && r <= '9'
+		})
+	}
+
+	return deviceName
+}
+
+// isRemovableDevice checks if a block device is removable (external)
+func (dm *DiskManager) isRemovableDevice(blockDevice string) bool {
+	removablePath := fmt.Sprintf("/sys/block/%s/removable", blockDevice)
+	
+	content, err := ioutil.ReadFile(removablePath)
+	if err != nil {
+		log.Printf("Failed to read %s: %v", removablePath, err)
+		return false
+	}
+
+	removable := strings.TrimSpace(string(content))
+	return removable == "1"
+}
+
+// isRotationalDevice checks if a block device is rotational (SATA HDD)
+func (dm *DiskManager) isRotationalDevice(blockDevice string) bool {
+	rotationalPath := fmt.Sprintf("/sys/block/%s/queue/rotational", blockDevice)
+	
+	content, err := ioutil.ReadFile(rotationalPath)
+	if err != nil {
+		log.Printf("Failed to read %s: %v", rotationalPath, err)
+		// Default to rotational if we can't determine
+		return true
+	}
+
+	rotational := strings.TrimSpace(string(content))
+	return rotational == "1"
+}
+
+// getAutoPriority returns the automatic priority for a given disk type
+func (dm *DiskManager) getAutoPriority(diskType DiskType) int {
+	switch diskType {
+	case DiskTypeExternal:
+		return PriorityExternal
+	case DiskTypeInternalNVMe:
+		return PriorityInternalNVMe
+	case DiskTypeInternalSATA:
+		return PriorityInternalSATA
+	default:
+		return PriorityInternalSATA // Default to SATA priority for unknown types
+	}
 }

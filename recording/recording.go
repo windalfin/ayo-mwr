@@ -149,7 +149,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		}
 	}
 
-	// Start the MP4 segmenter in the background
+	// Start the MP4 segmenter in the background (legacy HLS-based segmentation)
 	StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
 	log.Printf("Starting capture for camera: %s", cameraName)
@@ -176,21 +176,21 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 			"-probesize", "1000000",
 			"-re",
 			"-i", rtspURL,
-			"-c:v", "copy",
+			"-c:v", "copy", // Stream copy for zero CPU encoding
 		}
 		
 		// Add appropriate bitstream filter based on video codec
 		if streamInfo.VideoCodec == "h264" {
-			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for HLS
 			log.Printf("[%s] 🔧 Using H.264 bitstream filter", cameraName)
 		} else if streamInfo.VideoCodec == "hevc" {
-			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb") // Convert HEVC format for HLS
 			log.Printf("[%s] 🔧 Using HEVC bitstream filter", cameraName)
 		} else {
 			log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
 		}
 		
-		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header")
+		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header") // Ensure codec parameters in each segment
 		
 		// Add audio settings only if audio stream is detected
 		if streamInfo.HasAudio {
@@ -208,7 +208,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		ffmpegArgs = append(ffmpegArgs,
 			"-max_muxing_queue_size", "1024",
 			"-f", "hls",
-			"-hls_time", "2",
+			"-hls_time", "4", // Slightly longer segments for better efficiency
 			"-hls_list_size", "0",
 			"-strftime", "1",
 			"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
@@ -550,6 +550,18 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
 					continue
 				}
+				
+				// Try to parse segment time from filename first (more accurate)
+				segmentTime, err := parseSegmentTimeFromFilename(e.Name())
+				if err == nil {
+					// Use segment timestamp for precise selection
+					if !segmentTime.Before(startWindow) && segmentTime.Before(endWindow) {
+						segs = append(segs, filepath.Base(e.Name()))
+					}
+					continue
+				}
+				
+				// Fallback to file modification time if filename parsing fails
 				info, err := e.Info()
 				if err != nil {
 					continue
@@ -588,7 +600,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
 			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
 
-			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-t", "60", "-f", "mp4", mp4Tmp)
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-t", "65", "-f", "mp4", mp4Tmp)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
@@ -663,7 +675,7 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				continue
 			}
 
-			// FFmpeg arguments for direct MP4 segmented recording
+			// FFmpeg arguments for direct MP4 segmented recording with stream copy optimization
 			ffmpegArgs := []string{
 				"-rtsp_transport", "tcp",
 				"-timeout", "5000000",
@@ -672,14 +684,9 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				"-probesize", "1000000",
 				"-re",
 				"-i", rtspURL,
-				"-c:v", "libx264",
-				"-preset", "ultrafast",
-				"-tune", "zerolatency",
-				"-profile:v", "baseline",
-				"-pix_fmt", "yuv420p",
-				"-color_range", "tv",
-				"-b:v", "2M",
-				"-bufsize", "4M",
+				"-c:v", "copy", // Stream copy for zero CPU encoding
+				"-bsf:v", "h264_mp4toannexb", // Convert H.264 format for segmentation
+				"-flags", "+global_header", // Ensure codec parameters in each segment
 				"-c:a", "aac",
 				"-b:a", "128k",
 				"-ar", "44100",
@@ -786,6 +793,26 @@ func StartEnhancedMP4Segmenter(cameraName, mp4Dir, diskID string, db database.Da
 			}
 		}
 	}()
+}
+
+// parseSegmentTimeFromFilename extracts timestamp from HLS segment filename
+func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
+	// Expected format: segment_YYYYMMDD_HHMMSS.ts
+	if !strings.HasPrefix(filename, "segment_") || !strings.HasSuffix(filename, ".ts") {
+		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
+	}
+	
+	// Remove prefix and suffix
+	timeStr := strings.TrimPrefix(filename, "segment_")
+	timeStr = strings.TrimSuffix(timeStr, ".ts")
+	
+	// Parse timestamp
+	segmentTime, err := time.Parse("20060102_150405", timeStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timeStr, err)
+	}
+	
+	return segmentTime, nil
 }
 
 // parseSegmentTime extracts start and end times from segment filename

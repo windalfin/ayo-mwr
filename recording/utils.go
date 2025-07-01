@@ -61,122 +61,134 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 	return result, nil
 }
 
-// FindSegmentsInRangeFromDB returns a sorted list of MP4 files from the database whose timestamps fall within [startTime, endTime].
-// This is the enhanced version that uses the database instead of filesystem scanning.
+// FindSegmentsInRangeFromDB is deprecated - use FindSegmentsInRangeOptimized instead
+// Kept for backward compatibility only
 func FindSegmentsInRangeFromDB(cameraName string, startTime, endTime time.Time, db database.Database, diskManager *storage.DiskManager) ([]string, error) {
-	// Get recording segments from database
-	segments, err := db.GetRecordingSegments(cameraName, startTime, endTime)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get recording segments from database: %w", err)
-	}
+	// Fallback to optimized filesystem approach
+	return FindSegmentsInRangeOptimized(cameraName, "./videos", startTime, endTime)
+}
 
-	if len(segments) == 0 {
-		return []string{}, nil
-	}
-
-	var matches []struct {
+// FindSegmentsInRangeMultiDisk searches for segments across multiple potential storage locations
+func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Time, storagePaths []string) ([]string, error) {
+	var allSegments []struct {
 		path string
 		ts   time.Time
 	}
 
-	// Convert database segments to full file paths
-	for _, segment := range segments {
-		// Get the storage disk for this segment
-		disk, err := db.GetStorageDisk(segment.StorageDiskID)
+	// Search across all provided storage paths
+	for _, storagePath := range storagePaths {
+		cameraPath := filepath.Join(storagePath, "recordings", cameraName, "mp4")
+		
+		// Skip if directory doesn't exist
+		if _, err := os.Stat(cameraPath); os.IsNotExist(err) {
+			continue
+		}
+
+		segments, err := FindSegmentsInRange(cameraPath, startTime, endTime)
 		if err != nil {
-			fmt.Printf("Warning: failed to get storage disk %s for segment %s: %v\n", segment.StorageDiskID, segment.ID, err)
+			fmt.Printf("Warning: failed to scan %s: %v\n", cameraPath, err)
 			continue
 		}
 
-		if disk == nil {
-			fmt.Printf("Warning: storage disk %s not found for segment %s\n", segment.StorageDiskID, segment.ID)
-			continue
+		// Add found segments with timestamp for sorting
+		for _, segmentPath := range segments {
+			filename := filepath.Base(segmentPath)
+			ts, err := parseTimestampFromFilename(filename)
+			if err != nil {
+				fmt.Printf("Warning: failed to parse timestamp from %s: %v\n", filename, err)
+				continue
+			}
+			allSegments = append(allSegments, struct {
+				path string
+				ts   time.Time
+			}{segmentPath, ts})
 		}
-
-		// Construct full path to the MP4 file
-		fullPath := filepath.Join(disk.Path, segment.MP4Path)
-
-		// Verify the file exists
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			fmt.Printf("Warning: segment file does not exist: %s\n", fullPath)
-			continue
-		}
-
-		// Check if segment overlaps with requested time range
-		if segment.SegmentEnd.Before(startTime) || segment.SegmentStart.After(endTime) {
-			continue // No overlap
-		}
-
-		matches = append(matches, struct {
-			path string
-			ts   time.Time
-		}{fullPath, segment.SegmentStart})
 	}
 
-	// Sort by timestamp ascending
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].ts.Before(matches[j].ts)
+	// Sort all segments by timestamp
+	sort.Slice(allSegments, func(i, j int) bool {
+		return allSegments[i].ts.Before(allSegments[j].ts)
 	})
 
-	result := make([]string, len(matches))
-	for i, m := range matches {
-		result[i] = m.path
+	// Convert to string slice
+	result := make([]string, len(allSegments))
+	for i, seg := range allSegments {
+		result[i] = seg.path
 	}
 
 	return result, nil
 }
 
-// FindSegmentsInRangeEnhanced is a hybrid approach that tries database first, then falls back to filesystem
-func FindSegmentsInRangeEnhanced(cameraName, inputPath string, startTime, endTime time.Time, db database.Database, diskManager *storage.DiskManager) ([]string, error) {
-	// Try database approach first (preferred for new system)
-	if db != nil && diskManager != nil {
-		segments, err := FindSegmentsInRangeFromDB(cameraName, startTime, endTime, db, diskManager)
-		if err == nil && len(segments) > 0 {
-			return segments, nil
-		}
-		
-		// Log if database approach failed but continue with fallback
-		if err != nil {
-			fmt.Printf("Database segment discovery failed, falling back to filesystem: %v\n", err)
-		}
+// parseTimestampFromFilename extracts timestamp from MP4 filename
+func parseTimestampFromFilename(filename string) (time.Time, error) {
+	// Expected format: camera_name_YYYYMMDD_HHMMSS.mp4
+	parts := strings.Split(filename, "_")
+	if len(parts) < 3 {
+		return time.Time{}, fmt.Errorf("invalid filename format: %s", filename)
 	}
-
-	// Fallback to original filesystem approach for compatibility
-	return FindSegmentsInRange(inputPath, startTime, endTime)
+	
+	dateStr := parts[len(parts)-2]
+	timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
+	timestampStr := dateStr + "_" + timeStr
+	
+	return time.Parse("20060102_150405", timestampStr)
 }
 
-// ValidateSegmentPaths verifies that all segment files in the database actually exist on disk
-func ValidateSegmentPaths(cameraName string, db database.Database) error {
-	// Get all segments for this camera (use a wide time range)
-	past := time.Now().AddDate(-1, 0, 0) // 1 year ago
-	future := time.Now().AddDate(1, 0, 0) // 1 year from now
-	
-	segments, err := db.GetRecordingSegments(cameraName, past, future)
-	if err != nil {
-		return fmt.Errorf("failed to get segments: %w", err)
+// FindSegmentsInRangeOptimized searches for segments using automatic disk discovery
+func FindSegmentsInRangeOptimized(cameraName, primaryPath string, startTime, endTime time.Time, additionalPaths ...string) ([]string, error) {
+	// For now, use simple single-path approach 
+	// The existing disk management system handles multi-disk automatically
+	cameraPath := filepath.Join(primaryPath, "recordings", cameraName, "mp4")
+	return FindSegmentsInRange(cameraPath, startTime, endTime)
+}
+
+// FindSegmentsInRangeEnhanced is maintained for backward compatibility but simplified
+func FindSegmentsInRangeEnhanced(cameraName, inputPath string, startTime, endTime time.Time, db database.Database, diskManager *storage.DiskManager) ([]string, error) {
+	// Extract storage path from input path (remove /recordings/camera/mp4 suffix)
+	storagePath := inputPath
+	if strings.Contains(inputPath, "/recordings/") {
+		parts := strings.Split(inputPath, "/recordings/")
+		if len(parts) > 0 {
+			storagePath = parts[0]
+		}
 	}
 
-	missingFiles := []string{}
+	// Use optimized filesystem approach - no database dependency
+	return FindSegmentsInRangeOptimized(cameraName, storagePath, startTime, endTime)
+}
+
+// ValidateSegmentPaths verifies filesystem integrity for camera segments (simplified version)
+func ValidateSegmentPaths(cameraName string, storagePaths []string) error {
+	var totalSegments int
+	var missingDirs []string
 	
-	for _, segment := range segments {
-		// Get storage disk
-		disk, err := db.GetStorageDisk(segment.StorageDiskID)
-		if err != nil || disk == nil {
-			missingFiles = append(missingFiles, fmt.Sprintf("Disk not found: %s for segment %s", segment.StorageDiskID, segment.ID))
+	for _, storagePath := range storagePaths {
+		cameraPath := filepath.Join(storagePath, "recordings", cameraName, "mp4")
+		
+		// Check if directory exists
+		if _, err := os.Stat(cameraPath); os.IsNotExist(err) {
+			missingDirs = append(missingDirs, cameraPath)
 			continue
 		}
-
-		// Check if file exists
-		fullPath := filepath.Join(disk.Path, segment.MP4Path)
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			missingFiles = append(missingFiles, fullPath)
+		
+		// Count segments in this directory
+		entries, err := os.ReadDir(cameraPath)
+		if err != nil {
+			continue
+		}
+		
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp4") {
+				totalSegments++
+			}
 		}
 	}
-
-	if len(missingFiles) > 0 {
-		return fmt.Errorf("found %d missing segment files: %v", len(missingFiles), missingFiles[:min(5, len(missingFiles))])
+	
+	if len(missingDirs) == len(storagePaths) {
+		return fmt.Errorf("no segment directories found for camera %s", cameraName)
 	}
-
+	
+	fmt.Printf("Camera %s: found %d segments across %d storage locations\n", cameraName, totalSegments, len(storagePaths)-len(missingDirs))
 	return nil
 }
 

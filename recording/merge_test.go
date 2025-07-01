@@ -53,7 +53,7 @@ func TestMergeSessionVideos(t *testing.T) {
 	endTime, _ := time.Parse("20060102_150405", "20250414_120540")
 
 	// Call the function under test (to be implemented)
-	err := MergeSessionVideos(inputPath, startTime, endTime, outputPath)
+	err := MergeSessionVideos(inputPath, startTime, endTime, outputPath, "720p")
 	if err != nil {
 		t.Fatalf("MergeSessionVideos failed: %v", err)
 	}

@@ -106,7 +106,7 @@ func TestAddWatermarkWithPosition(t *testing.T) {
 	defer os.Remove(frameWatermarked)
 
 	// Use top right, 10px margin, 60% opacity
-	err := AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo, TopRight, 10, 0.6)
+	err := AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo, TopRight, 10, 0.6, "720p")
 	if err != nil {
 		t.Fatalf("AddWatermarkWithPosition failed: %v", err)
 	}

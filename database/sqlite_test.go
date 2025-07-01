@@ -58,14 +58,10 @@ func testCreateAndGetVideo(t *testing.T, db *SQLiteDB) {
 		Size:       1024,
 		LocalPath:  "/path/to/video.mp4",
 		HLSPath:    "/path/to/hls",
-		DASHPath:   "/path/to/dash",
 		HLSURL:     "http://example.com/hls/test",
-		DASHURL:    "http://example.com/dash/test",
 		CameraName:   "camera-1",
 		R2HLSPath:  "",
-		R2DASHPath: "",
 		R2HLSURL:   "",
-		R2DASHURL:  "",
 	}
 
 	// Insert metadata
@@ -149,9 +145,7 @@ func testListVideos(t *testing.T, db *SQLiteDB) {
 			Size:      int64(i * 1024),
 			LocalPath: "/path/to/video" + strconv.Itoa(i+'0') + ".mp4",
 			HLSPath:   "/path/to/hls" + strconv.Itoa(i+'0'),
-			DASHPath:  "/path/to/dash" + strconv.Itoa(i+'0'),
 			HLSURL:    "http://example.com/hls/test" + strconv.Itoa(i+'0'),
-			DASHURL:   "http://example.com/dash/test" + strconv.Itoa(i+'0'),
 			CameraName:  "camera-1",
 		}
 
@@ -303,8 +297,8 @@ func testUpdateVideoR2Paths(t *testing.T, db *SQLiteDB) {
 
 	// Update R2 paths
 	hlsPath := "hls/r2-path-test"
-	dashPath := "dash/r2-path-test"
-	err = db.UpdateVideoR2Paths("r2-path-test", hlsPath, dashPath)
+	mp4Path := "mp4/r2-path-test.mp4"
+	err = db.UpdateVideoR2Paths("r2-path-test", hlsPath, mp4Path)
 	if err != nil {
 		t.Fatalf("Failed to update R2 paths: %v", err)
 	}
@@ -317,8 +311,8 @@ func testUpdateVideoR2Paths(t *testing.T, db *SQLiteDB) {
 	if video.R2HLSPath != hlsPath {
 		t.Errorf("Expected R2 HLS path %s, got %s", hlsPath, video.R2HLSPath)
 	}
-	if video.R2DASHPath != dashPath {
-		t.Errorf("Expected R2 DASH path %s, got %s", dashPath, video.R2DASHPath)
+	if video.R2MP4Path != mp4Path {
+		t.Errorf("Expected R2 MP4 path %s, got %s", mp4Path, video.R2MP4Path)
 	}
 }
 
@@ -339,8 +333,8 @@ func testUpdateVideoR2URLs(t *testing.T, db *SQLiteDB) {
 
 	// Update R2 URLs
 	hlsURL := "https://example.r2.dev/hls/r2-url-test/playlist.m3u8"
-	dashURL := "https://example.r2.dev/dash/r2-url-test/manifest.mpd"
-	err = db.UpdateVideoR2URLs("r2-url-test", hlsURL, dashURL)
+	mp4URL := "https://example.r2.dev/mp4/r2-url-test.mp4"
+	err = db.UpdateVideoR2URLs("r2-url-test", hlsURL, mp4URL)
 	if err != nil {
 		t.Fatalf("Failed to update R2 URLs: %v", err)
 	}
@@ -353,8 +347,8 @@ func testUpdateVideoR2URLs(t *testing.T, db *SQLiteDB) {
 	if video.R2HLSURL != hlsURL {
 		t.Errorf("Expected R2 HLS URL %s, got %s", hlsURL, video.R2HLSURL)
 	}
-	if video.R2DASHURL != dashURL {
-		t.Errorf("Expected R2 DASH URL %s, got %s", dashURL, video.R2DASHURL)
+	if video.R2MP4URL != mp4URL {
+		t.Errorf("Expected R2 MP4 URL %s, got %s", mp4URL, video.R2MP4URL)
 	}
 }
 

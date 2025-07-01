@@ -464,7 +464,7 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, 
 
 	// Get watermark position settings
 	pos, margin, opacity := recording.GetWatermarkSettings()
-	log.Printf("addWatermarkToVideo : Watermark position: %s, margin: %d, opacity: %f", pos, margin, opacity)
+	log.Printf("addWatermarkToVideo : Watermark position: %v, margin: %d, opacity: %f", pos, margin, opacity)
 
 	// Add watermark to video
 	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, outputPath, pos, margin, opacity, resolution)

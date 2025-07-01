@@ -282,7 +282,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	// Call the API
-	result, err := client.HealthCheck("test-camera-token")
+	result, err := client.HealthCheck()
 	if err != nil {
 		t.Fatalf("HealthCheck failed: %v", err)
 	}
@@ -819,9 +819,7 @@ func TestAyoIndoClientWithRealCredentials(t *testing.T) {
 	// Test HealthCheck
 	t.Run("HealthCheck", func(t *testing.T) {
 		t.Logf("Attempting HealthCheck API call")
-		// Use a test camera token
-		cameraToken := "test-camera-token"
-		result, err := client.HealthCheck(cameraToken)
+		result, err := client.HealthCheck()
 		t.Logf("HealthCheck returned: result=%v, err=%v", result, err)
 		if err != nil {
 			t.Fatalf("HealthCheck failed: %v", err)

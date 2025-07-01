@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"ayo-mwr/config"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,23 +47,51 @@ func TestTranscodeVideoValidation(t *testing.T) {
 		BaseURL:     "http://localhost:8080",
 	}
 
-	// Create a dummy input file
+	// Use an existing test video file instead of creating empty file
+	existingVideo := "../test/videos/uploads/camera_A_20250304_120503.mp4"
 	inputPath := filepath.Join(tempDir, "test.mp4")
-	f, err := os.Create(inputPath)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+	
+	// Copy existing test video to temp directory
+	if err := copyFile(existingVideo, inputPath); err != nil {
+		t.Skipf("Skipping test - could not copy test video: %v", err)
 	}
-	f.Close()
 
 	// Test that directories are created
 	videoID := "test123"
-	hlsPath := filepath.Join(tempDir, "hls", videoID)
+	// The actual path structure is: recordings/hls/hls/videoID/quality/
+	hlsPath := filepath.Join(tempDir, "recordings", "hls", "hls", videoID)
 
-	// This will fail because we're not actually transcoding, but we can check if directories were created
-	_, _, err = TranscodeVideo(inputPath, videoID, "hls", cfg)
-	
-	// The transcoding will fail, but the directories should be created
-	if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
-		t.Errorf("HLS directory was not created")
+	// Call the transcode function
+	hlsURLs, durations, err := TranscodeVideo(inputPath, videoID, "hls", &cfg)
+	if err != nil {
+		t.Logf("TranscodeVideo error (expected): %v", err)
 	}
+	
+	t.Logf("HLS URLs: %v", hlsURLs)
+	t.Logf("Durations: %v", durations)
+	
+	// Check that the HLS directory structure was created
+	if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
+		t.Errorf("HLS directory was not created at %s", hlsPath)
+	} else {
+		t.Logf("HLS directory created successfully at %s", hlsPath)
+	}
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }

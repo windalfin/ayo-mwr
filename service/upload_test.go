@@ -111,7 +111,7 @@ func TestRemoveLocalFiles(t *testing.T) {
 		ID:        "test",
 		LocalPath: videoPath,
 		HLSPath:   hlsPath,
-		DASHPath:  dashPath,
+		MP4Path:   filepath.Join(tempDir, "test.mp4"),
 	}
 
 	// Test removing local files
@@ -128,10 +128,11 @@ func TestRemoveLocalFiles(t *testing.T) {
 		t.Errorf("Expected HLS directory to be removed, but it still exists")
 	}
 
-	_, err = os.Stat(dashPath)
-	if !os.IsNotExist(err) {
-		t.Errorf("Expected DASH directory to be removed, but it still exists")
-	}
+	// DASH directory removal is no longer part of removeLocalFiles function
+	// _, err = os.Stat(dashPath)
+	// if !os.IsNotExist(err) {
+	// 	t.Errorf("Expected DASH directory to be removed, but it still exists")
+	// }
 }
 
 // TestWithRealVideo tests with an existing video file if available

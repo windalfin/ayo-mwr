@@ -170,11 +170,21 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	videoPathForNextStep := watermarkedVideoPath
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
+	
+	// Determine storage disk ID and full path for the processed video
+	storageDiskID, mp4FullPath, err := s.determineStorageInfo(videoPathForNextStep)
+	if err != nil {
+		log.Printf("ProcessVideoSegments : Warning: Could not determine storage disk info: %v", err)
+		// Continue without storage info rather than failing
+	}
+	
 	// Step 3: update video metadata
 	videoMeta := database.VideoMetadata{
-		ID:        uniqueID,
-		Status:    database.StatusUploading,
-		LocalPath: videoPathForNextStep,
+		ID:            uniqueID,
+		Status:        database.StatusUploading,
+		LocalPath:     videoPathForNextStep,
+		StorageDiskID: storageDiskID,
+		MP4FullPath:   mp4FullPath,
 	}
 
 	// Update database entry with processing status and local path
@@ -878,4 +888,45 @@ func (s *BookingVideoService) GetBookingJSON(booking map[string]interface{}) str
 		return ""
 	}
 	return string(jsonBytes)
+}
+
+// determineStorageInfo determines which storage disk contains the given file path
+// and returns the disk ID and full absolute path
+func (s *BookingVideoService) determineStorageInfo(filePath string) (string, string, error) {
+	// Get absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get absolute path: %v", err)
+	}
+	
+	// Get all storage disks from database
+	disks, err := s.db.GetStorageDisks()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get storage disks: %v", err)
+	}
+	
+	// Find which disk contains this file
+	for _, disk := range disks {
+		// Check if the file path starts with the disk path
+		diskPath := filepath.Clean(disk.Path)
+		if strings.HasPrefix(absPath, diskPath) {
+			log.Printf("determineStorageInfo: File %s found on disk %s (%s)", absPath, disk.ID, diskPath)
+			return disk.ID, absPath, nil
+		}
+	}
+	
+	// If no disk found, try to determine from current storage path
+	// This handles cases where the file is in the primary storage path
+	if strings.Contains(absPath, s.config.StoragePath) {
+		// Try to find a disk that matches the storage path
+		for _, disk := range disks {
+			if disk.Path == s.config.StoragePath {
+				log.Printf("determineStorageInfo: File %s matched primary storage disk %s", absPath, disk.ID)
+				return disk.ID, absPath, nil
+			}
+		}
+	}
+	
+	log.Printf("determineStorageInfo: Could not determine storage disk for file: %s", absPath)
+	return "", absPath, fmt.Errorf("could not determine storage disk for file: %s", absPath)
 }

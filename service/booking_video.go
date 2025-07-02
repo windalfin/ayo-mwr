@@ -520,17 +520,43 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	for i, interval := range intervals {
 		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
 
-		// Extract the clip using ffmpeg (using fast encoding but good quality)
-		cmd := exec.Command(
-			"ffmpeg", "-y",
+		// Extract the clip using ffmpeg with hardware acceleration
+		hwAccel := recording.DetectHardwareAcceleration()
+		
+		// Build FFmpeg arguments with hardware acceleration
+		ffmpegArgs := []string{"-y"}
+		
+		// Add hardware decoder if available
+		if hwAccel.Available {
+			decoderArgs := hwAccel.BuildDecoderArgs()
+			ffmpegArgs = append(ffmpegArgs, decoderArgs...)
+		}
+		
+		ffmpegArgs = append(ffmpegArgs,
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
-			"-to", interval.end, // End time
-			"-c:v", "libx264", "-c:a", "aac", // Use consistent codecs across all clips
-			"-crf", "22", // Good quality (lower number = better quality)
-			"-preset", "ultrafast", // Faster encoding
+			"-to", interval.end,   // End time
+		)
+		
+		// Add encoder with hardware acceleration
+		if hwAccel.Available {
+			encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
+			ffmpegArgs = append(ffmpegArgs, encoderArgs...)
+		} else {
+			// Software fallback
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:v", "libx264",
+				"-crf", "22", // Good quality (lower number = better quality)
+				"-preset", "ultrafast", // Faster encoding
+			)
+		}
+		
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:a", "aac", // Use consistent audio codec
 			clipPath,
 		)
+		
+		cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -544,18 +570,43 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	// Close the clip list file before using it
 	clipListFile.Close()
 
-	// Concatenate all clips into the final preview video
-	cmd := exec.Command(
-		"ffmpeg", "-y",
+	// Concatenate all clips into the final preview video with hardware acceleration
+	hwAccel := recording.DetectHardwareAcceleration()
+	
+	// Build FFmpeg arguments for concatenation with hardware acceleration
+	ffmpegArgs := []string{"-y"}
+	
+	// Add hardware decoder if available
+	if hwAccel.Available {
+		decoderArgs := hwAccel.BuildDecoderArgs()
+		ffmpegArgs = append(ffmpegArgs, decoderArgs...)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs,
 		"-f", "concat",
 		"-safe", "0",
 		"-i", clipListPath,
-		"-c:v", "libx264",
+	)
+	
+	// Add encoder with hardware acceleration
+	if hwAccel.Available {
+		encoderArgs := hwAccel.BuildEncoderArgs("medium", "")
+		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
+	} else {
+		// Software fallback
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-crf", "22", // Good quality
+			"-preset", "ultrafast",
+		)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs,
 		"-c:a", "aac",
-		"-crf", "22", // Good quality
-		"-preset", "ultrafast",
 		outputPath,
 	)
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -726,14 +777,40 @@ func determineIntervals(durationSeconds int) []timeInterval {
 
 // CreateThumbnail extracts a frame from the middle of the video as a thumbnail
 func (s *BookingVideoService) CreateThumbnail(inputPath, outputPath string) error {
-	// Use ffmpeg to extract a thumbnail from the middle of the video
-	cmd := exec.Command(
-		"ffmpeg", "-y", "-i", inputPath,
+	// Use ffmpeg to extract a thumbnail from the middle of the video with hardware acceleration
+	hwAccel := recording.DetectHardwareAcceleration()
+	
+	// Build FFmpeg arguments for thumbnail generation with hardware acceleration
+	ffmpegArgs := []string{"-y"}
+	
+	// Add hardware decoder if available
+	if hwAccel.Available {
+		decoderArgs := hwAccel.BuildDecoderArgs()
+		ffmpegArgs = append(ffmpegArgs, decoderArgs...)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs,
+		"-i", inputPath,
 		"-ss", "00:00:05", // Take frame at 5 seconds
-		"-vframes", "1", // Extract just one frame
-		"-vf", "scale=480:-2", // 480p width thumbnail, maintain aspect ratio
-		outputPath,
+		"-vframes", "1",   // Extract just one frame
 	)
+	
+	// Add scaling filter based on hardware acceleration
+	if hwAccel.Available && hwAccel.Type == recording.HWAccelIntel {
+		// Intel QSV hardware scaling
+		ffmpegArgs = append(ffmpegArgs,
+			"-vf", "scale_qsv=480:-2", // 480p width thumbnail, maintain aspect ratio
+		)
+	} else {
+		// Software scaling
+		ffmpegArgs = append(ffmpegArgs,
+			"-vf", "scale=480:-2", // 480p width thumbnail, maintain aspect ratio
+		)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs, outputPath)
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -760,13 +837,34 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 		return fmt.Errorf("error creating HLS output directory: %v", err)
 	}
 
-	// Buat playlist HLS dengan ffmpeg
-	// ffmpeg -i input.mp4 -profile:v baseline -level 3.0 -start_number 0 -hls_time 5 -hls_list_size 0 -f hls output/playlist.m3u8
-	cmd := exec.Command(
-		"ffmpeg",
-		"-i", videoPath,
-		"-profile:v", "baseline",
-		"-level", "3.0",
+	// Buat playlist HLS dengan ffmpeg dengan hardware acceleration
+	hwAccel := recording.DetectHardwareAcceleration()
+	
+	// Build FFmpeg arguments for HLS generation with hardware acceleration
+	ffmpegArgs := []string{}
+	
+	// Add hardware decoder if available
+	if hwAccel.Available {
+		decoderArgs := hwAccel.BuildDecoderArgs()
+		ffmpegArgs = append(ffmpegArgs, decoderArgs...)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs, "-i", videoPath)
+	
+	// Add encoder with hardware acceleration
+	if hwAccel.Available {
+		encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
+		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
+	} else {
+		// Software fallback
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-profile:v", "baseline",
+			"-level", "3.0",
+		)
+	}
+	
+	ffmpegArgs = append(ffmpegArgs,
 		"-start_number", "0",
 		"-hls_time", "5", // Tiap segment 5 detik
 		"-hls_list_size", "0", // Semua segment dalam playlist
@@ -774,6 +872,8 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 		"-hls_segment_filename", filepath.Join(outputDir, "%03d.ts"),
 		filepath.Join(outputDir, "playlist.m3u8"),
 	)
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

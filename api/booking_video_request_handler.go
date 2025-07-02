@@ -44,12 +44,40 @@ func getBookingJSON(booking map[string]interface{}) string {
 	return string(jsonBytes)
 }
 
+// isNetworkError checks if an error is network-related
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errStr := err.Error()
+	networkErrors := []string{
+		"no such host",
+		"connection refused",
+		"connection timeout",
+		"network is unreachable",
+		"temporary failure in name resolution",
+		"dial tcp",
+		"EOF",
+		"context deadline exceeded",
+	}
+	
+	for _, netErr := range networkErrors {
+		if strings.Contains(errStr, netErr) {
+			return true
+		}
+	}
+	
+	return false
+}
+
 // BookingVideoRequestHandler handles booking video processing requests
 type BookingVideoRequestHandler struct {
-	config        *config.Config
-	db            database.Database
-	r2Storage     *storage.R2Storage
-	uploadService *service.UploadService
+	config         *config.Config
+	db             database.Database
+	r2Storage      *storage.R2Storage
+	uploadService  *service.UploadService
+	offlineManager *service.OfflineManager
 
 	// Rate limiting untuk mencegah klik berkali-kali dalam jangka waktu tertentu
 	lastRequestMutex sync.RWMutex
@@ -59,11 +87,22 @@ type BookingVideoRequestHandler struct {
 
 // NewBookingVideoRequestHandler creates a new booking video request handler instance
 func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService) *BookingVideoRequestHandler {
+	// Initialize AYO API client for offline manager
+	ayoClient, err := NewAyoIndoClient()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize AYO client for offline manager: %v", err)
+	}
+	
+	// Initialize offline manager
+	offlineManager := service.NewOfflineManager(cfg, db, ayoClient)
+	offlineManager.Start()
+	
 	return &BookingVideoRequestHandler{
-		config:          cfg,
-		db:              db,
-		r2Storage:       r2Storage,
-		uploadService:   uploadService,
+		config:         cfg,
+		db:             db,
+		r2Storage:      r2Storage,
+		uploadService:  uploadService,
+		offlineManager: offlineManager,
 		lastRequestTime: make(map[int]time.Time),
 		rateLimit:       30 * time.Second, // Rate limit 30 detik
 	}
@@ -218,10 +257,65 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	// Get today's date for booking lookup
 	today := endTime.Format("2006-01-02")
 	// today := "2025-04-30"
+	// Check if we're offline and handle accordingly
+	if !h.offlineManager.IsOnline() {
+		log.Printf("System offline, attempting offline clip request processing for field %d", fieldID)
+		
+		// Try to process offline using local validation
+		err := h.offlineManager.ProcessOfflineClipRequest(fieldID, targetCamera.Name)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, ApiResponse{
+				Success: false,
+				Message: fmt.Sprintf("System offline and %v", err),
+			})
+			return
+		}
+		
+		c.JSON(http.StatusAccepted, ApiResponse{
+			Success: true,
+			Message: "Clip request queued for processing when online",
+			Data: map[string]interface{}{
+				"field_id":     fieldID,
+				"camera_name":  targetCamera.Name,
+				"offline_mode": true,
+				"queued_at":    time.Now(),
+			},
+		})
+		return
+	}
+
 	// Get bookings from AYO API
 	response, err := ayoClient.GetBookings(today)
 	if err != nil {
 		log.Printf("Error fetching bookings from API: %v", err)
+		
+		// Check if this is a network error and try offline processing
+		if isNetworkError(err) {
+			log.Printf("Network error detected, trying offline processing for field %d", fieldID)
+			
+			offlineErr := h.offlineManager.ProcessOfflineClipRequest(fieldID, targetCamera.Name)
+			if offlineErr != nil {
+				c.JSON(http.StatusServiceUnavailable, ApiResponse{
+					Success: false,
+					Message: fmt.Sprintf("Network error and %v", offlineErr),
+				})
+				return
+			}
+			
+			c.JSON(http.StatusAccepted, ApiResponse{
+				Success: true,
+				Message: "Network error - clip request queued for retry",
+				Data: map[string]interface{}{
+					"field_id":     fieldID,
+					"camera_name":  targetCamera.Name,
+					"offline_mode": true,
+					"queued_at":    time.Now(),
+					"reason":       "network_error",
+				},
+			})
+			return
+		}
+		
 		c.JSON(http.StatusInternalServerError, ApiResponse{
 			Success: false,
 			Message: "Error fetching bookings: " + err.Error(),

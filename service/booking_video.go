@@ -29,10 +29,11 @@ type AyoAPIClient interface {
 
 // BookingVideoService handles all operations related to booking videos
 type BookingVideoService struct {
-	db        database.Database
-	ayoClient AyoAPIClient
-	r2Client  *storage.R2Storage
-	config    *config.Config
+	db             database.Database
+	ayoClient      AyoAPIClient
+	r2Client       *storage.R2Storage
+	config         *config.Config
+	offlineManager *OfflineManager
 }
 
 // Tipe file sementara yang disimpan
@@ -69,6 +70,17 @@ func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Clie
 		ayoClient: ayoClient,
 		r2Client:  r2Client,
 		config:    cfg,
+	}
+}
+
+// NewBookingVideoServiceWithOfflineManager creates a new booking video service with offline manager
+func NewBookingVideoServiceWithOfflineManager(db database.Database, ayoClient AyoAPIClient, r2Client *storage.R2Storage, cfg *config.Config, offlineManager *OfflineManager) *BookingVideoService {
+	return &BookingVideoService{
+		db:             db,
+		ayoClient:      ayoClient,
+		r2Client:       r2Client,
+		config:         cfg,
+		offlineManager: offlineManager,
 	}
 }
 
@@ -432,6 +444,12 @@ func (s *BookingVideoService) NotifyAyoAPI(
 	endTime time.Time,
 	videoType string,
 ) error {
+	// Use offline manager if available for resilient API calls
+	if s.offlineManager != nil {
+		return s.offlineManager.TrySaveVideoAvailable(bookingID, videoType, previewURL, thumbnailURL, uniqueID, startTime, endTime)
+	}
+	
+	// Fallback to direct API call
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
 		videoType,    // videoType

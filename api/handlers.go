@@ -287,6 +287,17 @@ func (s *Server) getResilienceStatus(c *gin.Context) {
 	}
 }
 
+// GET /api/offline-status
+func (s *Server) getOfflineStatus(c *gin.Context) {
+	// This is a placeholder since we can't import the OfflineManager directly
+	// In a real implementation, you'd expose the offline manager through the server
+	c.JSON(200, gin.H{
+		"offline_manager": "not_implemented",
+		"note": "Offline manager status would be exposed here",
+		"timestamp": time.Now(),
+	})
+}
+
 // GET /api/logs
 func (s *Server) getLogs(c *gin.Context) {
 	logPath := "server.log"

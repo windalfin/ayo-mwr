@@ -109,6 +109,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/videos", s.listVideos)
 		api.GET("/system_health", s.getSystemHealth)
 		api.GET("/resilience", s.getResilienceStatus)
+		api.GET("/offline-status", s.getOfflineStatus)
 		api.GET("/logs", s.getLogs)
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 		

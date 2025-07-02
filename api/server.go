@@ -102,6 +102,12 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 		api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
 		
+		// Booking management endpoints
+		api.GET("/bookings", s.getBookings)
+		api.GET("/bookings/:booking_id", s.getBookingByID)
+		api.GET("/bookings/status/:status", s.getBookingsByStatus)
+		api.GET("/bookings/date/:date", s.getBookingsByDate)
+		
 		// Admin endpoints for camera configuration
 		admin := api.Group("/admin")
 		{

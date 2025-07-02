@@ -116,7 +116,10 @@ func main() {
 	// Start camera status cron job (every 5 minutes)
 	cron.StartCameraStatusCron(&cfg)
 
-	// Start booking video processing cron job (every 30 minutes)
+	// Start booking sync cron job (every 5 minutes) - Sync booking data from API to database
+	cron.StartBookingSyncCron(&cfg)
+
+	// Start booking video processing cron job (every 2 minutes) - Process videos from database
 	cron.StartBookingVideoCron(&cfg)
 
 	// Start video request processing cron job (every 30 minutes)

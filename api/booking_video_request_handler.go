@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -36,14 +35,7 @@ type ApiResponse struct {
 }
 
 // getBookingJSON converts a booking map to JSON string
-func getBookingJSON(booking map[string]interface{}) string {
-	jsonBytes, err := json.Marshal(booking)
-	if err != nil {
-		log.Printf("Error marshaling booking to JSON: %v", err)
-		return ""
-	}
-	return string(jsonBytes)
-}
+// getBookingJSON function removed - now using RawJSON from database
 
 // isRetryableError menentukan apakah error layak untuk di-retry
 func isRetryableError(err error) bool {
@@ -286,57 +278,46 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	// Get today's date for booking lookup
 	today := endTime.Format("2006-01-02")
 	// today := "2025-04-30"
-	// Get bookings from AYO API
-	response, err := ayoClient.GetBookings(today)
+	
+	// Get bookings from database instead of API
+	bookingsData, err := h.db.GetBookingsByDate(today)
 	if err != nil {
-		log.Printf("Error fetching bookings from API: %v", err)
+		log.Printf("Error fetching bookings from database: %v", err)
 		c.JSON(http.StatusInternalServerError, ApiResponse{
 			Success: false,
-			Message: "Error fetching bookings: " + err.Error(),
-		})
-		return
-	}
-	// log.Printf("Bookings: %v", response)
-	// Extract bookings from response
-	data, ok := response["data"].([]interface{})
-	if !ok || len(data) == 0 {
-		c.JSON(http.StatusNotFound, ApiResponse{
-			Success: false,
-			Message: "No bookings found for today",
+			Message: "Error fetching bookings from database: " + err.Error(),
 		})
 		return
 	}
 
+	if len(bookingsData) == 0 {
+		c.JSON(http.StatusNotFound, ApiResponse{
+			Success: false,
+			Message: "No bookings found for today in database",
+		})
+		return
+	}
+
+	log.Printf("📅 DATABASE: Found %d bookings for date %s", len(bookingsData), today)
+
 	// Find matching booking for the current time and field_id
-	var matchingBooking map[string]interface{}
+	var matchingBooking *database.BookingData
 	var orderDetailID string
 	var bookingID string
 
-	for _, item := range data {
-		booking, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
+	for _, booking := range bookingsData {
+		bookingID = booking.BookingID
+		status := strings.ToLower(booking.Status) // convert to lowercase
 
-		// Extract booking details
-		orderDetailIDFloat, _ := booking["order_detail_id"].(float64)
-		bookingFieldIDFloat, _ := booking["field_id"].(float64)
-		bookingID, _ = booking["booking_id"].(string)
-		date, _ := booking["date"].(string)
-		startTimeStr, _ := booking["start_time"].(string)
-		endTimeStr, _ := booking["end_time"].(string)
-		statusVal, _ := booking["status"].(string)
-		status := strings.ToLower(statusVal) // convert to lowercase
-
-		if status == "cancelled" {
+		if status == "cancelled" || status == "canceled" {
 			log.Printf("⏭️ SKIP: Booking %s is cancelled", bookingID)
 			continue
 		} else if status != "success" {
-			log.Printf("⏭️ SKIP: Booking %s status is not success", bookingID)
+			log.Printf("⏭️ SKIP: Booking %s status is not success (status: %s)", bookingID, status)
 			continue
 		}
 
-		bookingDate, err := time.Parse("2006-01-02", date)
+		bookingDate, err := time.Parse("2006-01-02", booking.Date)
 		log.Printf("Booking Date: %v", bookingDate)
 		if err != nil {
 			log.Printf("Error parsing date: %v", err)
@@ -355,13 +336,13 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			return time.Date(bookingDate.Year(), bookingDate.Month(), bookingDate.Day(), hour, minute, second, 0, time.Local), nil
 		}
 
-		bookingStartTime, err := parseTime(startTimeStr)
+		bookingStartTime, err := parseTime(booking.StartTime)
 		if err != nil {
 			log.Printf("Error parsing start time: %v", err)
 			continue
 		}
 
-		bookingEndTime, err := parseTime(endTimeStr)
+		bookingEndTime, err := parseTime(booking.EndTime)
 		if err != nil {
 			log.Printf("Error parsing end time: %v", err)
 			continue
@@ -373,16 +354,15 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		log.Printf("Debug Booking End Time: %v", bookingEndTime)
 		log.Printf("Debug End Time: %v", endTime)
 		log.Printf("Debug Start Time: %v", startTime)
+		
 		// Compare field_id and check if current time is within booking time range
-		if int(bookingFieldIDFloat) == fieldID && endTime.After(bookingStartTime) && startTime.Before(bookingEndTime) {
+		if booking.FieldID == fieldID && endTime.After(bookingStartTime) && startTime.Before(bookingEndTime) {
 			log.Printf("🎯 BOOKING: Found matching booking %s (field: %d, time: %s-%s)", 
-				bookingID, fieldID, startTimeStr, endTimeStr)
-			matchingBooking = booking
-			orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
+				bookingID, fieldID, booking.StartTime, booking.EndTime)
+			matchingBooking = &booking
+			orderDetailID = strconv.Itoa(booking.OrderDetailID)
 			break
 		}
-		// matchingBooking = booking
-		// orderDetailID = strconv.Itoa(int(orderDetailIDFloat))
 	}
 
 	// Check if matching booking was found
@@ -438,7 +418,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 				segments,
 				startTime,
 				endTime,
-				getBookingJSON(matchingBooking),
+				matchingBooking.RawJSON, // Use RawJSON from database
 				videoType,
 			)
 			return err

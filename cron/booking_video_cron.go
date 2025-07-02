@@ -2,7 +2,6 @@ package cron
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/offline"
 	"ayo-mwr/recording"
 	"ayo-mwr/service"
 	"ayo-mwr/storage"
@@ -25,14 +25,53 @@ import (
 
 // Semua helper function telah dipindahkan ke BookingVideoService
 
-// getBookingJSON mengkonversi map ke string JSON
-func getBookingJSON(booking map[string]interface{}) string {
-	jsonBytes, err := json.Marshal(booking)
-	if err != nil {
-		log.Printf("processBookings : Error marshaling booking to JSON: %v", err)
-		return ""
+// isRetryableError menentukan apakah error layak untuk di-retry
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
 	}
-	return string(jsonBytes)
+	
+	// RETRY SEMUA ERROR - karena mayoritas error bisa temporary
+	// Hanya skip retry untuk error yang benar-benar nil
+	log.Printf("🔄 RETRY: Will retry error: %v", err)
+	return true
+}
+
+// cleanRetryWithBackoff melakukan retry dengan logging yang bersih dan emoji
+func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName string) error {
+	var lastErr error
+	var retryCount int
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := operation()
+		if err == nil {
+			// Hanya log jika ada retry sebelumnya
+			if retryCount > 0 {
+				log.Printf("🔄 RETRY: %s ✅ Berhasil setelah %d kali retry", operationName, retryCount)
+			}
+			return nil
+		}
+		
+		lastErr = err
+		
+		// Log retry attempt - semua error akan di-retry
+		isRetryableError(err) // Ini akan log error yang akan di-retry
+		
+		// Increment retry count untuk semua attempts setelah yang pertama
+		if attempt > 1 {
+			retryCount++
+		}
+		
+		// Jika masih ada percobaan lagi, tunggu tanpa log noise
+		if attempt < maxRetries {
+			waitTime := time.Duration(3*attempt) * time.Second
+			time.Sleep(waitTime)
+		}
+	}
+	
+	// Log final failure dengan summary
+	log.Printf("🔄 RETRY: %s ❌ Gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
+	return fmt.Errorf("%s gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
 }
 
 // StartBookingVideoCron initializes a cron job that runs every 30 minutes to:
@@ -76,6 +115,15 @@ func StartBookingVideoCron(cfg *config.Config) {
 			return
 		}
 
+		// Initialize upload service
+		uploadService := service.NewUploadService(db, r2Client, cfg, ayoClient)
+
+		// Initialize queue manager for offline capabilities
+		log.Printf("📦 OFFLINE QUEUE: Initializing offline queue system for booking video cron...")
+		queueManager := offline.NewQueueManager(db, uploadService, r2Client, ayoClient, cfg)
+		queueManager.Start()
+		log.Printf("📦 OFFLINE QUEUE: ✅ Offline queue system started successfully for cron")
+
 		// Initialize booking video service
 		bookingVideoService := service.NewBookingVideoService(db, ayoClient, r2Client, cfg)
 
@@ -83,7 +131,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService)
+		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
 
 		// Start the booking video cron
 		schedule := cron.New()
@@ -91,7 +139,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Schedule the task every minute for testing
 		// In production, you'd use a more reasonable interval like "@every 30m"
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService)
+			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling booking video cron: %v", err)
@@ -102,59 +150,48 @@ func StartBookingVideoCron(cfg *config.Config) {
 	}()
 }
 
-// processBookings handles fetching bookings and processing them
-func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService) {
+// processBookings handles fetching bookings from database and processing them
+func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
 	log.Println("processBookings : Running booking video processing task...")
 
 	// Use fixed date for testing
 	today := time.Now().Format("2006-01-02")
 	// today := "2025-04-30" // Fixed date for testing purposes
 
-	// Get bookings from AYO API
-	response, err := ayoClient.GetBookings(today)
+	// Get bookings from database by date
+	bookingsData, err := db.GetBookingsByDate(today)
 	if err != nil {
-		log.Printf("processBookings : Error fetching bookings from API: %v", err)
+		log.Printf("processBookings : Error fetching bookings from database: %v", err)
 		return
 	}
 
-	// Extract data from response
-	data, ok := response["data"].([]interface{})
-	if !ok || len(data) == 0 {
-		log.Println("processBookings : No bookings found for today or invalid response format")
+	if len(bookingsData) == 0 {
+		log.Println("processBookings : No bookings found for today in database")
 		return
 	}
 
-	log.Printf("processBookings : Found %d bookings for today", len(data))
+	log.Printf("processBookings : Found %d bookings for today in database", len(bookingsData))
 
 	// Process bookings concurrently with a limit on parallelism
 	const maxConcurrent = 5 // Maximum number of concurrent booking processing
 	var wg sync.WaitGroup
 	sem := semaphore.NewWeighted(maxConcurrent)
 
-	// Process each booking
-	for _, item := range data {
-		// Extract booking details from map
+	// Process each booking from database
+	for _, bookingItem := range bookingsData {
+		// Extract booking details from database struct
+		orderDetailID := float64(bookingItem.OrderDetailID)
+		bookingID := bookingItem.BookingID
+		date := bookingItem.Date
+		startTimeStr := bookingItem.StartTime
+		endTimeStr := bookingItem.EndTime
+		status := strings.ToLower(bookingItem.Status) // convert to lowercase
+		field_id := float64(bookingItem.FieldID)
+		bookingSource := bookingItem.BookingSource
 
-		booking, ok := item.(map[string]interface{})
-		if !ok {
-			log.Printf("processBookings : Invalid booking format: %v", item)
-			continue
-		}
+		log.Printf("processBookings : Processing booking from DB: %s (Status: %s, Source: %s)", bookingID, status, bookingSource)
 
-		// Extract fields from booking map
-		orderDetailID, _ := booking["order_detail_id"].(float64)
-		bookingID, _ := booking["booking_id"].(string)
-		date, _ := booking["date"].(string)
-		startTimeStr, _ := booking["start_time"].(string)
-		endTimeStr, _ := booking["end_time"].(string)
-		statusVal, _ := booking["status"].(string)
-		status := strings.ToLower(statusVal) // convert to lowercase
-		field_id, _ := booking["field_id"].(float64)
-
-		// date := "2025-05-05T00:00:00Z"
-		// endTimeStr := "06:00:00"
-		// startTimeStr := "05:00:00"
-
+		// 2. THEN: Continue with video processing logic
 		log.Printf("processBookings : Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
 
 		// akan menggunakan kode parsing date di bawah untuk menghindari duplikasi
@@ -183,8 +220,30 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				continue
 			}
 		}
+		// Handle cancelled bookings - update video status if exists
+		if status == "cancelled" || status == "canceled" {
+			existingVideos, err := db.GetVideosByBookingID(bookingID)
+			if err != nil {
+				log.Printf("processBookings : Error checking existing videos for cancelled booking %s: %v", bookingID, err)
+			} else if len(existingVideos) > 0 {
+				// Update all videos for this booking to cancelled status
+				for _, video := range existingVideos {
+					if video.Status != database.StatusCancelled {
+						err := db.UpdateVideoStatus(video.ID, database.StatusCancelled, "Booking cancelled via API")
+						if err != nil {
+							log.Printf("processBookings : Error updating video status to cancelled for booking %s: %v", bookingID, err)
+						} else {
+							log.Printf("📅 BOOKING: Updated video %s to cancelled status for booking %s", video.ID, bookingID)
+						}
+					}
+				}
+			}
+			log.Printf("processBookings : Booking %s is cancelled, skipping video processing", bookingID)
+			continue
+		}
+
 		if status != "success" {
-			log.Printf("processBookings : Booking %s is not success, skipping processing", bookingID)
+			log.Printf("processBookings : Booking %s status is '%s', skipping video processing", bookingID, status)
 			continue
 		}
 
@@ -256,7 +315,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 		// Process this booking in a separate goroutine
 		wg.Add(1)
-		go func(booking map[string]interface{}, bookingID string, startTime, endTime time.Time,
+		go func(bookingData database.BookingData, bookingID string, startTime, endTime time.Time,
 			orderDetailID float64, localOffsetHours time.Duration, field_id float64) {
 			defer wg.Done()
 			defer sem.Release(1) // Release semaphore when done
@@ -303,21 +362,29 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// Convert orderDetailID to string
 				orderDetailIDStr := strconv.Itoa(int(orderDetailID))
 
-				// Process video segments using service
+				// Process video segments using service with retry logic
 				log.Printf("processBookings : orderDetailIDStr %s", orderDetailIDStr)
-				uniqueID, err := bookingService.ProcessVideoSegments(
-					camera,
-					bookingID,
-					orderDetailIDStr,
-					segments,
-					startTime,
-					endTime,
-					getBookingJSON(booking), // rawJSON - contains the full booking JSON
-					videoType,
-				)
+				
+				var uniqueID string
+				err = cleanRetryWithBackoff(func() error {
+					var err error
+					uniqueID, err = bookingService.ProcessVideoSegments(
+						camera,
+						bookingID,
+						orderDetailIDStr,
+						segments,
+						startTime,
+						endTime,
+						bookingData.RawJSON, // rawJSON from database
+						videoType,
+					)
+					return err
+				}, 3, fmt.Sprintf("Video Processing for %s-%s", bookingID, camera.Name))
 
 				if err != nil {
-					log.Printf("processBookings : Error processing video segments for booking %s on camera %s: %v", bookingID, camera.Name, err)
+					log.Printf("processBookings : Error processing video segments for booking %s on camera %s after retries: %v", bookingID, camera.Name, err)
+					// Update status to failed
+					db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Video processing failed: %v", err))
 					continue
 				}
 				log.Printf("processBookings : uniqueID %s", uniqueID)
@@ -325,41 +392,152 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// Ambil path file watermarked yang akan digunakan
 				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
 				log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
-				// Upload processed video
-				// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
-				previewURL, thumbnailURL, err := bookingService.UploadProcessedVideo(
-					uniqueID,
-					watermarkedVideoPath,
-					bookingID,
-					camera.Name,
-				)
+				
+				// Get paths to processed files
+				previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
+				thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
-				if err != nil {
-					log.Printf("processBookings : Error uploading processed video for booking %s on camera %s: %v", bookingID, camera.Name, err)
-					// Update status to failed
-					db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed: %v", err))
+				// Check internet connectivity
+				connectivityChecker := offline.NewConnectivityChecker()
+				
+				var previewURL, thumbnailURL string
+				
+				if connectivityChecker.IsOnline() {
+					log.Printf("🌐 CONNECTIVITY: Online - mencoba upload langsung untuk %s-%s...", bookingID, camera.Name)
+					
+					// Upload processed video with retry logic
+					// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
+					err = cleanRetryWithBackoff(func() error {
+						var err error
+						previewURL, thumbnailURL, err = bookingService.UploadProcessedVideo(
+							uniqueID,
+							watermarkedVideoPath,
+							bookingID,
+							camera.Name,
+						)
+						return err
+					}, 5, fmt.Sprintf("File Upload for %s-%s", bookingID, camera.Name))
+
+					if err != nil {
+						log.Printf("⚠️ WARNING: Direct upload failed for %s-%s: %v", bookingID, camera.Name, err)
+						log.Printf("📦 QUEUE: Menambahkan task upload ke offline queue...")
+						
+						// Add to offline queue
+						err = queueManager.EnqueueR2Upload(
+							uniqueID,
+							watermarkedVideoPath,
+							previewPath,
+							thumbnailPath,
+							fmt.Sprintf("mp4/%s.mp4", uniqueID),
+							fmt.Sprintf("preview/%s.mp4", uniqueID),
+							fmt.Sprintf("thumbnail/%s.png", uniqueID),
+						)
+						
+						if err != nil {
+							log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
+							db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed and queue error: %v", err))
+							continue
+						}
+						
+						// Update status to uploading (will be processed by queue)
+						db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
+						log.Printf("📦 QUEUE: Upload task queued for video %s", uniqueID)
+						continue
+					}
+
+					log.Printf("📤 SUCCESS: Direct upload completed for %s-%s", bookingID, camera.Name)
+				} else {
+					log.Printf("🌐 CONNECTIVITY: Offline - menambahkan upload task ke queue untuk %s-%s...", bookingID, camera.Name)
+					
+					// Add to offline queue since we're offline
+					err = queueManager.EnqueueR2Upload(
+						uniqueID,
+						watermarkedVideoPath,
+						previewPath,
+						thumbnailPath,
+						fmt.Sprintf("mp4/%s.mp4", uniqueID),
+						fmt.Sprintf("preview/%s.mp4", uniqueID),
+						fmt.Sprintf("thumbnail/%s.png", uniqueID),
+					)
+					
+					if err != nil {
+						log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
+						db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Offline queue error: %v", err))
+						continue
+					}
+					
+					// Get video to calculate duration for future notification
+					video, err := db.GetVideo(uniqueID)
+					var duration float64 = 60.0 // Default 60 seconds
+					if err == nil && video != nil {
+						duration = video.Duration
+					}
+					
+					// Add API notification to queue as well (will be processed after upload completes)
+					err = queueManager.EnqueueAyoAPINotify(
+						uniqueID,
+						uniqueID,
+						"", // MP4 URL will be updated when upload completes
+						"", // Preview URL will be updated when upload completes
+						"", // Thumbnail URL will be updated when upload completes
+						duration,
+					)
+					
+					if err != nil {
+						log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
+					} else {
+						log.Printf("📦 QUEUE: API notification task queued untuk video %s", uniqueID)
+					}
+					
+					// Update status to uploading (will be processed by queue when online)
+					db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
+					log.Printf("📦 QUEUE: Upload task queued untuk video %s - akan diproses saat online", uniqueID)
 					continue
 				}
 				log.Printf("processBookings : previewURL %s", previewURL)
 				log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
-				// Notify AYO API of successful upload
-				var startTimeBooking = startTime.Add(localOffsetHours * -1)
-				var endTimeBooking = endTime.Add(localOffsetHours * -1)
-				err = bookingService.NotifyAyoAPI(
-					bookingID,
-					uniqueID,
-					previewURL,
-					thumbnailURL,
-					startTimeBooking,
-					endTimeBooking,
-					videoType,
-				)
+				
+				// Notify AYO API of successful upload with retry logic
+				// Get video to calculate duration
+				video, err := db.GetVideo(uniqueID)
+				var duration float64 = 60.0 // Default 60 seconds
+				if err == nil && video != nil {
+					duration = video.Duration
+				}
+				
+				err = cleanRetryWithBackoff(func() error {
+					return uploadService.NotifyAyoAPI(
+						uniqueID,
+						"", // mp4URL will be filled by queue manager if needed
+						previewURL,
+						thumbnailURL,
+						duration,
+					)
+				}, 3, fmt.Sprintf("API Notification for %s-%s", bookingID, camera.Name))
 
 				if err != nil {
-					db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Notify AYO API failed: %v", err))
-					log.Printf("processBookings : Error notifying AYO API of successful upload for booking %s on camera %s: %v", bookingID, camera.Name, err)
+					log.Printf("⚠️ WARNING: Direct API notification failed for %s-%s: %v", bookingID, camera.Name, err)
+					log.Printf("📦 QUEUE: Menambahkan task notifikasi API ke offline queue...")
+					
+					// Add API notification to queue
+					err = queueManager.EnqueueAyoAPINotify(
+						uniqueID,
+						uniqueID,
+						"", // MP4 URL will be updated when available
+						previewURL,
+						thumbnailURL,
+						duration,
+					)
+					
+					if err != nil {
+						log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
+						db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("API notification failed and queue error: %v", err))
+					} else {
+						log.Printf("📦 QUEUE: API notification task queued for video %s", uniqueID)
+					}
+				} else {
+					log.Printf("🔔 SUCCESS: Direct API notification sent for %s-%s", bookingID, camera.Name)
 				}
-				log.Printf("processBookings : Notify AYO API of successful upload for booking %s on camera %s", bookingID, camera.Name)
 				// Cleanup temporary files after successful processing
 				// bookingService.CleanupTemporaryFiles(
 				// 	mergedVideoPath,
@@ -371,7 +549,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// Increment counter for successful camera processing
 				camerasWithVideo++
 
-				log.Printf("processBookings : Successfully processed and uploaded video for booking %s on camera %s (ID: %s)", bookingID, camera.Name, uniqueID)
+				log.Printf("🎉 SUCCESS: Completed processing for booking %s on camera %s (ID: %s)", bookingID, camera.Name, uniqueID)
 			}
 
 			// Log summary of camera processing
@@ -380,7 +558,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			} else {
 				log.Printf("processBookings : No camera videos found for booking %s in the specified time range", bookingID)
 			}
-		}(booking, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id) // Pass variables to goroutine
+		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id) // Pass variables to goroutine
 	}
 
 	// Wait for all booking processing goroutines to complete

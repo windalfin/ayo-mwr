@@ -347,6 +347,28 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Create bookings table for storing AYO API booking data
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS bookings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			booking_id TEXT NOT NULL UNIQUE,
+			order_detail_id INTEGER,
+			field_id INTEGER,
+			date TEXT,
+			start_time TEXT,
+			end_time TEXT,
+			booking_source TEXT,
+			status TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			raw_json TEXT,
+			last_sync_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
 	// Create indexes for pending_tasks
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_pending_tasks_status ON pending_tasks (status)
@@ -357,6 +379,35 @@ func initTables(db *sql.DB) error {
 
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_pending_tasks_next_retry ON pending_tasks (next_retry_at)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for bookings
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_booking_id ON bookings (booking_id)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings (date)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings (status)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_field_id ON bookings (field_id)
 	`)
 	if err != nil {
 		return err
@@ -1513,4 +1564,314 @@ func (s *SQLiteDB) GetTaskByID(taskID int) (*PendingTask, error) {
 	}
 
 	return &task, nil
+}
+
+// CreateOrUpdateBooking creates a new booking or updates existing one
+func (s *SQLiteDB) CreateOrUpdateBooking(booking BookingData) error {
+	// Check if booking already exists
+	existingBooking, err := s.GetBookingByID(booking.BookingID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("error checking existing booking: %v", err)
+	}
+
+	now := time.Now()
+	booking.LastSyncAt = now
+
+	if existingBooking != nil {
+		// Update existing booking
+		booking.UpdatedAt = now
+		booking.ID = existingBooking.ID // Preserve original ID
+
+		_, err = s.db.Exec(`
+			UPDATE bookings SET
+				order_detail_id = ?,
+				field_id = ?,
+				date = ?,
+				start_time = ?,
+				end_time = ?,
+				booking_source = ?,
+				status = ?,
+				updated_at = ?,
+				raw_json = ?,
+				last_sync_at = ?
+			WHERE booking_id = ?`,
+			booking.OrderDetailID,
+			booking.FieldID,
+			booking.Date,
+			booking.StartTime,
+			booking.EndTime,
+			booking.BookingSource,
+			booking.Status,
+			booking.UpdatedAt,
+			booking.RawJSON,
+			booking.LastSyncAt,
+			booking.BookingID,
+		)
+		
+		if err != nil {
+			return fmt.Errorf("error updating booking: %v", err)
+		}
+		
+		log.Printf("📅 BOOKING: Updated booking %s (status: %s)", booking.BookingID, booking.Status)
+	} else {
+		// Create new booking
+		booking.CreatedAt = now
+		booking.UpdatedAt = now
+
+		_, err = s.db.Exec(`
+			INSERT INTO bookings (
+				booking_id, order_detail_id, field_id, date, start_time, end_time,
+				booking_source, status, created_at, updated_at, raw_json, last_sync_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			booking.BookingID,
+			booking.OrderDetailID,
+			booking.FieldID,
+			booking.Date,
+			booking.StartTime,
+			booking.EndTime,
+			booking.BookingSource,
+			booking.Status,
+			booking.CreatedAt,
+			booking.UpdatedAt,
+			booking.RawJSON,
+			booking.LastSyncAt,
+		)
+		
+		if err != nil {
+			return fmt.Errorf("error creating booking: %v", err)
+		}
+		
+		log.Printf("📅 BOOKING: Created new booking %s (status: %s)", booking.BookingID, booking.Status)
+	}
+
+	return nil
+}
+
+// GetBookingByID retrieves a booking by its booking ID
+func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
+	var booking BookingData
+	var createdAt, updatedAt, lastSyncAt sql.NullTime
+	var orderDetailID, fieldID sql.NullInt64
+	var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings WHERE booking_id = ?`, bookingID).Scan(
+		&booking.ID,
+		&booking.BookingID,
+		&orderDetailID,
+		&fieldID,
+		&date,
+		&startTime,
+		&endTime,
+		&bookingSource,
+		&status,
+		&createdAt,
+		&updatedAt,
+		&rawJSON,
+		&lastSyncAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle nullable fields
+	if orderDetailID.Valid {
+		booking.OrderDetailID = int(orderDetailID.Int64)
+	}
+	if fieldID.Valid {
+		booking.FieldID = int(fieldID.Int64)
+	}
+	if date.Valid {
+		booking.Date = date.String
+	}
+	if startTime.Valid {
+		booking.StartTime = startTime.String
+	}
+	if endTime.Valid {
+		booking.EndTime = endTime.String
+	}
+	if bookingSource.Valid {
+		booking.BookingSource = bookingSource.String
+	}
+	if status.Valid {
+		booking.Status = status.String
+	}
+	if rawJSON.Valid {
+		booking.RawJSON = rawJSON.String
+	}
+	if createdAt.Valid {
+		booking.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		booking.UpdatedAt = updatedAt.Time
+	}
+	if lastSyncAt.Valid {
+		booking.LastSyncAt = lastSyncAt.Time
+	}
+
+	return &booking, nil
+}
+
+// GetBookingsByDate retrieves all bookings for a specific date
+func (s *SQLiteDB) GetBookingsByDate(date string) ([]BookingData, error) {
+	rows, err := s.db.Query(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings 
+		WHERE date = ?
+		ORDER BY start_time ASC`, date)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting bookings by date: %v", err)
+	}
+	defer rows.Close()
+
+	return s.scanBookings(rows)
+}
+
+// GetBookingsByStatus retrieves all bookings with a specific status
+func (s *SQLiteDB) GetBookingsByStatus(status string) ([]BookingData, error) {
+	rows, err := s.db.Query(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings 
+		WHERE status = ?
+		ORDER BY date DESC, start_time ASC`, status)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting bookings by status: %v", err)
+	}
+	defer rows.Close()
+
+	return s.scanBookings(rows)
+}
+
+// UpdateBookingStatus updates only the status of a booking
+func (s *SQLiteDB) UpdateBookingStatus(bookingID string, status string) error {
+	now := time.Now()
+	
+	result, err := s.db.Exec(`
+		UPDATE bookings SET 
+			status = ?, 
+			updated_at = ?,
+			last_sync_at = ?
+		WHERE booking_id = ?`,
+		status, now, now, bookingID)
+	
+	if err != nil {
+		return fmt.Errorf("error updating booking status: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no booking found with ID: %s", bookingID)
+	}
+
+	log.Printf("📅 BOOKING: Updated status for booking %s to %s", bookingID, status)
+	return nil
+}
+
+// DeleteOldBookings removes bookings older than specified time
+func (s *SQLiteDB) DeleteOldBookings(olderThan time.Time) error {
+	result, err := s.db.Exec(`
+		DELETE FROM bookings 
+		WHERE created_at < ?`,
+		olderThan)
+	
+	if err != nil {
+		return fmt.Errorf("error deleting old bookings: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	log.Printf("📅 BOOKING: Deleted %d old bookings", rowsAffected)
+	return nil
+}
+
+// scanBookings is a helper function to scan multiple booking rows
+func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
+	var bookings []BookingData
+
+	for rows.Next() {
+		var booking BookingData
+		var createdAt, updatedAt, lastSyncAt sql.NullTime
+		var orderDetailID, fieldID sql.NullInt64
+		var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+
+		err := rows.Scan(
+			&booking.ID,
+			&booking.BookingID,
+			&orderDetailID,
+			&fieldID,
+			&date,
+			&startTime,
+			&endTime,
+			&bookingSource,
+			&status,
+			&createdAt,
+			&updatedAt,
+			&rawJSON,
+			&lastSyncAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("error scanning booking row: %v", err)
+		}
+
+		// Handle nullable fields
+		if orderDetailID.Valid {
+			booking.OrderDetailID = int(orderDetailID.Int64)
+		}
+		if fieldID.Valid {
+			booking.FieldID = int(fieldID.Int64)
+		}
+		if date.Valid {
+			booking.Date = date.String
+		}
+		if startTime.Valid {
+			booking.StartTime = startTime.String
+		}
+		if endTime.Valid {
+			booking.EndTime = endTime.String
+		}
+		if bookingSource.Valid {
+			booking.BookingSource = bookingSource.String
+		}
+		if status.Valid {
+			booking.Status = status.String
+		}
+		if rawJSON.Valid {
+			booking.RawJSON = rawJSON.String
+		}
+		if createdAt.Valid {
+			booking.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			booking.UpdatedAt = updatedAt.Time
+		}
+		if lastSyncAt.Valid {
+			booking.LastSyncAt = lastSyncAt.Time
+		}
+
+		bookings = append(bookings, booking)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating booking rows: %v", err)
+	}
+
+	return bookings, nil
 }

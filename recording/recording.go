@@ -524,6 +524,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 // StartMP4Segmenter periodically merges the last 1 minute of HLS .ts segments into a single MP4 file
 func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	// Ensure hlsDir is absolute for robust concat list pathing
+	// log.Printf("[%s] MP4 segmenter: starting for hlsDir: %s", cameraName, hlsDir)
 	var err error
 	hlsDir, err = filepath.Abs(hlsDir)
 	if err != nil {
@@ -536,7 +537,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
             now := time.Now()
             next := now.Truncate(time.Minute).Add(time.Minute)
             time.Sleep(time.Until(next) + 6*time.Second)
-
+			log.Printf("[%s] MP4 segmenter: sleeping until next minute boundary", cameraName)	
             // we build MP4 for the previous minute window [startWindow, endWindow)
             startWindow := next.Add(-1 * time.Minute)
             endWindow := next
@@ -545,6 +546,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
 				continue
 			}
+			
 			var segs []string
 			for _, e := range entries {
 				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
@@ -557,6 +559,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 					// Use segment timestamp for precise selection
 					if !segmentTime.Before(startWindow) && segmentTime.Before(endWindow) {
 						segs = append(segs, filepath.Base(e.Name()))
+						log.Printf("[%s] MP4 segmenter: ✅ ADDED segment %s (timestamp: %s)", cameraName, e.Name(), segmentTime.Format("15:04:05"))
 					}
 					continue
 				}
@@ -568,13 +571,13 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				}
 				if !info.ModTime().Before(startWindow) && info.ModTime().Before(endWindow) {
 					segs = append(segs, filepath.Base(e.Name()))
+					log.Printf("[%s] MP4 segmenter: ✅ ADDED segment %s (modtime: %s)", cameraName, e.Name(), info.ModTime().Format("15:04:05"))
 				}
 			}
 			if len(segs) == 0 {
 				continue
 			}
 			sort.Strings(segs)
-			// log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs) // Noise reduced
 			hlsDir = filepath.Clean(hlsDir)
 
 			// ---- Concurrency control ----
@@ -806,8 +809,8 @@ func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
 	timeStr := strings.TrimPrefix(filename, "segment_")
 	timeStr = strings.TrimSuffix(timeStr, ".ts")
 	
-	// Parse timestamp
-	segmentTime, err := time.Parse("20060102_150405", timeStr)
+	// Parse timestamp in LOCAL timezone to match startWindow/endWindow
+	segmentTime, err := time.ParseInLocation("20060102_150405", timeStr, time.Local)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timeStr, err)
 	}

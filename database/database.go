@@ -150,6 +150,23 @@ type AyoAPINotifyTaskData struct {
 	Duration    float64 `json:"duration"`
 }
 
+// BookingData represents a booking from AYO API
+type BookingData struct {
+	ID               int       `json:"id"`               // Auto-increment primary key
+	BookingID        string    `json:"bookingId"`        // Booking ID from API
+	OrderDetailID    int       `json:"orderDetailId"`    // Order detail ID
+	FieldID          int       `json:"fieldId"`          // Field ID
+	Date             string    `json:"date"`             // Booking date (YYYY-MM-DD)
+	StartTime        string    `json:"startTime"`        // Start time (HH:MM:SS)
+	EndTime          string    `json:"endTime"`          // End time (HH:MM:SS)
+	BookingSource    string    `json:"bookingSource"`    // Booking source (reservation, order_detail, etc.)
+	Status           string    `json:"status"`           // Booking status (SUCCESS, CANCELLED, etc.)
+	CreatedAt        time.Time `json:"createdAt"`        // When record was created in our DB
+	UpdatedAt        time.Time `json:"updatedAt"`        // When record was last updated in our DB
+	RawJSON          string    `json:"rawJson"`          // Complete raw JSON from API
+	LastSyncAt       time.Time `json:"lastSyncAt"`       // Last time we synced this booking
+}
+
 // Database defines the interface for database operations
 type Database interface {
 	// Video operations
@@ -199,6 +216,14 @@ type Database interface {
 	UpdateTaskNextRetry(taskID int, nextRetryAt time.Time, attempts int) error
 	DeleteCompletedTasks(olderThan time.Time) error
 	GetTaskByID(taskID int) (*PendingTask, error)
+
+	// Booking operations
+	CreateOrUpdateBooking(booking BookingData) error
+	GetBookingByID(bookingID string) (*BookingData, error)
+	GetBookingsByDate(date string) ([]BookingData, error)
+	GetBookingsByStatus(status string) ([]BookingData, error)
+	UpdateBookingStatus(bookingID string, status string) error
+	DeleteOldBookings(olderThan time.Time) error
 
 	// Helper operations
 	Close() error

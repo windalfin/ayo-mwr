@@ -126,7 +126,7 @@ func main() {
 	cron.StartVideoRequestCron(&cfg)
 
 	// Start disk management cron job (nightly at 2 AM)
-	diskCron := cron.NewDiskManagementCron(db, diskManager)
+	diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)
 	diskCron.Start()
 	log.Println("Started disk management cron job")
 
@@ -235,9 +235,9 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 		log.Printf("Found %d existing storage disks, skipping initial setup", len(disks))
 
 		// First discover any new disks
-    diskManager.DiscoverAndRegisterDisks()
+		diskManager.DiscoverAndRegisterDisks()
 
-        // Run a manual scan to update disk space
+		// Run a manual scan to update disk space
 		err = diskManager.ScanAndUpdateDiskSpace()
 		if err != nil {
 			log.Printf("Warning: Failed to scan existing disks: %v", err)
@@ -247,6 +247,14 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 		err = diskManager.SelectActiveDisk()
 		if err != nil {
 			log.Printf("Warning: Failed to select active disk: %v", err)
+		}
+
+		// After active disk is determined, update cfg.StoragePath
+		if activePath, apErr := diskManager.GetActiveDiskPath(); apErr == nil {
+			log.Printf("[MAIN] Using active disk path for recordings: %s", activePath)
+			cfg.StoragePath = activePath
+		} else {
+			log.Printf("Warning: Unable to resolve active disk path: %v", apErr)
 		}
 
 		return nil
@@ -260,10 +268,10 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 		return fmt.Errorf("failed to register initial disk: %v", err)
 	}
 
-	    // Discover any disks before initial scan
-    diskManager.DiscoverAndRegisterDisks()
+	// Discover any disks before initial scan
+	diskManager.DiscoverAndRegisterDisks()
 
-    // Run initial scan and selection
+	// Run initial scan and selection
 	err = diskManager.ScanAndUpdateDiskSpace()
 	if err != nil {
 		log.Printf("Warning: Failed to scan initial disk: %v", err)

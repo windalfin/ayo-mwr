@@ -4,24 +4,27 @@ import (
 	"log"
 	"time"
 
+    "ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/storage"
 )
 
 // DiskManagementCron handles disk space monitoring and management tasks
 type DiskManagementCron struct {
-	db          database.Database
-	diskManager *storage.DiskManager
-	running     bool
+    db          database.Database
+    diskManager *storage.DiskManager
+    cfg         *config.Config
+    running     bool
 }
 
 // NewDiskManagementCron creates a new disk management cron instance
-func NewDiskManagementCron(db database.Database, diskManager *storage.DiskManager) *DiskManagementCron {
-	return &DiskManagementCron{
-		db:          db,
-		diskManager: diskManager,
-		running:     false,
-	}
+func NewDiskManagementCron(db database.Database, diskManager *storage.DiskManager, cfg *config.Config) *DiskManagementCron {
+    return &DiskManagementCron{
+        db:          db,
+        diskManager: diskManager,
+        cfg:         cfg,
+        running:     false,
+    }
 }
 
 // Start begins the disk management cron job
@@ -108,7 +111,12 @@ func (dmc *DiskManagementCron) runDiskSelection() {
 		return
 	}
 
-	log.Printf("=== Active disk selected: %s ===", activeDiskPath)
+	// Update the global storage path so legacy recorders will use the new disk for future restarts
+    if dmc.cfg != nil {
+        dmc.cfg.StoragePath = activeDiskPath
+    }
+
+    log.Printf("=== Active disk selected: %s ===", activeDiskPath)
 }
 
 // logDiskUsageStats logs current disk usage statistics

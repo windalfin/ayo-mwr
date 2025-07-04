@@ -113,7 +113,7 @@ func main() {
 
 	// 9. Test disk management cron
 	fmt.Println("9. Testing disk management cron...")
-	diskCron := cron.NewDiskManagementCron(db, diskManager)
+	diskCron := cron.NewDiskManagementCron(db, diskManager, nil)
 	err = diskCron.RunManualScan()
 	if err != nil {
 		log.Printf("Warning: Manual scan had issues: %v", err)

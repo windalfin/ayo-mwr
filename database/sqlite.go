@@ -1287,6 +1287,14 @@ func (s *SQLiteDB) UpdateDiskSpace(id string, totalGB, availableGB int64) error 
 	return err
 }
 
+// UpdateDiskPriority updates the priority_order for a storage disk
+func (s *SQLiteDB) UpdateDiskPriority(id string, priority int) error {
+    _, err := s.db.Exec(`
+        UPDATE storage_disks SET priority_order = ?, last_scan = ? WHERE id = ?
+    `, priority, time.Now(), id)
+    return err
+}
+
 // SetActiveDisk sets a disk as active and deactivates all others
 func (s *SQLiteDB) SetActiveDisk(id string) error {
 	tx, err := s.db.Begin()

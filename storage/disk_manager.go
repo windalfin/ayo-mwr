@@ -72,8 +72,19 @@ func (dm *DiskManager) ScanAndUpdateDiskSpace() error {
 			continue
 		}
 
-		log.Printf("Updated disk %s (%s): %dGB total, %dGB available",
-			disk.ID, disk.Path, totalGB, availableGB)
+        // Recalculate priority based on current disk type every scan
+        diskType := dm.detectDiskType(disk.Path)
+        newPriority := dm.getAutoPriority(diskType)
+        if newPriority != disk.PriorityOrder {
+            if err := dm.db.UpdateDiskPriority(disk.ID, newPriority); err != nil {
+                log.Printf("Warning: Failed to update priority for %s: %v", disk.ID, err)
+            } else {
+                disk.PriorityOrder = newPriority
+            }
+        }
+
+		log.Printf("Updated disk %s (%s): %dGB total, %dGB available (priority %d)",
+			disk.ID, disk.Path, totalGB, availableGB, disk.PriorityOrder)
 	}
 
 	log.Println("Disk space scan completed")

@@ -196,6 +196,7 @@ type Database interface {
 	GetStorageDisks() ([]StorageDisk, error)
 	GetActiveDisk() (*StorageDisk, error)
 	UpdateDiskSpace(id string, totalGB, availableGB int64) error
+	UpdateDiskPriority(id string, priority int) error
 	SetActiveDisk(id string) error
 	GetStorageDisk(id string) (*StorageDisk, error)
 

@@ -67,6 +67,9 @@ func (dmc *DiskManagementCron) Stop() {
 // runDiskSpaceScan performs the nightly disk space scan
 func (dmc *DiskManagementCron) runDiskSpaceScan() {
 	log.Println("=== Starting nightly disk space scan ===")
+
+    // Discover and register any newly mounted disks before scanning
+    dmc.diskManager.DiscoverAndRegisterDisks()
 	startTime := time.Now()
 
 	err := dmc.diskManager.ScanAndUpdateDiskSpace()

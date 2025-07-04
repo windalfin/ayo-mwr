@@ -234,7 +234,10 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 	if len(disks) > 0 {
 		log.Printf("Found %d existing storage disks, skipping initial setup", len(disks))
 
-		// Run a manual scan to update disk space
+		// First discover any new disks
+    diskManager.DiscoverAndRegisterDisks()
+
+        // Run a manual scan to update disk space
 		err = diskManager.ScanAndUpdateDiskSpace()
 		if err != nil {
 			log.Printf("Warning: Failed to scan existing disks: %v", err)
@@ -257,7 +260,10 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 		return fmt.Errorf("failed to register initial disk: %v", err)
 	}
 
-	// Run initial scan and selection
+	    // Discover any disks before initial scan
+    diskManager.DiscoverAndRegisterDisks()
+
+    // Run initial scan and selection
 	err = diskManager.ScanAndUpdateDiskSpace()
 	if err != nil {
 		log.Printf("Warning: Failed to scan initial disk: %v", err)

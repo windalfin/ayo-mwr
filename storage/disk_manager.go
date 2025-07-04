@@ -35,6 +35,7 @@ const (
 )
 
 // DiskManager handles storage disk management and selection
+// It also supports automatic discovery of new storage disks (Linux only).
 type DiskManager struct {
 	db database.Database
 }
@@ -47,6 +48,9 @@ func NewDiskManager(db database.Database) *DiskManager {
 }
 
 // ScanAndUpdateDiskSpace scans all registered disks and updates their space information
+// ScanAndUpdateDiskSpace updates space info for all known disks.
+// NOTE: It does *not* discover new disks; call DiscoverAndRegisterDisks first if you
+// want to pick up freshly mounted devices.
 func (dm *DiskManager) ScanAndUpdateDiskSpace() error {
 	log.Println("Starting disk space scan...")
 
@@ -428,6 +432,83 @@ func (dm *DiskManager) isRotationalDevice(blockDevice string) bool {
 }
 
 // getAutoPriority returns the automatic priority for a given disk type
+// DiscoverAndRegisterDisks scans /proc/mounts (Linux) and registers any block
+// devices that are not yet present in the storage_disks table. It intentionally
+// skips well-known system mount points (/, /boot, /proc, etc.) and read-only/virtual
+// filesystems.
+func (dm *DiskManager) DiscoverAndRegisterDisks() {
+    if runtime.GOOS != "linux" {
+        log.Println("[DiskManager] Auto discovery only supported on Linux")
+        return
+    }
+
+    disks, err := dm.db.GetStorageDisks()
+    if err != nil {
+        log.Printf("[DiskManager] Failed to get existing disks: %v", err)
+        return
+    }
+    existing := make(map[string]struct{})
+    for _, d := range disks {
+        existing[d.Path] = struct{}{}
+    }
+
+    content, err := ioutil.ReadFile("/proc/mounts")
+    if err != nil {
+        log.Printf("[DiskManager] Failed to read /proc/mounts: %v", err)
+        return
+    }
+
+    for _, line := range strings.Split(string(content), "\n") {
+        fields := strings.Fields(line)
+        if len(fields) < 3 {
+            continue
+        }
+        device := fields[0]
+        mountPoint := fields[1]
+        fsType := fields[2]
+
+        if !strings.HasPrefix(device, "/dev/") { // ignore pseudo/virtual mounts
+            continue
+        }
+        if dm.shouldSkipMount(mountPoint, fsType) {
+            continue
+        }
+        if _, ok := existing[mountPoint]; ok {
+            continue // already registered
+        }
+
+        // Attempt to register
+        if err := dm.RegisterDisk(mountPoint, 0); err != nil {
+            log.Printf("[DiskManager] Auto-register skipped %s: %v", mountPoint, err)
+        } else {
+            log.Printf("[DiskManager] Auto-registered new disk: %s", mountPoint)
+        }
+    }
+}
+
+// shouldSkipMount returns true for system mount points or unsupported fs types.
+func (dm *DiskManager) shouldSkipMount(mountPoint, fsType string) bool {
+    // System mount prefixes that we do not want to treat as recording disks.
+    skipPrefixes := []string{"/proc", "/sys", "/run", "/dev", "/boot", "/snap", "/var", "/tmp"}
+    for _, p := range skipPrefixes {
+        if strings.HasPrefix(mountPoint, p) {
+            return true
+        }
+    }
+    // Always ignore root filesystem ("/") to prevent filling OS disk inadvertently
+    if mountPoint == "/" {
+        return true
+    }
+    // Skip read-only or special filesystems
+    specialFSTypes := []string{"squashfs", "ramfs", "tmpfs", "devtmpfs"}
+    for _, t := range specialFSTypes {
+        if fsType == t {
+            return true
+        }
+    }
+    return false
+}
+
 func (dm *DiskManager) getAutoPriority(diskType DiskType) int {
 	switch diskType {
 	case DiskTypeExternal:

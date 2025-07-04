@@ -106,7 +106,7 @@ func main() {
 		log.Printf("Warning: Failed to setup initial disk: %v", err)
 	}
 	// Start config update cron job (every 24 hours)
-	cron.StartConfigUpdateCron(&cfg)
+	cron.StartConfigUpdateCron(&cfg, db)
 	// delay 15 seconds before first run
 	time.Sleep(15 * time.Second)
 

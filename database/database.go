@@ -189,6 +189,7 @@ type Database interface {
 	// Camera configuration operations
 	GetCameras() ([]CameraConfig, error)
 	InsertCameras(cameras []CameraConfig) error
+	UpdateCameraConfig(cameraName string, resolution string, frameRate int, autoDelete int, width int, height int) error
 
 	// Storage disk operations
 	CreateStorageDisk(disk StorageDisk) error

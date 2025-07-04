@@ -1875,3 +1875,24 @@ func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
 
 	return bookings, nil
 }
+
+// UpdateCameraConfig updates specific configuration fields for a camera
+func (s *SQLiteDB) UpdateCameraConfig(cameraName string, resolution string, frameRate int, autoDelete int, width int, height int) error {
+	_, err := s.db.Exec(`
+		UPDATE cameras SET 
+			resolution = ?, 
+			frame_rate = ?, 
+			auto_delete = ?,
+			width = ?,
+			height = ?
+		WHERE name = ?`,
+		resolution, frameRate, autoDelete, width, height, cameraName)
+	
+	if err != nil {
+		return fmt.Errorf("error updating camera config: %v", err)
+	}
+	
+	log.Printf("📹 CAMERA: Updated config for %s - Resolution: %s (%dx%d), FrameRate: %d, AutoDelete: %d", 
+		cameraName, resolution, width, height, frameRate, autoDelete)
+	return nil
+}

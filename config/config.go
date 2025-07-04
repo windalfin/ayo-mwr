@@ -305,7 +305,7 @@ func LoadConfigFromFile(filePath string) (Config, error) {
 }
 
 // LoadConfigFromAPI loads configuration from AYO API using the provided client
-func LoadConfigFromAPI(cfg Config, client APIClient) (Config, error) {
+func LoadConfigFromAPI(cfg Config, client APIClient, db database.Database) (Config, error) {
 	// Get video configuration from API
 	response, err := client.GetVideoConfiguration()
 	if err != nil {
@@ -321,7 +321,7 @@ func LoadConfigFromAPI(cfg Config, client APIClient) (Config, error) {
 	log.Printf("Video configuration from API: %+v", data)
 
 	// Update config from API response
-	UpdateConfigFromAPIResponse(&cfg, data)
+	UpdateConfigFromAPIResponse(&cfg, data, db)
 
 	return cfg, nil
 }

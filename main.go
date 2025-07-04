@@ -253,6 +253,8 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 		if activePath, apErr := diskManager.GetActiveDiskPath(); apErr == nil {
 			log.Printf("[MAIN] Using active disk path for recordings: %s", activePath)
 			cfg.StoragePath = activePath
+			// Update environment variable so all functions use the active disk
+			os.Setenv("STORAGE_PATH", activePath)
 		} else {
 			log.Printf("Warning: Unable to resolve active disk path: %v", apErr)
 		}

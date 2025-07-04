@@ -2,6 +2,7 @@ package cron
 
 import (
 	"log"
+	"os"
 	"time"
 
     "ayo-mwr/config"
@@ -114,6 +115,8 @@ func (dmc *DiskManagementCron) runDiskSelection() {
 	// Update the global storage path so legacy recorders will use the new disk for future restarts
     if dmc.cfg != nil {
         dmc.cfg.StoragePath = activeDiskPath
+        // Update environment variable so all functions use the active disk
+        os.Setenv("STORAGE_PATH", activeDiskPath)
     }
 
     log.Printf("=== Active disk selected: %s ===", activeDiskPath)

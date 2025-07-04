@@ -637,7 +637,12 @@ func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Create watermark directory if it doesn't exist
 	venueCode := c.venueCode
-	folder := filepath.Join("watermark", venueCode)
+	// Use storage path from environment (updated by active disk selection)
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "./videos"
+	}
+	folder := filepath.Join(storagePath, "watermark", venueCode)
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
 	}
@@ -661,13 +666,27 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Check if watermark file for the specified resolution exists
 	specificPath := filepath.Join(folder, sizes[resolution])
 	log.Printf("GetWatermark : Watermark path: %s", specificPath)
-	if _, err := os.Stat(specificPath); err == nil {
-		log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+	
+	// Check file age to determine if we need to update from API
+	needsUpdate := false
+	if stat, err := os.Stat(specificPath); err == nil {
+		// Check if file is older than 24 hours
+		if time.Since(stat.ModTime()) > 24*time.Hour {
+			needsUpdate = true
+			log.Printf("GetWatermark : Watermark exists but is older than 24 hours, checking for updates")
+		} else {
+			log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+			return specificPath, nil
+		}
+	} else {
+		needsUpdate = true
+		log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
+	}
+
+	// Only proceed with API check if we need to update
+	if !needsUpdate {
 		return specificPath, nil
 	}
-	log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
-
-	// No existing watermark for the specified resolution
 
 	// Download metadata JSON from API
 	response, err := c.GetWatermarkMetadata()

@@ -167,7 +167,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 
 		// Detect stream info first to choose appropriate filters
 		streamInfo := detectStreamInfo(rtspURL, cameraName)
-		
+
 		ffmpegArgs := []string{
 			"-rtsp_transport", "tcp",
 			"-timeout", "5000000",
@@ -178,7 +178,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 			"-i", rtspURL,
 			"-c:v", "copy", // Stream copy for zero CPU encoding
 		}
-		
+
 		// Add appropriate bitstream filter based on video codec
 		if streamInfo.VideoCodec == "h264" {
 			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for HLS
@@ -189,9 +189,9 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		} else {
 			log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
 		}
-		
+
 		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header") // Ensure codec parameters in each segment
-		
+
 		// Audio settings: always attempt to include audio; if the stream actually has
 		// no audio FFmpeg will continue and simply produce video-only output. This
 		// guarantees that audio will be present whenever the source provides it.
@@ -205,7 +205,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		} else {
 			log.Printf("[%s] 🔈 Attempting to include audio (none detected, FFmpeg will continue without it)", cameraName)
 		}
-		
+
 		ffmpegArgs = append(ffmpegArgs,
 			"-max_muxing_queue_size", "1024",
 			"-f", "hls",
@@ -243,32 +243,32 @@ type StreamInfo struct {
 // detectStreamInfo detects the video codec and audio presence of an RTSP stream
 func detectStreamInfo(rtspURL, cameraName string) StreamInfo {
 	log.Printf("[%s] 🔍 Detecting stream info...", cameraName)
-	
+
 	// Use ffprobe to detect stream information
-	cmd := exec.Command("ffprobe", 
-		"-v", "quiet", 
-		"-show_entries", "stream=codec_type,codec_name", 
-		"-of", "csv=p=0", 
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "stream=codec_type,codec_name",
+		"-of", "csv=p=0",
 		"-rtsp_transport", "tcp",
 		"-timeout", "10000000", // 10 second timeout
 		rtspURL,
 	)
-	
+
 	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("[%s] ⚠️ WARNING: Failed to detect stream info: %v", cameraName, err)
 		return StreamInfo{VideoCodec: "unknown", HasAudio: false}
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	info := StreamInfo{VideoCodec: "unknown", HasAudio: false}
-	
+
 	for _, line := range lines {
 		parts := strings.Split(line, ",")
 		if len(parts) >= 2 {
 			streamType := parts[0]
 			codecName := parts[1]
-			
+
 			if streamType == "video" {
 				switch codecName {
 				case "h264":
@@ -286,11 +286,11 @@ func detectStreamInfo(rtspURL, cameraName string) StreamInfo {
 			}
 		}
 	}
-	
+
 	if !info.HasAudio {
 		log.Printf("[%s] 🔇 AUDIO: No audio stream detected", cameraName)
 	}
-	
+
 	return info
 }
 
@@ -368,11 +368,11 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 
 	// Base FFmpeg command with hardware acceleration
 	ffmpegArgs := []string{"-y"}
-	
+
 	// Add hardware decoder arguments
 	decoderArgs := hwAccel.BuildDecoderArgs()
 	ffmpegArgs = append(ffmpegArgs, decoderArgs...)
-	
+
 	// Add input arguments
 	ffmpegArgs = append(ffmpegArgs,
 		"-f", "concat",
@@ -385,7 +385,7 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		// Add encoder arguments with hardware acceleration
 		encoderArgs := hwAccel.BuildEncoderArgs("medium", resolution)
 		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-		
+
 		// Add scaling filter based on hardware acceleration
 		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
 			// Intel QSV hardware scaling
@@ -422,7 +422,7 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		return fmt.Errorf("ffmpeg concat failed: %v\nOutput: %s", err, string(output))
 	}
 	log.Printf("MergeSessionVideos: Video segments merged successfully with hardware acceleration")
-	
+
 	return nil
 }
 
@@ -497,8 +497,9 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
 	}
 
-	// Tambahkan parameter opasitas ke filter watermark
-	filter := fmt.Sprintf("%s:enable='between(t,0,999999)':alpha=%.1f", overlayExpr, opacity)
+	// Create proper FFmpeg overlay filter with opacity support
+	watermarkFilter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm]", opacity)
+	filter := fmt.Sprintf("%s;[0:v][wm]%s", watermarkFilter, overlayExpr)
 
 	// Detect and configure hardware acceleration
 	hwAccel := DetectHardwareAcceleration()
@@ -523,11 +524,11 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 	// Base FFmpeg command with hardware acceleration
 	ffmpegArgs := []string{"-y"}
-	
+
 	// Add hardware decoder arguments
 	decoderArgs := hwAccel.BuildDecoderArgs()
 	ffmpegArgs = append(ffmpegArgs, decoderArgs...)
-	
+
 	// Add input arguments
 	ffmpegArgs = append(ffmpegArgs,
 		"-f", "concat",
@@ -540,19 +541,19 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	if res, found := resolutions[resolution]; found {
 		// Complete filter with scaling and overlay watermark
 		var completeFilter string
-		
+
 		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
 			// Intel QSV hardware scaling and overlay
-			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];[scaled][1:v]%s", res.width, res.height, filter)
+			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];%s;[scaled][wm]%s", res.width, res.height, watermarkFilter, overlayExpr)
 		} else {
-			// Software scaling
-			completeFilter = fmt.Sprintf("scale=%s:%s,%s", res.width, res.height, filter)
+			// Software scaling and overlay
+			completeFilter = fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s", res.width, res.height, watermarkFilter, overlayExpr)
 		}
 
 		// Add encoder arguments with hardware acceleration
 		encoderArgs := hwAccel.BuildEncoderArgs("medium", resolution)
 		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-		
+
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", completeFilter,
 			"-c:a", "aac",
@@ -562,7 +563,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		// No resolution specified - use hardware encoding without scaling
 		encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
 		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-		
+
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", filter,
 			"-c:a", "copy",
@@ -593,37 +594,36 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	}
 	go func() {
 		for {
-            // sleep until the next wall-clock minute boundary plus 2-second buffer
-            now := time.Now()
-            next := now.Truncate(time.Minute).Add(time.Minute)
-            time.Sleep(time.Until(next) + 6*time.Second)
-			log.Printf("[%s] MP4 segmenter: sleeping until next minute boundary", cameraName)	
-            // we build MP4 for the previous minute window [startWindow, endWindow)
-            startWindow := next.Add(-1 * time.Minute)
-            endWindow := next
+			// sleep until the next wall-clock minute boundary plus 2-second buffer
+			now := time.Now()
+			next := now.Truncate(time.Minute).Add(time.Minute)
+			time.Sleep(time.Until(next) + 6*time.Second)
+			log.Printf("[%s] MP4 segmenter: sleeping until next minute boundary", cameraName)
+			// we build MP4 for the previous minute window [startWindow, endWindow)
+			startWindow := next.Add(-1 * time.Minute)
+			endWindow := next
 			entries, err := os.ReadDir(hlsDir)
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
 				continue
 			}
-			
+
 			var segs []string
 			for _, e := range entries {
 				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
 					continue
 				}
-				
+
 				// Try to parse segment time from filename first (more accurate)
 				segmentTime, err := parseSegmentTimeFromFilename(e.Name())
 				if err == nil {
 					// Use segment timestamp for precise selection
 					if !segmentTime.Before(startWindow) && segmentTime.Before(endWindow) {
 						segs = append(segs, filepath.Base(e.Name()))
-						log.Printf("[%s] MP4 segmenter: ✅ ADDED segment %s (timestamp: %s)", cameraName, e.Name(), segmentTime.Format("15:04:05"))
 					}
 					continue
 				}
-				
+
 				// Fallback to file modification time if filename parsing fails
 				info, err := e.Info()
 				if err != nil {
@@ -631,7 +631,6 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				}
 				if !info.ModTime().Before(startWindow) && info.ModTime().Before(endWindow) {
 					segs = append(segs, filepath.Base(e.Name()))
-					log.Printf("[%s] MP4 segmenter: ✅ ADDED segment %s (modtime: %s)", cameraName, e.Name(), info.ModTime().Format("15:04:05"))
 				}
 			}
 			if len(segs) == 0 {
@@ -887,17 +886,17 @@ func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
 	if !strings.HasPrefix(filename, "segment_") || !strings.HasSuffix(filename, ".ts") {
 		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
 	}
-	
+
 	// Remove prefix and suffix
 	timeStr := strings.TrimPrefix(filename, "segment_")
 	timeStr = strings.TrimSuffix(timeStr, ".ts")
-	
+
 	// Parse timestamp in LOCAL timezone to match startWindow/endWindow
 	segmentTime, err := time.ParseInLocation("20060102_150405", timeStr, time.Local)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timeStr, err)
 	}
-	
+
 	return segmentTime, nil
 }
 

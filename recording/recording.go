@@ -192,17 +192,18 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		
 		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header") // Ensure codec parameters in each segment
 		
-		// Add audio settings only if audio stream is detected
+		// Audio settings: always attempt to include audio; if the stream actually has
+		// no audio FFmpeg will continue and simply produce video-only output. This
+		// guarantees that audio will be present whenever the source provides it.
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:a", "aac",
+			"-b:a", "128k",
+			"-ar", "44100",
+		)
 		if streamInfo.HasAudio {
-			ffmpegArgs = append(ffmpegArgs,
-				"-c:a", "aac",
-				"-b:a", "128k",
-				"-ar", "44100",
-			)
 			log.Printf("[%s] 🔊 Including audio stream in HLS", cameraName)
 		} else {
-			ffmpegArgs = append(ffmpegArgs, "-an") // Disable audio
-			log.Printf("[%s] 🔇 Disabling audio (no audio stream detected)", cameraName)
+			log.Printf("[%s] 🔈 Attempting to include audio (none detected, FFmpeg will continue without it)", cameraName)
 		}
 		
 		ffmpegArgs = append(ffmpegArgs,

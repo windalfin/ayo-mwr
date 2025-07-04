@@ -499,7 +499,8 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 	// Create proper FFmpeg overlay filter with opacity support
 	watermarkFilter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm]", opacity)
-	filter := fmt.Sprintf("%s;[0:v][wm]%s", watermarkFilter, overlayExpr)
+	// Add [outv] to label the output of the filtergraph
+	filter := fmt.Sprintf("%s;[0:v][wm]%s[outv]", watermarkFilter, overlayExpr)
 
 	// Detect and configure hardware acceleration
 	hwAccel := DetectHardwareAcceleration()
@@ -544,10 +545,10 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
 			// Intel QSV hardware scaling and overlay
-			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];%s;[scaled][wm]%s", res.width, res.height, watermarkFilter, overlayExpr)
+			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
 		} else {
 			// Software scaling and overlay
-			completeFilter = fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s", res.width, res.height, watermarkFilter, overlayExpr)
+			completeFilter = fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
 		}
 
 		// Add encoder arguments with hardware acceleration
@@ -556,6 +557,8 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", completeFilter,
+			"-map", "[outv]", // Map video output from filtergraph
+			"-map", "0:a?",   // Map audio from first input (video segments), optional
 			"-c:a", "aac",
 			outputPath,
 		)
@@ -566,6 +569,8 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", filter,
+			"-map", "[outv]", // Map video output from filtergraph
+			"-map", "0:a?",   // Map audio from first input (video segments), optional
 			"-c:a", "copy",
 			outputPath)
 	}

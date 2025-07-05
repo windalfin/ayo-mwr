@@ -182,6 +182,9 @@ type Database interface {
 	UpdateVideoStatus(id string, status VideoStatus, errorMsg string) error
 	UpdateLastCheckFile(id string, lastCheckTime time.Time) error
 
+	// Cleanup operations
+	CleanupStuckVideosOnStartup() error
+
 	// Booking operations
 	GetVideosByBookingID(bookingID string) ([]VideoMetadata, error)
 	GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error)

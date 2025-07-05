@@ -37,7 +37,7 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		}
 		dateStr := parts[len(parts)-2]
 		timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
-		ts, err := time.Parse("20060102_150405", dateStr+"_"+timeStr)
+		ts, err := time.ParseInLocation("20060102_150405", dateStr+"_"+timeStr, time.Local)
 		if err != nil {
 			continue // skip invalid timestamp
 		}

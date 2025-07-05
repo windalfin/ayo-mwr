@@ -663,7 +663,7 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			}
 			tmpConcat.Close()
 
-			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, time.Now().Format("20060102_150405"))
+			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, startWindow.Format("20060102_150405"))
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
 			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
 

@@ -108,7 +108,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 	var mutex sync.Mutex
 
 	// Setup for concurrent processing with a max of 10 concurrent requests
-	const maxConcurrent = 10
+	const maxConcurrent = 2
 	var wg sync.WaitGroup
 	sem := semaphore.NewWeighted(maxConcurrent)
 

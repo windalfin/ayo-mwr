@@ -173,7 +173,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 	log.Printf("processBookings : Found %d bookings for today in database", len(bookingsData))
 
 	// Process bookings concurrently with a limit on parallelism
-	const maxConcurrent = 5 // Maximum number of concurrent booking processing
+	const maxConcurrent = 2 // Maximum number of concurrent booking processing
 	var wg sync.WaitGroup
 	sem := semaphore.NewWeighted(maxConcurrent)
 

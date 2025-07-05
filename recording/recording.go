@@ -394,6 +394,13 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 				"-c:a", "aac",
 				outputPath,
 			)
+		} else if hwAccel.Available && hwAccel.Type == HWAccelVAAPI {
+			// VA-API hardware scaling with proper format conversion
+			ffmpegArgs = append(ffmpegArgs,
+				"-vf", fmt.Sprintf("format=nv12,hwupload,scale_vaapi=%s:%s,hwdownload,format=yuv420p", res.width, res.height),
+				"-c:a", "aac",
+				outputPath,
+			)
 		} else {
 			// Software scaling or other hardware acceleration
 			ffmpegArgs = append(ffmpegArgs,
@@ -546,6 +553,9 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
 			// Intel QSV hardware scaling and overlay
 			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
+		} else if hwAccel.Available && hwAccel.Type == HWAccelVAAPI {
+			// VA-API hardware scaling and overlay - requires proper format conversion
+			completeFilter = fmt.Sprintf("[0:v]format=nv12,hwupload,scale_vaapi=%s:%s,hwdownload,format=yuv420p[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
 		} else {
 			// Software scaling and overlay
 			completeFilter = fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)

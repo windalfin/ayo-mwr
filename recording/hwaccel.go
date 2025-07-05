@@ -363,6 +363,18 @@ func (hw HWAccelConfig) GetQualityLevel(quality string) map[string]string {
 			settings["cq"] = "28"
 			settings["rc"] = "cbr"
 		}
+	case HWAccelVAAPI:
+		switch quality {
+		case "high":
+			settings["qp"] = "18"
+			settings["quality"] = "4"  // VA-API quality: 1-8 (8=best)
+		case "medium":
+			settings["qp"] = "23"
+			settings["quality"] = "6"
+		case "fast":
+			settings["qp"] = "28"
+			settings["quality"] = "7"
+		}
 	default:
 		// Software fallback
 		switch quality {

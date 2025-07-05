@@ -249,10 +249,10 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 		// Convert date and time strings to time.Time objects
 		// Try parsing as ISO format first (2006-01-02T15:04:05Z)
-		bookingDate, err := time.Parse(time.RFC3339, date)
+		bookingDate, err := time.ParseInLocation(time.RFC3339, date, time.Local)
 		if err != nil {
 			// Fall back to simple date format
-			bookingDate, err = time.Parse("2006-01-02", date)
+			bookingDate, err = time.ParseInLocation("2006-01-02", date, time.Local)
 			if err != nil {
 				log.Printf("processBookings : Invalid date format %s for booking %s: %v", date, bookingID, err)
 				continue

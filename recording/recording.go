@@ -346,15 +346,12 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	}
 	tmpFile.Close()
 
-	// Detect and configure hardware acceleration
-	hwAccel := DetectHardwareAcceleration()
-	log.Printf("MergeSessionVideos: Using hardware acceleration: %s", hwAccel.Type)
-
 	// Run FFmpeg concat command from project root
 	projectRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
+
 	// Define supported resolutions
 	resolutions := map[string]struct {
 		width  string
@@ -366,12 +363,8 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		"1080": {"1920", "1080"},
 	}
 
-	// Base FFmpeg command with hardware acceleration
+	// Base FFmpeg command (software encoding only)
 	ffmpegArgs := []string{"-y"}
-
-	// Add hardware decoder arguments
-	decoderArgs := hwAccel.BuildDecoderArgs()
-	ffmpegArgs = append(ffmpegArgs, decoderArgs...)
 
 	// Add input arguments
 	ffmpegArgs = append(ffmpegArgs,
@@ -380,48 +373,23 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		"-i", concatListPath,
 	)
 
-	// Add resolution parameters with hardware acceleration
+	// Add resolution parameters with software encoding
 	if res, found := resolutions[resolution]; found {
-		// Add encoder arguments with hardware acceleration
-		encoderArgs := hwAccel.BuildEncoderArgs("medium", resolution)
-		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-
-		// Add scaling filter based on hardware acceleration
-		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
-			// Intel QSV hardware scaling
-			ffmpegArgs = append(ffmpegArgs,
-				"-vf", fmt.Sprintf("scale_qsv=%s:%s", res.width, res.height),
-				"-c:a", "aac",
-				outputPath,
-			)
-		} else if hwAccel.Available && hwAccel.Type == HWAccelVAAPI {
-			// VA-API hardware scaling with proper format conversion
-			ffmpegArgs = append(ffmpegArgs,
-				"-vf", fmt.Sprintf("format=nv12,hwupload,scale_vaapi=%s:%s,hwdownload,format=yuv420p", res.width, res.height),
-				"-c:a", "aac",
-				outputPath,
-			)
-		} else {
-			// Software scaling or other hardware acceleration
-			ffmpegArgs = append(ffmpegArgs,
-				"-vf", fmt.Sprintf("scale=%s:%s", res.width, res.height),
-				"-c:a", "aac",
-				outputPath,
-			)
-		}
+		// Software scaling and encoding
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-crf", "23",
+			"-vf", fmt.Sprintf("scale=%s:%s", res.width, res.height),
+			"-c:a", "aac",
+			outputPath,
+		)
 	} else {
-		// No resolution specified - use hardware encoding without scaling
-		if hwAccel.Available {
-			encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
-			ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-			ffmpegArgs = append(ffmpegArgs, "-c:a", "copy", outputPath)
-		} else {
-			// Software fallback - use copy codec (no transcoding)
-			ffmpegArgs = append(ffmpegArgs, "-c", "copy", outputPath)
-		}
+		// No resolution specified - use copy codec (no transcoding)
+		ffmpegArgs = append(ffmpegArgs, "-c", "copy", outputPath)
 	}
 
-	log.Printf("MergeSessionVideos: Executing ffmpeg with hardware acceleration")
+	log.Printf("MergeSessionVideos: Executing ffmpeg with software encoding")
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
@@ -509,10 +477,6 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	// Add [outv] to label the output of the filtergraph
 	filter := fmt.Sprintf("%s;[0:v][wm]%s[outv]", watermarkFilter, overlayExpr)
 
-	// Detect and configure hardware acceleration
-	hwAccel := DetectHardwareAcceleration()
-	log.Printf("MergeAndWatermark : Using hardware acceleration: %s", hwAccel.Type)
-
 	// Run FFmpeg command from project root
 	projectRoot, err := os.Getwd()
 	if err != nil {
@@ -530,12 +494,8 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		"1080": {"1920", "1080"},
 	}
 
-	// Base FFmpeg command with hardware acceleration
+	// Base FFmpeg command (software encoding only)
 	ffmpegArgs := []string{"-y"}
-
-	// Add hardware decoder arguments
-	decoderArgs := hwAccel.BuildDecoderArgs()
-	ffmpegArgs = append(ffmpegArgs, decoderArgs...)
 
 	// Add input arguments
 	ffmpegArgs = append(ffmpegArgs,
@@ -545,27 +505,15 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		"-i", watermarkPath,
 	)
 
-	// Add resolution parameters with hardware acceleration
+	// Add resolution parameters with software encoding
 	if res, found := resolutions[resolution]; found {
-		// Complete filter with scaling and overlay watermark
-		var completeFilter string
-
-		if hwAccel.Available && hwAccel.Type == HWAccelIntel {
-			// Intel QSV hardware scaling and overlay
-			completeFilter = fmt.Sprintf("[0:v]scale_qsv=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
-		} else if hwAccel.Available && hwAccel.Type == HWAccelVAAPI {
-			// VA-API hardware scaling and overlay - requires proper format conversion
-			completeFilter = fmt.Sprintf("[0:v]format=nv12,hwupload,scale_vaapi=%s:%s,hwdownload,format=yuv420p[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
-		} else {
-			// Software scaling and overlay
-			completeFilter = fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
-		}
-
-		// Add encoder arguments with hardware acceleration
-		encoderArgs := hwAccel.BuildEncoderArgs("medium", resolution)
-		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
+		// Software scaling and overlay watermark
+		completeFilter := fmt.Sprintf("[0:v]scale=%s:%s[scaled];%s;[scaled][wm]%s[outv]", res.width, res.height, watermarkFilter, overlayExpr)
 
 		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-preset", "medium",
+			"-crf", "23",
 			"-filter_complex", completeFilter,
 			"-map", "[outv]", // Map video output from filtergraph
 			"-map", "0:a?", // Map audio from first input (video segments), optional
@@ -573,11 +521,11 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 			outputPath,
 		)
 	} else {
-		// No resolution specified - use hardware encoding without scaling
-		encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
-		ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-
+		// No resolution specified - use software encoding without scaling
 		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-crf", "23",
 			"-filter_complex", filter,
 			"-map", "[outv]", // Map video output from filtergraph
 			"-map", "0:a?", // Map audio from first input (video segments), optional
@@ -585,7 +533,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 			outputPath)
 	}
 
-	log.Printf("MergeAndWatermark : Executing ffmpeg with combined merge and watermark operations")
+	log.Printf("MergeAndWatermark : Executing ffmpeg with software encoding for merge and watermark operations")
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
@@ -766,24 +714,10 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				"-re",
 			}
 
-			// Add hardware decoder if available
-			if hwAccel.Available {
-				decoderArgs := hwAccel.BuildDecoderArgs()
-				ffmpegArgs = append(ffmpegArgs, decoderArgs...)
-			}
-
 			ffmpegArgs = append(ffmpegArgs, "-i", rtspURL)
 
-			// Use stream copy if no hardware acceleration, otherwise use hardware encoding for better compression
-			if hwAccel.Available {
-				// Hardware encoding for better efficiency and compression
-				encoderArgs := hwAccel.BuildEncoderArgs("fast", "")
-				ffmpegArgs = append(ffmpegArgs, encoderArgs...)
-			} else {
-				// Stream copy for zero CPU encoding when no hardware acceleration
-				ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
-				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for segmentation
-			}
+			ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for segmentation
 
 			ffmpegArgs = append(ffmpegArgs,
 				"-flags", "+global_header", // Ensure codec parameters in each segment

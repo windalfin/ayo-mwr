@@ -32,48 +32,9 @@ type HWAccelConfig struct {
 
 // DetectHardwareAcceleration detects available hardware acceleration
 func DetectHardwareAcceleration() HWAccelConfig {
-	log.Println("[hwaccel] 🔍 Detecting hardware acceleration capabilities...")
+	log.Println("[hwaccel] 💻 Hardware acceleration disabled - using software encoding")
 	
-	// On Linux, prioritize VA-API for Intel GPUs (more reliable than QSV)
-	if runtime.GOOS == "linux" {
-		log.Println("[hwaccel] 🐧 Running on Linux - testing VA-API first")
-		if vaapiConfig := detectVAAPI(); vaapiConfig.Available {
-			log.Printf("[hwaccel] ✅ VA-API detected and available")
-			return vaapiConfig
-		}
-	}
-	
-	// Test Intel QSV
-	log.Println("[hwaccel] 🔵 Testing Intel QSV...")
-	if qsvConfig := detectIntelQSV(); qsvConfig.Available {
-		log.Printf("[hwaccel] ✅ Intel Quick Sync Video (QSV) detected and available")
-		return qsvConfig
-	}
-	
-	// Test NVIDIA NVENC
-	log.Println("[hwaccel] 🟢 Testing NVIDIA NVENC...")
-	if nvencConfig := detectNVIDIA(); nvencConfig.Available {
-		log.Printf("[hwaccel] ✅ NVIDIA NVENC detected and available")
-		return nvencConfig
-	}
-	
-	// Test AMD AMF
-	log.Println("[hwaccel] 🔴 Testing AMD AMF...")
-	if amfConfig := detectAMD(); amfConfig.Available {
-		log.Printf("[hwaccel] ✅ AMD AMF detected and available")
-		return amfConfig
-	}
-	
-	// Fallback to VA-API on non-Linux systems
-	if runtime.GOOS != "linux" {
-		log.Println("[hwaccel] 🎬 Testing VA-API as fallback...")
-		if vaapiConfig := detectVAAPI(); vaapiConfig.Available {
-			log.Printf("[hwaccel] ✅ VA-API detected and available")
-			return vaapiConfig
-		}
-	}
-	
-	log.Println("[hwaccel] ❌ No hardware acceleration available, using software encoding")
+	// Always return software encoding configuration
 	return HWAccelConfig{
 		Type:        HWAccelNone,
 		Available:   false,
@@ -194,6 +155,24 @@ func checkFFmpegEncoder(encoder string) bool {
 	}
 	
 	return strings.Contains(string(output), encoder)
+}
+
+// checkFFmpegSupport checks if FFmpeg has support for a specific feature
+func checkFFmpegSupport(feature string) bool {
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-version")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[hwaccel] ❌ Failed to check FFmpeg version: %v", err)
+		return false
+	}
+	
+	hasSupport := strings.Contains(string(output), feature)
+	if hasSupport {
+		log.Printf("[hwaccel] ✅ FFmpeg has %s support", feature)
+	} else {
+		log.Printf("[hwaccel] ❌ FFmpeg does not have %s support", feature)
+	}
+	return hasSupport
 }
 
 // testQSVEncoder tests Intel QSV encoder

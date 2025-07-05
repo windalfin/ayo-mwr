@@ -12,7 +12,7 @@ import (
 	"ayo-mwr/storage"
 )
 
-// FindSegmentsInRange returns a sorted list of MP4 files in inputPath whose timestamps fall within [startTime, endTime].
+// FindSegmentsInRange returns a sorted list of video files (.mp4, .ts, .mkv, etc.) in inputPath whose timestamps fall within [startTime, endTime].
 func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]string, error) {
 	var matches []struct {
 		path string
@@ -24,23 +24,69 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	// loop through files to find the segments in the time range
+	// Supported video extensions for auto-detection
+	videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
+	
+	// Helper function to check if file has supported video extension
+	isVideoFile := func(filename string) bool {
+		for _, ext := range videoExtensions {
+			if strings.HasSuffix(strings.ToLower(filename), ext) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Helper function to get file extension
+	getFileExtension := func(filename string) string {
+		for _, ext := range videoExtensions {
+			if strings.HasSuffix(strings.ToLower(filename), ext) {
+				return ext
+			}
+		}
+		return ""
+	}
+
+	// Loop through files to find the segments in the time range
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".mp4") {
+		if entry.IsDir() || !isVideoFile(entry.Name()) {
 			continue
 		}
+		
 		base := entry.Name()
-		// Expect format: camera_name_YYYYMMDD_HHMMSS.mp4
-		parts := strings.Split(base, "_")
-		if len(parts) < 3 {
-			continue // not a valid segment filename
+		fileExt := getFileExtension(base)
+		var ts time.Time
+		
+		if fileExt == ".ts" {
+			// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
+			if !strings.HasPrefix(base, "segment_") {
+				continue // skip non-segment files
+			}
+			
+			// Remove prefix and suffix
+			timeStr := strings.TrimPrefix(base, "segment_")
+			timeStr = strings.TrimSuffix(timeStr, fileExt)
+			
+			// Parse timestamp
+			ts, err = time.ParseInLocation("20060102_150405", timeStr, time.Local)
+			if err != nil {
+				continue // skip invalid timestamp
+			}
+		} else {
+			// Parse MP4/other formats: camera_name_YYYYMMDD_HHMMSS.ext
+			parts := strings.Split(base, "_")
+			if len(parts) < 3 {
+				continue // not a valid segment filename
+			}
+			dateStr := parts[len(parts)-2]
+			timeStr := strings.TrimSuffix(parts[len(parts)-1], fileExt)
+			ts, err = time.ParseInLocation("20060102_150405", dateStr+"_"+timeStr, time.Local)
+			if err != nil {
+				continue // skip invalid timestamp
+			}
 		}
-		dateStr := parts[len(parts)-2]
-		timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
-		ts, err := time.ParseInLocation("20060102_150405", dateStr+"_"+timeStr, time.Local)
-		if err != nil {
-			continue // skip invalid timestamp
-		}
+
+		// Check if segment is within time range
 		if !ts.Before(startTime) && !ts.After(endTime) {
 			matches = append(matches, struct {
 				path string
@@ -119,19 +165,50 @@ func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Tim
 	return result, nil
 }
 
-// parseTimestampFromFilename extracts timestamp from MP4 filename
+// parseTimestampFromFilename extracts timestamp from video filename (any extension)
 func parseTimestampFromFilename(filename string) (time.Time, error) {
-	// Expected format: camera_name_YYYYMMDD_HHMMSS.mp4
-	parts := strings.Split(filename, "_")
-	if len(parts) < 3 {
-		return time.Time{}, fmt.Errorf("invalid filename format: %s", filename)
+	// Supported video extensions
+	videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
+	
+	// Helper function to get file extension
+	getFileExtension := func(filename string) string {
+		for _, ext := range videoExtensions {
+			if strings.HasSuffix(strings.ToLower(filename), ext) {
+				return ext
+			}
+		}
+		return ""
 	}
+	
+	fileExt := getFileExtension(filename)
+	if fileExt == "" {
+		return time.Time{}, fmt.Errorf("unsupported file extension: %s", filename)
+	}
+	
+	if fileExt == ".ts" {
+		// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
+		if !strings.HasPrefix(filename, "segment_") {
+			return time.Time{}, fmt.Errorf("invalid .ts filename format: %s", filename)
+		}
+		
+		// Remove prefix and suffix
+		timeStr := strings.TrimPrefix(filename, "segment_")
+		timeStr = strings.TrimSuffix(timeStr, fileExt)
+		
+		return time.ParseInLocation("20060102_150405", timeStr, time.Local)
+	} else {
+		// Parse MP4/other formats: camera_name_YYYYMMDD_HHMMSS.ext
+		parts := strings.Split(filename, "_")
+		if len(parts) < 3 {
+			return time.Time{}, fmt.Errorf("invalid filename format: %s", filename)
+		}
 
-	dateStr := parts[len(parts)-2]
-	timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
-	timestampStr := dateStr + "_" + timeStr
+		dateStr := parts[len(parts)-2]
+		timeStr := strings.TrimSuffix(parts[len(parts)-1], fileExt)
+		timestampStr := dateStr + "_" + timeStr
 
-	return time.ParseInLocation("20060102_150405", timestampStr, time.Local)
+		return time.ParseInLocation("20060102_150405", timestampStr, time.Local)
+	}
 }
 
 // FindSegmentsInRangeOptimized searches for segments using automatic disk discovery
@@ -178,8 +255,15 @@ func ValidateSegmentPaths(cameraName string, storagePaths []string) error {
 		}
 
 		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp4") {
-				totalSegments++
+			if !entry.IsDir() {
+				// Check if it's a video file with supported extension
+				videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
+				for _, ext := range videoExtensions {
+					if strings.HasSuffix(strings.ToLower(entry.Name()), ext) {
+						totalSegments++
+						break
+					}
+				}
 			}
 		}
 	}

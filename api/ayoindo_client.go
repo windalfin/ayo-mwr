@@ -352,8 +352,8 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 		"preview_path":    previewPath,
 		"image_path":      imagePath,
 		"unique_id":       uniqueID,
-		"start_timestamp": startTime.Format(time.RFC3339),
-		"end_timestamp":   endTime.Format(time.RFC3339),
+		"start_timestamp": startTime.UTC().Format(time.RFC3339),
+		"end_timestamp":   endTime.UTC().Format(time.RFC3339),
 	}
 
 	// Generate signature
@@ -503,8 +503,8 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 		"booking_id":       bookingID,
 		"type":             videoType,
 		"video":            videoObj, // Menggunakan "video" (bukan "videos") dan format single objek
-		"start_timestamp":  startTime.Format(time.RFC3339),
-		"end_timestamp":    endTime.Format(time.RFC3339),
+		"start_timestamp":  startTime.UTC().Format(time.RFC3339),
+		"end_timestamp":    endTime.UTC().Format(time.RFC3339),
 	}
 
 	// Generate signature

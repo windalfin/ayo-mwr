@@ -138,7 +138,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	segmentDir := filepath.Dir(segments[0])
 
 	// Gabungkan video segments dan tambahkan watermark dalam satu operasi FFmpeg
-	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4", camera.Name)
+	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".ts", camera.Name)
 	log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
 
 	// Mendapatkan watermark dan pengaturannya

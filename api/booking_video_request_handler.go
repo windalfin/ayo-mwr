@@ -375,7 +375,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 	}
 	BaseDir := filepath.Join(h.config.StoragePath, "recordings", targetCamera.Name)
 	// Find video directory for this camera
-	videoDirectory := filepath.Join(BaseDir, "mp4")
+	videoDirectory := filepath.Join(BaseDir, "hls")
 
 	// Check if directory exists
 	if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
@@ -432,7 +432,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		log.Printf("🎬 SUCCESS: Video processing completed for task %s (ID: %s)", taskID, uniqueID)
 
 		// Get paths to processed files
-		watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
+		watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".ts")
 		previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
 		thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
@@ -465,7 +465,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 					watermarkedVideoPath,
 					previewPath,
 					thumbnailPath,
-					fmt.Sprintf("mp4/%s.mp4", uniqueID),
+					fmt.Sprintf("mp4/%s.ts", uniqueID),
 					fmt.Sprintf("preview/%s.mp4", uniqueID),
 					fmt.Sprintf("thumbnail/%s.png", uniqueID),
 				)
@@ -533,7 +533,7 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 				watermarkedVideoPath,
 				previewPath,
 				thumbnailPath,
-				fmt.Sprintf("mp4/%s.mp4", uniqueID),
+				fmt.Sprintf("mp4/%s.ts", uniqueID),
 				fmt.Sprintf("preview/%s.mp4", uniqueID),
 				fmt.Sprintf("thumbnail/%s.png", uniqueID),
 			)

@@ -24,37 +24,51 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	// Supported video extensions for auto-detection
-	videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
-	
-	// Helper function to check if file has supported video extension
-	isVideoFile := func(filename string) bool {
-		for _, ext := range videoExtensions {
-			if strings.HasSuffix(strings.ToLower(filename), ext) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Helper function to get file extension
-	getFileExtension := func(filename string) string {
-		for _, ext := range videoExtensions {
-			if strings.HasSuffix(strings.ToLower(filename), ext) {
-				return ext
-			}
-		}
-		return ""
-	}
-
 	// Loop through files to find the segments in the time range
 	for _, entry := range entries {
-		if entry.IsDir() || !isVideoFile(entry.Name()) {
+		if entry.IsDir() {
 			continue
 		}
 		
 		base := entry.Name()
-		fileExt := getFileExtension(base)
+		baseLower := strings.ToLower(base)
+		
+		// Single pass extension detection - optimized for performance
+		var fileExt string
+		var isVideo bool
+		
+		// Optimized extension checking - check most common first
+		switch {
+		case strings.HasSuffix(baseLower, ".mp4"):
+			fileExt = ".mp4"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".ts"):
+			fileExt = ".ts"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".mkv"):
+			fileExt = ".mkv"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".avi"):
+			fileExt = ".avi"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".mov"):
+			fileExt = ".mov"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".wmv"):
+			fileExt = ".wmv"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".webm"):
+			fileExt = ".webm"
+			isVideo = true
+		case strings.HasSuffix(baseLower, ".m4v"):
+			fileExt = ".m4v"
+			isVideo = true
+		}
+		
+		if !isVideo {
+			continue
+		}
+		
 		var ts time.Time
 		
 		if fileExt == ".ts" {
@@ -167,21 +181,30 @@ func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Tim
 
 // parseTimestampFromFilename extracts timestamp from video filename (any extension)
 func parseTimestampFromFilename(filename string) (time.Time, error) {
-	// Supported video extensions
-	videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
+	filenameLower := strings.ToLower(filename)
 	
-	// Helper function to get file extension
-	getFileExtension := func(filename string) string {
-		for _, ext := range videoExtensions {
-			if strings.HasSuffix(strings.ToLower(filename), ext) {
-				return ext
-			}
-		}
-		return ""
-	}
+	// Single pass extension detection - optimized for performance
+	var fileExt string
 	
-	fileExt := getFileExtension(filename)
-	if fileExt == "" {
+	// Optimized extension checking - check most common first
+	switch {
+	case strings.HasSuffix(filenameLower, ".mp4"):
+		fileExt = ".mp4"
+	case strings.HasSuffix(filenameLower, ".ts"):
+		fileExt = ".ts"
+	case strings.HasSuffix(filenameLower, ".mkv"):
+		fileExt = ".mkv"
+	case strings.HasSuffix(filenameLower, ".avi"):
+		fileExt = ".avi"
+	case strings.HasSuffix(filenameLower, ".mov"):
+		fileExt = ".mov"
+	case strings.HasSuffix(filenameLower, ".wmv"):
+		fileExt = ".wmv"
+	case strings.HasSuffix(filenameLower, ".webm"):
+		fileExt = ".webm"
+	case strings.HasSuffix(filenameLower, ".m4v"):
+		fileExt = ".m4v"
+	default:
 		return time.Time{}, fmt.Errorf("unsupported file extension: %s", filename)
 	}
 	
@@ -256,13 +279,18 @@ func ValidateSegmentPaths(cameraName string, storagePaths []string) error {
 
 		for _, entry := range entries {
 			if !entry.IsDir() {
-				// Check if it's a video file with supported extension
-				videoExtensions := []string{".mp4", ".ts", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v"}
-				for _, ext := range videoExtensions {
-					if strings.HasSuffix(strings.ToLower(entry.Name()), ext) {
-						totalSegments++
-						break
-					}
+				// Optimized extension checking for video files
+				nameLower := strings.ToLower(entry.Name())
+				switch {
+				case strings.HasSuffix(nameLower, ".mp4"),
+					 strings.HasSuffix(nameLower, ".ts"),
+					 strings.HasSuffix(nameLower, ".mkv"),
+					 strings.HasSuffix(nameLower, ".avi"),
+					 strings.HasSuffix(nameLower, ".mov"),
+					 strings.HasSuffix(nameLower, ".wmv"),
+					 strings.HasSuffix(nameLower, ".webm"),
+					 strings.HasSuffix(nameLower, ".m4v"):
+					totalSegments++
 				}
 			}
 		}

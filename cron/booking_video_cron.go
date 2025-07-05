@@ -390,7 +390,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("processBookings : uniqueID %s", uniqueID)
 
 				// Ambil path file watermarked yang akan digunakan
-				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
+				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".ts")
 				log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
 
 				// Get paths to processed files
@@ -428,7 +428,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 							watermarkedVideoPath,
 							previewPath,
 							thumbnailPath,
-							fmt.Sprintf("mp4/%s.mp4", uniqueID),
+							fmt.Sprintf("mp4/%s.ts", uniqueID),
 							fmt.Sprintf("preview/%s.mp4", uniqueID),
 							fmt.Sprintf("thumbnail/%s.png", uniqueID),
 						)

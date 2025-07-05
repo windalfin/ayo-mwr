@@ -199,6 +199,27 @@ func (qm *QueueManager) processTask(task database.PendingTask) {
 		}
 		if !canProcess {
 			log.Printf("📦 QUEUE: ⏸️ Task %d ditunda - menunggu upload selesai dulu", task.ID)
+			
+			// Parse task data to get VideoID
+			var taskData database.AyoAPINotifyTaskData
+			err := json.Unmarshal([]byte(task.TaskData), &taskData)
+			if err != nil {
+				log.Printf("📦 QUEUE: ❌ Error parsing task data: %v", err)
+				return
+			}
+			
+			video, err := qm.db.GetVideo(taskData.VideoID)
+			if err != nil {
+				log.Printf("📦 QUEUE: ❌ Error getting video data: %v", err)
+				return
+			}
+			if video.Status == database.StatusFailed {
+				err := qm.db.UpdateTaskStatus(task.ID, database.TaskStatusFailed, fmt.Sprintf("video status failed: %s", taskData.VideoID))
+				if err != nil {
+					log.Printf("📦 QUEUE: ❌ Error updating task status: %v", err)
+				}
+				return
+			}
 			return
 		}
 	}
@@ -246,6 +267,13 @@ func (qm *QueueManager) processR2UploadTask(task database.PendingTask) error {
 	
 	if video == nil {
 		return fmt.Errorf("video not found: %s", taskData.VideoID)
+	}
+	if video.Status == database.StatusFailed {
+		err := qm.db.UpdateTaskStatus(task.ID, database.TaskStatusFailed, fmt.Sprintf("video status failed: %s", taskData.VideoID))
+		if err != nil {
+			log.Printf("📦 QUEUE: ❌ Error updating task status: %v", err)
+		}
+		return fmt.Errorf("video status failed: %s", taskData.VideoID)
 	}
 
 	// Create BookingVideoService instance dengan dependencies yang diperlukan
@@ -336,6 +364,13 @@ func (qm *QueueManager) processAyoAPINotifyTask(task database.PendingTask) error
 	
 	if video == nil {
 		return fmt.Errorf("video not found in database: %s", taskData.VideoID)
+	}
+	if video.Status == database.StatusFailed {
+		err := qm.db.UpdateTaskStatus(task.ID, database.TaskStatusFailed, fmt.Sprintf("video status failed: %s", taskData.VideoID))
+		if err != nil {
+			log.Printf("📦 QUEUE: ❌ Error updating task status: %v", err)
+		}
+		return fmt.Errorf("video status failed: %s", taskData.VideoID)
 	}
 
 	// Use actual URLs from database (updated after upload completed)

@@ -14,8 +14,8 @@ func TestFindSegmentsInRange(t *testing.T) {
 	inputPath := filepath.Join("..", "test", "videos", "uploads")
 
 	// Prepare test window to include only the 20250414 segments
-	startTime, _ := time.Parse("20060102_150405", "20250414_120500")
-	endTime, _ := time.Parse("20060102_150405", "20250414_120540")
+	startTime, _ := time.ParseInLocation("20060102_150405", "20250414_120500", time.Local)
+	endTime, _ := time.ParseInLocation("20060102_150405", "20250414_120540", time.Local)
 
 	files, err := FindSegmentsInRange(inputPath, startTime, endTime)
 	t.Logf("Looking for files in range: %s to %s", startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
@@ -49,8 +49,8 @@ func TestMergeSessionVideos(t *testing.T) {
 		}
 	}()
 	// Define a time window that should include the test video
-	startTime, _ := time.Parse("20060102_150405", "20250414_120500")
-	endTime, _ := time.Parse("20060102_150405", "20250414_120540")
+	startTime, _ := time.ParseInLocation("20060102_150405", "20250414_120500", time.Local)
+	endTime, _ := time.ParseInLocation("20060102_150405", "20250414_120540", time.Local)
 
 	// Call the function under test (to be implemented)
 	err := MergeSessionVideos(inputPath, startTime, endTime, outputPath)

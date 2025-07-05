@@ -78,7 +78,7 @@ func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Tim
 	// Search across all provided storage paths
 	for _, storagePath := range storagePaths {
 		cameraPath := filepath.Join(storagePath, "recordings", cameraName, "mp4")
-		
+
 		// Skip if directory doesn't exist
 		if _, err := os.Stat(cameraPath); os.IsNotExist(err) {
 			continue
@@ -126,17 +126,17 @@ func parseTimestampFromFilename(filename string) (time.Time, error) {
 	if len(parts) < 3 {
 		return time.Time{}, fmt.Errorf("invalid filename format: %s", filename)
 	}
-	
+
 	dateStr := parts[len(parts)-2]
 	timeStr := strings.TrimSuffix(parts[len(parts)-1], ".mp4")
 	timestampStr := dateStr + "_" + timeStr
-	
-	return time.Parse("20060102_150405", timestampStr)
+
+	return time.ParseInLocation("20060102_150405", timestampStr, time.Local)
 }
 
 // FindSegmentsInRangeOptimized searches for segments using automatic disk discovery
 func FindSegmentsInRangeOptimized(cameraName, primaryPath string, startTime, endTime time.Time, additionalPaths ...string) ([]string, error) {
-	// For now, use simple single-path approach 
+	// For now, use simple single-path approach
 	// The existing disk management system handles multi-disk automatically
 	cameraPath := filepath.Join(primaryPath, "recordings", cameraName, "mp4")
 	return FindSegmentsInRange(cameraPath, startTime, endTime)
@@ -161,33 +161,33 @@ func FindSegmentsInRangeEnhanced(cameraName, inputPath string, startTime, endTim
 func ValidateSegmentPaths(cameraName string, storagePaths []string) error {
 	var totalSegments int
 	var missingDirs []string
-	
+
 	for _, storagePath := range storagePaths {
 		cameraPath := filepath.Join(storagePath, "recordings", cameraName, "mp4")
-		
+
 		// Check if directory exists
 		if _, err := os.Stat(cameraPath); os.IsNotExist(err) {
 			missingDirs = append(missingDirs, cameraPath)
 			continue
 		}
-		
+
 		// Count segments in this directory
 		entries, err := os.ReadDir(cameraPath)
 		if err != nil {
 			continue
 		}
-		
+
 		for _, entry := range entries {
 			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp4") {
 				totalSegments++
 			}
 		}
 	}
-	
+
 	if len(missingDirs) == len(storagePaths) {
 		return fmt.Errorf("no segment directories found for camera %s", cameraName)
 	}
-	
+
 	fmt.Printf("Camera %s: found %d segments across %d storage locations\n", cameraName, totalSegments, len(storagePaths)-len(missingDirs))
 	return nil
 }

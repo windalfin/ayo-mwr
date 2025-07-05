@@ -558,7 +558,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", completeFilter,
 			"-map", "[outv]", // Map video output from filtergraph
-			"-map", "0:a?",   // Map audio from first input (video segments), optional
+			"-map", "0:a?", // Map audio from first input (video segments), optional
 			"-c:a", "aac",
 			outputPath,
 		)
@@ -570,7 +570,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", filter,
 			"-map", "[outv]", // Map video output from filtergraph
-			"-map", "0:a?",   // Map audio from first input (video segments), optional
+			"-map", "0:a?", // Map audio from first input (video segments), optional
 			"-c:a", "copy",
 			outputPath)
 	}
@@ -919,7 +919,7 @@ func parseSegmentTime(filename string) (time.Time, time.Time, error) {
 
 	// Parse the timestamp
 	timestampStr := dateStr + "_" + timeStr
-	segmentStart, err := time.Parse("20060102_150405", timestampStr)
+	segmentStart, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timestampStr, err)
 	}

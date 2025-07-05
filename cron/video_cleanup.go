@@ -187,7 +187,7 @@ func cleanupExpiredVideosWithClient(db *sql.DB, client VideoClient, autoDelete i
 				// HLS path is typically <storage_path>/recordings/<camera_name>/hls
 				// So we need to go up one level to get the camera directory
 				cameraDir := filepath.Dir(hlsPath)
-				
+
 				// MP4 directory is at the same level as HLS directory
 				mp4Dir := filepath.Join(cameraDir, "mp4")
 				log.Printf("Looking for MP4 files in directory: %s", mp4Dir)
@@ -375,7 +375,7 @@ func updateHLSPlaylist(playlistPath string, expiry time.Time) {
 				dateStr := parts[1]
 				timeStr := parts[2]
 				segmentTimeStr := dateStr + "_" + timeStr
-				segmentTime, err := time.Parse("20060102_150405", segmentTimeStr)
+				segmentTime, err := time.ParseInLocation("20060102_150405", segmentTimeStr, time.Local)
 
 				if err == nil && segmentTime.Before(expiry) {
 					// This segment is older than expiry, skip it and its duration line

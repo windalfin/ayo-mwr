@@ -30,7 +30,7 @@ func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// RETRY SEMUA ERROR - karena mayoritas error bisa temporary
 	// Hanya skip retry untuk error yang benar-benar nil
 	log.Printf("🔄 RETRY: Will retry error: %v", err)
@@ -41,7 +41,7 @@ func isRetryableError(err error) bool {
 func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName string) error {
 	var lastErr error
 	var retryCount int
-	
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		err := operation()
 		if err == nil {
@@ -51,24 +51,24 @@ func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName
 			}
 			return nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Log retry attempt - semua error akan di-retry
 		isRetryableError(err) // Ini akan log error yang akan di-retry
-		
+
 		// Increment retry count untuk semua attempts setelah yang pertama
 		if attempt > 1 {
 			retryCount++
 		}
-		
+
 		// Jika masih ada percobaan lagi, tunggu tanpa log noise
 		if attempt < maxRetries {
 			waitTime := time.Duration(3*attempt) * time.Second
 			time.Sleep(waitTime)
 		}
 	}
-	
+
 	// Log final failure dengan summary
 	log.Printf("🔄 RETRY: %s ❌ Gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
 	return fmt.Errorf("%s gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
@@ -364,7 +364,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 				// Process video segments using service with retry logic
 				log.Printf("processBookings : orderDetailIDStr %s", orderDetailIDStr)
-				
+
 				var uniqueID string
 				err = cleanRetryWithBackoff(func() error {
 					var err error
@@ -392,19 +392,19 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// Ambil path file watermarked yang akan digunakan
 				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".mp4")
 				log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
-				
+
 				// Get paths to processed files
 				previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
 				thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
 				// Check internet connectivity
 				connectivityChecker := offline.NewConnectivityChecker()
-				
+
 				var previewURL, thumbnailURL string
-				
+
 				if connectivityChecker.IsOnline() {
 					log.Printf("🌐 CONNECTIVITY: Online - mencoba upload langsung untuk %s-%s...", bookingID, camera.Name)
-					
+
 					// Upload processed video with retry logic
 					// hlsPath dan hlsURL tidak dikirim ke API tapi tetap disimpan di database
 					err = cleanRetryWithBackoff(func() error {
@@ -421,7 +421,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 					if err != nil {
 						log.Printf("⚠️ WARNING: Direct upload failed for %s-%s: %v", bookingID, camera.Name, err)
 						log.Printf("📦 QUEUE: Menambahkan task upload ke offline queue...")
-						
+
 						// Add to offline queue
 						err = queueManager.EnqueueR2Upload(
 							uniqueID,
@@ -432,13 +432,13 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 							fmt.Sprintf("preview/%s.mp4", uniqueID),
 							fmt.Sprintf("thumbnail/%s.png", uniqueID),
 						)
-						
+
 						if err != nil {
 							log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
 							db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed and queue error: %v", err))
 							continue
 						}
-						
+
 						// Update status to uploading (will be processed by queue)
 						db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
 						log.Printf("📦 QUEUE: Upload task queued for video %s", uniqueID)
@@ -448,7 +448,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 					log.Printf("📤 SUCCESS: Direct upload completed for %s-%s", bookingID, camera.Name)
 				} else {
 					log.Printf("🌐 CONNECTIVITY: Offline - menambahkan upload task ke queue untuk %s-%s...", bookingID, camera.Name)
-					
+
 					// Add to offline queue since we're offline
 					err = queueManager.EnqueueR2Upload(
 						uniqueID,
@@ -459,20 +459,20 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 						fmt.Sprintf("preview/%s.mp4", uniqueID),
 						fmt.Sprintf("thumbnail/%s.png", uniqueID),
 					)
-					
+
 					if err != nil {
 						log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
 						db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Offline queue error: %v", err))
 						continue
 					}
-					
+
 					// Get video to calculate duration for future notification
 					video, err := db.GetVideo(uniqueID)
 					var duration float64 = 60.0 // Default 60 seconds
 					if err == nil && video != nil {
 						duration = video.Duration
 					}
-					
+
 					// Add API notification to queue as well (will be processed after upload completes)
 					err = queueManager.EnqueueAyoAPINotify(
 						uniqueID,
@@ -482,13 +482,13 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 						"", // Thumbnail URL will be updated when upload completes
 						duration,
 					)
-					
+
 					if err != nil {
 						log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
 					} else {
 						log.Printf("📦 QUEUE: API notification task queued untuk video %s", uniqueID)
 					}
-					
+
 					// Update status to uploading (will be processed by queue when online)
 					db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
 					log.Printf("📦 QUEUE: Upload task queued untuk video %s - akan diproses saat online", uniqueID)
@@ -496,7 +496,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 				log.Printf("processBookings : previewURL %s", previewURL)
 				log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
-				
+
 				// Notify AYO API of successful upload with retry logic
 				// Get video to calculate duration
 				video, err := db.GetVideo(uniqueID)
@@ -504,7 +504,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				if err == nil && video != nil {
 					duration = video.Duration
 				}
-				
+
 				err = cleanRetryWithBackoff(func() error {
 					return uploadService.NotifyAyoAPI(
 						uniqueID,
@@ -518,7 +518,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				if err != nil {
 					log.Printf("⚠️ WARNING: Direct API notification failed for %s-%s: %v", bookingID, camera.Name, err)
 					log.Printf("📦 QUEUE: Menambahkan task notifikasi API ke offline queue...")
-					
+
 					// Add API notification to queue
 					err = queueManager.EnqueueAyoAPINotify(
 						uniqueID,
@@ -528,7 +528,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 						thumbnailURL,
 						duration,
 					)
-					
+
 					if err != nil {
 						log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
 						db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("API notification failed and queue error: %v", err))

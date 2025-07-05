@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"sync"
+	"time"
 )
 
 // AyoIndoClient handles interactions with the AYO Indonesia API
@@ -106,19 +106,19 @@ func loadEnvFile() error {
 
 // defaultAyoIndoClient holds the singleton instance
 var (
-    defaultAyoIndoClient *AyoIndoClient
-    clientInitOnce       sync.Once
+	defaultAyoIndoClient *AyoIndoClient
+	clientInitOnce       sync.Once
 )
 
 // NewAyoIndoClient returns a singleton AyoIndoClient instance. Subsequent calls
 // return the same instance to avoid repeated environment loading and duplicated
 // debug output.
 func NewAyoIndoClient() (*AyoIndoClient, error) {
-    var err error
-    clientInitOnce.Do(func() {
-        defaultAyoIndoClient, err = newAyoIndoClientInternal()
-    })
-    return defaultAyoIndoClient, err
+	var err error
+	clientInitOnce.Do(func() {
+		defaultAyoIndoClient, err = newAyoIndoClientInternal()
+	})
+	return defaultAyoIndoClient, err
 }
 
 // newAyoIndoClientInternal performs the actual construction logic that used to
@@ -150,7 +150,7 @@ func newAyoIndoClientInternal() (*AyoIndoClient, error) {
 		return nil, fmt.Errorf("missing required environment variables for AYO API client")
 	}
 
-	    return &AyoIndoClient{
+	return &AyoIndoClient{
 		baseURL:    baseURL,
 		apiToken:   apiToken,
 		venueCode:  venueCode,
@@ -273,7 +273,7 @@ func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
 // GetBookings retrieves booking information for a specific date
 func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error) {
 	// Validate date format (YYYY-MM-DD)
-	if _, err := time.Parse("2006-01-02", date); err != nil {
+	if _, err := time.ParseInLocation("2006-01-02", date, time.Local); err != nil {
 		return nil, fmt.Errorf("invalid date format, should be YYYY-MM-DD: %w", err)
 	}
 
@@ -666,7 +666,7 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Check if watermark file for the specified resolution exists
 	specificPath := filepath.Join(folder, sizes[resolution])
 	log.Printf("GetWatermark : Watermark path: %s", specificPath)
-	
+
 	// Check file age to determine if we need to update from API
 	needsUpdate := false
 	if stat, err := os.Stat(specificPath); err == nil {

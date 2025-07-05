@@ -1462,7 +1462,7 @@ func (s *SQLiteDB) GetPendingTasks(limit int) ([]PendingTask, error) {
 		SELECT id, task_type, task_data, attempts, max_attempts, next_retry_at,
 			   status, created_at, updated_at, error_msg
 		FROM pending_tasks 
-		WHERE status IN ('pending', 'failed') 
+		WHERE status = 'pending' 
 		  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime'))
 		ORDER BY created_at ASC
 		LIMIT ?`, limit)
@@ -1904,3 +1904,80 @@ func (s *SQLiteDB) UpdateCameraConfig(cameraName string, resolution string, fram
 		cameraName, resolution, width, height, frameRate, autoDelete)
 	return nil
 }
+
+// CleanupStuckVideosOnStartup cleans up video records that might be stuck in intermediate states
+// This function is SYNCHRONOUS and MUST complete before other services start
+func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
+	startTime := time.Now()
+	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup of stuck videos and request_ids...")
+	
+	// Part 1: Change stuck videos to failed status using direct SQL
+	// Part 2: Clear request_ids for Ready videos using direct SQL
+	
+	var totalStuckVideos int
+	
+	// === PART 1: Process stuck videos (change status to failed) ===
+	log.Println("🧹 STARTUP CLEANUP: Part 1 - Processing stuck videos...")
+	
+	// Use direct SQL for efficiency - update all stuck videos to failed status
+	result, err := s.db.Exec(`
+		UPDATE videos 
+		SET status = ?, 
+		    error = ?
+		WHERE status IN (?, ?, ?, ?, ?)
+	`, StatusFailed, 
+		"Video stuck during service restart - marked as failed",
+		StatusPending, StatusProcessing, StatusRecording, StatusInitial, StatusUploading)
+	
+	if err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error updating stuck videos: %v", err)
+	} else {
+		rowsAffected, _ := result.RowsAffected()
+		totalStuckVideos = int(rowsAffected)
+		if totalStuckVideos > 0 {
+			log.Printf("✅ STARTUP CLEANUP: Updated %d stuck videos to failed status", totalStuckVideos)
+		} else {
+			log.Printf("✅ STARTUP CLEANUP: No stuck videos found")
+		}
+	}
+	
+	// === PART 2: Process stuck request_ids (for Ready videos) ===
+	log.Println("🧹 STARTUP CLEANUP: Part 2 - Processing stuck request_ids...")
+	
+	var stuckRequestCount int
+	
+	// Use direct SQL for efficiency - clear all request_ids for Ready videos
+	result, err = s.db.Exec(`
+		UPDATE videos 
+		SET request_id = '' 
+		WHERE status = ? AND request_id != '' AND request_id IS NOT NULL
+	`, StatusReady)
+	
+	if err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error clearing stuck request_ids: %v", err)
+	} else {
+		rowsAffected, _ := result.RowsAffected()
+		stuckRequestCount = int(rowsAffected)
+		if stuckRequestCount > 0 {
+			log.Printf("✅ STARTUP CLEANUP: Cleared %d stuck request_ids for Ready videos", stuckRequestCount)
+		} else {
+			log.Printf("✅ STARTUP CLEANUP: No stuck request_ids found for Ready videos")
+		}
+	}
+	
+	duration := time.Since(startTime)
+	
+	if totalStuckVideos > 0 || stuckRequestCount > 0 {
+		log.Printf("✅ STARTUP CLEANUP: COMPLETED! Found %d stuck videos, %d stuck request_ids in %v", 
+			totalStuckVideos, stuckRequestCount, duration)
+		log.Printf("🧹 STARTUP CLEANUP: Part 1 - %d stuck videos marked as failed", totalStuckVideos)
+		log.Printf("🧹 STARTUP CLEANUP: Part 2 - %d stuck request_ids cleared", stuckRequestCount)
+		log.Printf("📤 STARTUP CLEANUP: Videos with uploading status were left untouched (may take hours for large files)")
+	} else {
+		log.Printf("✅ STARTUP CLEANUP: No stuck videos or request_ids found - system is clean! (completed in %v)", duration)
+	}
+	
+	return nil
+}
+
+

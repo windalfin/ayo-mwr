@@ -97,6 +97,21 @@ func main() {
 	}
 	defer db.Close()
 
+	// 🧹 STARTUP CLEANUP: Clean up stuck videos from previous runs (SYNCHRONOUS)
+	// This MUST complete before starting any other services to ensure clean state
+	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup process...")
+	
+	// Wait for stuck videos and request_ids cleanup to complete
+	if err := db.CleanupStuckVideosOnStartup(); err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error during cleanup: %v", err)
+		// Continue anyway, don't fail startup
+	}
+	
+	log.Println("✅ STARTUP CLEANUP: Cleanup completed successfully - system is ready to start services!")
+	
+	// Only proceed with other initializations AFTER cleanup is done
+	log.Println("🚀 SYSTEM: Starting other services after cleanup completion...")
+
 	// Initialize disk management system
 	diskManager := storage.NewDiskManager(db)
 

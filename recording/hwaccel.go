@@ -34,26 +34,43 @@ type HWAccelConfig struct {
 func DetectHardwareAcceleration() HWAccelConfig {
 	log.Println("[hwaccel] 🔍 Detecting hardware acceleration capabilities...")
 	
-	// For Intel Raptor Lake, prioritize QSV detection
+	// On Linux, prioritize VA-API for Intel GPUs (more reliable than QSV)
+	if runtime.GOOS == "linux" {
+		log.Println("[hwaccel] 🐧 Running on Linux - testing VA-API first")
+		if vaapiConfig := detectVAAPI(); vaapiConfig.Available {
+			log.Printf("[hwaccel] ✅ VA-API detected and available")
+			return vaapiConfig
+		}
+	}
+	
+	// Test Intel QSV
+	log.Println("[hwaccel] 🔵 Testing Intel QSV...")
 	if qsvConfig := detectIntelQSV(); qsvConfig.Available {
 		log.Printf("[hwaccel] ✅ Intel Quick Sync Video (QSV) detected and available")
 		return qsvConfig
 	}
 	
-	// Fallback to other acceleration types
+	// Test NVIDIA NVENC
+	log.Println("[hwaccel] 🟢 Testing NVIDIA NVENC...")
 	if nvencConfig := detectNVIDIA(); nvencConfig.Available {
 		log.Printf("[hwaccel] ✅ NVIDIA NVENC detected and available")
 		return nvencConfig
 	}
 	
+	// Test AMD AMF
+	log.Println("[hwaccel] 🔴 Testing AMD AMF...")
 	if amfConfig := detectAMD(); amfConfig.Available {
 		log.Printf("[hwaccel] ✅ AMD AMF detected and available")
 		return amfConfig
 	}
 	
-	if vaapiConfig := detectVAAPI(); vaapiConfig.Available {
-		log.Printf("[hwaccel] ✅ VA-API detected and available")
-		return vaapiConfig
+	// Fallback to VA-API on non-Linux systems
+	if runtime.GOOS != "linux" {
+		log.Println("[hwaccel] 🎬 Testing VA-API as fallback...")
+		if vaapiConfig := detectVAAPI(); vaapiConfig.Available {
+			log.Printf("[hwaccel] ✅ VA-API detected and available")
+			return vaapiConfig
+		}
 	}
 	
 	log.Println("[hwaccel] ❌ No hardware acceleration available, using software encoding")
@@ -138,16 +155,30 @@ func detectAMD() HWAccelConfig {
 
 // detectVAAPI detects VA-API capabilities (Linux)
 func detectVAAPI() HWAccelConfig {
+	log.Println("[hwaccel] 🔍 Checking VA-API availability...")
+	
 	config := HWAccelConfig{
 		Type:        HWAccelVAAPI,
 		Available:   false,
+		Device:      "/dev/dri/renderD128",
 		EncoderH264: "h264_vaapi",
 		EncoderHEVC: "hevc_vaapi",
+		DecoderH264: "h264",
+		DecoderHEVC: "hevc",
 	}
 	
-	if runtime.GOOS == "linux" && checkFFmpegEncoder("h264_vaapi") && testVAAPIEncoder() {
+	// Check if FFmpeg has VA-API support
+	if !checkFFmpegEncoder("h264_vaapi") {
+		log.Println("[hwaccel] ❌ FFmpeg does not have VA-API support compiled")
+		return config
+	}
+	
+	// Test VA-API encoder
+	if runtime.GOOS == "linux" && testVAAPIEncoder() {
 		config.Available = true
 		log.Println("[hwaccel] ✅ VA-API available")
+	} else {
+		log.Println("[hwaccel] ❌ VA-API test failed")
 	}
 	
 	return config
@@ -224,18 +255,29 @@ func testAMDEncoder() bool {
 
 // testVAAPIEncoder tests VA-API encoder
 func testVAAPIEncoder() bool {
+	log.Println("[hwaccel] 🧪 Testing VA-API encoder...")
+	
+	// Test with proper format conversion for VA-API
 	cmd := exec.Command("ffmpeg",
 		"-hide_banner",
 		"-loglevel", "error",
 		"-f", "lavfi",
 		"-i", "testsrc2=duration=1:size=320x240:rate=1",
+		"-vf", "format=nv12,hwupload",
 		"-vaapi_device", "/dev/dri/renderD128",
 		"-c:v", "h264_vaapi",
 		"-f", "null",
 		"-",
 	)
 	
-	return cmd.Run() == nil
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("[hwaccel] ❌ VA-API test encode failed: %v", err)
+		return false
+	}
+	
+	log.Println("[hwaccel] ✅ VA-API test encode successful")
+	return true
 }
 
 // detectQSVDevice tries to detect the QSV device path

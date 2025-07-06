@@ -279,7 +279,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		localOffsetHours := time.Duration(localOffset) * time.Second
 
 		// Get current time in UTC and add the local timezone offset
-		now := time.Now().UTC().Add(localOffsetHours)
+		now := localNow
 
 		// Print raw times with zones for debugging
 		log.Printf("processBookings : DEBUG - Comparing times - Now: %s (%s) vs EndTime: %s (%s)",

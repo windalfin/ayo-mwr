@@ -267,12 +267,12 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 	// Initialize booking video service
 	bookingVideoService := service.NewBookingVideoService(h.db, ayoClient, r2Client, h.config)
-	localNow := time.Now()
-	_, localOffset := localNow.Zone()
-	localOffsetHours := time.Duration(localOffset) * time.Second
+	// localNow := time.Now()
+	// _, localOffset := localNow.Zone()
+	// localOffsetHours := time.Duration(localOffset) * time.Second
 
 	// Get current time in UTC and add the local timezone offset
-	endTime := time.Now().UTC().Add(localOffsetHours)
+	endTime := time.Now()
 	startTime := endTime.Add(-1 * time.Minute)
 
 	// Get today's date for booking lookup
@@ -348,8 +348,8 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 			continue
 		}
 
-		bookingStartTime = bookingStartTime.UTC().Add(localOffsetHours)
-		bookingEndTime = bookingEndTime.UTC().Add(localOffsetHours)
+		bookingStartTime = bookingStartTime
+		bookingEndTime = bookingEndTime
 		log.Printf("Debug Booking Start Time: %v", bookingStartTime)
 		log.Printf("Debug Booking End Time: %v", bookingEndTime)
 		log.Printf("Debug End Time: %v", endTime)

@@ -287,18 +287,72 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 			// Upload MP4 to R2 if local video exists
 			if matchingVideo.LocalPath != "" {
+				// Check if the file is TS or MP4 and handle accordingly
+				var uploadPath string
+				var convertedMP4Path string
+				var shouldDeleteConverted bool
+
+				if transcode.IsTSFile(matchingVideo.LocalPath) {
+					log.Printf("📹 TS file detected: %s, converting to MP4...", matchingVideo.LocalPath)
+					
+					// Create temporary MP4 file path for conversion
+					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
+					
+					// Convert TS to MP4 without changing quality
+					if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
+						log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
+						db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+						return
+					}
+					
+					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)
+					uploadPath = convertedMP4Path
+					shouldDeleteConverted = true
+					
+				} else if transcode.IsMP4File(matchingVideo.LocalPath) {
+					log.Printf("📹 MP4 file detected: %s, uploading directly...", matchingVideo.LocalPath)
+					uploadPath = matchingVideo.LocalPath
+					shouldDeleteConverted = false
+					
+				} else {
+					log.Printf("⚠️ WARNING: Unknown file format: %s", matchingVideo.LocalPath)
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				}
+
+				// Upload the file (either original MP4 or converted MP4) to R2
 				mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
-				_, err = r2Client.UploadFile(matchingVideo.LocalPath, mp4Path)
+				_, err = r2Client.UploadFile(uploadPath, mp4Path)
+				
 				if err != nil {
-					log.Printf("Warning: Failed to upload video to R2: %v", err)
+					log.Printf("❌ ERROR: Failed to upload video to R2: %v", err)
 					// Use existing R2 URL if upload fails
 					r2MP4URL = matchingVideo.R2MP4URL
+					
+					// Clean up converted file if it was created
+					if shouldDeleteConverted && convertedMP4Path != "" {
+						if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
+							log.Printf("⚠️ WARNING: Failed to remove converted file: %v", removeErr)
+						} else {
+							log.Printf("🧹 Cleaned up converted file: %s", convertedMP4Path)
+						}
+					}
+					
 					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 					return
 				} else {
 					// Generate URL using custom domain
 					r2MP4URL = fmt.Sprintf("%s/%s", r2Client.GetBaseURL(), mp4Path)
-					log.Printf("Video uploaded to custom URL: %s", r2MP4URL)
+					log.Printf("✅ Video uploaded to custom URL: %s", r2MP4URL)
+					
+					// Clean up converted file if it was created and upload was successful
+					if shouldDeleteConverted && convertedMP4Path != "" {
+						if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
+							log.Printf("⚠️ WARNING: Failed to remove converted file: %v", removeErr)
+						} else {
+							log.Printf("🧹 Cleaned up converted file: %s", convertedMP4Path)
+						}
+					}
 				}
 			} else {
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)

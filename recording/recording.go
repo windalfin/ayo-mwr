@@ -229,7 +229,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 				"-hls_segment_type", "mpegts", // Explicitly use MPEG-TS
 				"-reset_timestamps", "1", // Reset timestamps for each segment
 				"-strftime", "1", // Enable strftime for filename template
-				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%%Y%%m%%d_%%H%%M%%S.ts"),
+				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
 				hlsPlaylistPath,
 			)
 

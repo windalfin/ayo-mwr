@@ -164,79 +164,99 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
 
 	for {
-		logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
-		if err != nil {
-			log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
-			time.Sleep(5 * time.Second)
-			continue
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s] Context canceled, stopping capture", cameraName)
+			return
+		default:
+			logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
+			if err != nil {
+				log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			defer logFile.Close() // Ensure log file is closed properly
+
+			// Detect stream info first to choose appropriate filters
+			streamInfo := detectStreamInfo(rtspURL, cameraName)
+
+			ffmpegArgs := []string{
+				"-rtsp_transport", "tcp",
+				"-timeout", "5000000",
+				"-fflags", "nobuffer+discardcorrupt",
+				"-analyzeduration", "2000000",
+				"-probesize", "1000000",
+				"-re",
+				"-i", rtspURL,
+				"-c:v", "copy", // Stream copy for zero CPU encoding
+			}
+
+			// Add appropriate bitstream filter based on video codec
+			if streamInfo.VideoCodec == "h264" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for HLS
+				log.Printf("[%s] 🔧 Using H.264 bitstream filter", cameraName)
+			} else if streamInfo.VideoCodec == "hevc" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb") // Convert HEVC format for HLS
+				log.Printf("[%s] 🔧 Using HEVC bitstream filter", cameraName)
+			} else {
+				log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-flags", "+global_header", // Ensure codec parameters in each segment
+				"-sc_threshold", "0", // Disable scene change detection to enforce keyframe splits
+				"-force_key_frames", "expr:gte(t,n_forced*4)", // Force keyframes every 4 seconds
+			)
+
+			// Audio settings: always attempt to include audio
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+			)
+			if streamInfo.HasAudio {
+				log.Printf("[%s] 🔊 Including audio stream in HLS", cameraName)
+			} else {
+				log.Printf("[%s] 🔈 Attempting to include audio (none detected, FFmpeg will continue without it)", cameraName)
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-max_muxing_queue_size", "1024",
+				"-f", "hls",
+				"-hls_time", "4", // 4-second segments
+				"-hls_list_size", "0",
+				"-hls_flags", "independent_segments+delete_segments", // Ensure independent segments and clean up old ones
+				"-hls_segment_type", "mpegts", // Explicitly use MPEG-TS
+				"-reset_timestamps", "1", // Reset timestamps for each segment
+				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
+				hlsPlaylistPath,
+			)
+
+			log.Printf("[%s] Starting continuous HLS FFmpeg recording with args: %v", cameraName, ffmpegArgs)
+
+			cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+
+			err = cmd.Start()
+			if err != nil {
+				log.Printf("[%s] Failed to start FFmpeg: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Wait for FFmpeg to complete and handle errors
+			err = cmd.Wait()
+			if err != nil {
+				log.Printf("[%s] FFmpeg process exited with error: %v", cameraName, err)
+			} else {
+				log.Printf("[%s] FFmpeg process exited normally", cameraName)
+			}
+
+			// Wait before restarting to avoid overlap
+			log.Printf("[%s] Restarting FFmpeg in 2 seconds...", cameraName)
+			time.Sleep(2 * time.Second)
 		}
-
-		// Detect stream info first to choose appropriate filters
-		streamInfo := detectStreamInfo(rtspURL, cameraName)
-
-		ffmpegArgs := []string{
-			"-rtsp_transport", "tcp",
-			"-timeout", "5000000",
-			"-fflags", "nobuffer+discardcorrupt",
-			"-analyzeduration", "2000000",
-			"-probesize", "1000000",
-			"-re",
-			"-i", rtspURL,
-			"-c:v", "copy", // Stream copy for zero CPU encoding
-		}
-
-		// Add appropriate bitstream filter based on video codec
-		if streamInfo.VideoCodec == "h264" {
-			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for HLS
-			log.Printf("[%s] 🔧 Using H.264 bitstream filter", cameraName)
-		} else if streamInfo.VideoCodec == "hevc" {
-			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb") // Convert HEVC format for HLS
-			log.Printf("[%s] 🔧 Using HEVC bitstream filter", cameraName)
-		} else {
-			log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
-		}
-
-		ffmpegArgs = append(ffmpegArgs, "-flags", "+global_header") // Ensure codec parameters in each segment
-
-		// Audio settings: always attempt to include audio; if the stream actually has
-		// no audio FFmpeg will continue and simply produce video-only output. This
-		// guarantees that audio will be present whenever the source provides it.
-		ffmpegArgs = append(ffmpegArgs,
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-ar", "44100",
-		)
-		if streamInfo.HasAudio {
-			log.Printf("[%s] 🔊 Including audio stream in HLS", cameraName)
-		} else {
-			log.Printf("[%s] 🔈 Attempting to include audio (none detected, FFmpeg will continue without it)", cameraName)
-		}
-
-		ffmpegArgs = append(ffmpegArgs,
-			"-max_muxing_queue_size", "1024",
-			"-f", "hls",
-			"-hls_time", "4", // Slightly longer segments for better efficiency
-			"-hls_list_size", "0",
-			"-strftime", "1",
-			"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
-			hlsPlaylistPath,
-		)
-
-		log.Printf("[%s] Starting continuous HLS FFmpeg recording", cameraName)
-
-		cmd := exec.Command("ffmpeg", ffmpegArgs...)
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-
-		err = cmd.Run()
-		if err != nil {
-			log.Printf("[%s] FFmpeg process exited with error: %v", cameraName, err)
-			log.Printf("[%s] Restarting FFmpeg in 5 seconds...", cameraName)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		log.Printf("[%s] FFmpeg process exited normally, restarting in 2 seconds...", cameraName)
-		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -416,10 +436,10 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 	// Generate unique ID to prevent race conditions
 	uniqueID := fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(100000))
-	
+
 	log.Printf("MergeAndWatermark: Starting optimized merge and watermark process (ID: %s)", uniqueID)
 	log.Printf("MergeAndWatermark: Input: %s, Output: %s, Resolution: %s (ID: %s)", inputPath, outputPath, resolution, uniqueID)
-	
+
 	// Find segments in range of the startTime and endTime
 	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
 	if err != nil {
@@ -428,7 +448,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	if len(segments) == 0 {
 		return fmt.Errorf("no video segments found in the specified range")
 	}
-	
+
 	log.Printf("MergeAndWatermark: Found %d segments to process (ID: %s)", len(segments), uniqueID)
 
 	// Ensure output directory exists
@@ -436,7 +456,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	
+
 	// Create temporary concatenated file (before watermarking) with unique ID
 	tempConcatPath := filepath.Join(outDir, fmt.Sprintf("temp_concat_%s_%s", uniqueID, filepath.Base(outputPath)))
 	defer os.Remove(tempConcatPath) // Clean up temp file
@@ -524,7 +544,7 @@ func applyWatermarkWithPosition(inputVideo, watermarkPath, outputPath string, po
 	} else if opacity > 1.0 {
 		opacity = 1.0
 	}
-	
+
 	// Define overlay expression based on position
 	var overlayExpr string
 	switch position {
@@ -567,7 +587,7 @@ func applyWatermarkWithPosition(inputVideo, watermarkPath, outputPath string, po
 	// Add resolution and watermark filters
 	if res, found := resolutions[resolution]; found {
 		// Scale video and apply watermark
-		filter := fmt.Sprintf("[0:v]scale=%s:%s[scaled];[1:v]colorchannelmixer=aa=%.1f[wm];[scaled][wm]%s", 
+		filter := fmt.Sprintf("[0:v]scale=%s:%s[scaled];[1:v]colorchannelmixer=aa=%.1f[wm];[scaled][wm]%s",
 			res.width, res.height, opacity, overlayExpr)
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", filter,

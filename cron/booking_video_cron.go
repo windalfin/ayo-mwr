@@ -23,7 +23,45 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// Global semaphore untuk membatasi maksimal 2 proses bersamaan
+var (
+	globalSemaphore = semaphore.NewWeighted(2) // Maksimal 2 proses bersamaan
+	processingMutex sync.Mutex
+	activeProcesses int
+	cronCounter     int
+)
+
+// getActiveProcessesCount mengembalikan jumlah proses yang sedang aktif
+func getActiveProcessesCount() int {
+	processingMutex.Lock()
+	defer processingMutex.Unlock()
+	return activeProcesses
+}
+
+// logProcessingStatus menampilkan status proses yang sedang berjalan
+func logProcessingStatus(cronID int, action string) {
+	processingMutex.Lock()
+	defer processingMutex.Unlock()
+	log.Printf("📊 CRON-RUN-%d: %s - Proses aktif: %d/2", cronID, action, activeProcesses)
+}
+
 // Semua helper function telah dipindahkan ke BookingVideoService
+
+// =================== CONCURRENCY CONTROL SYSTEM ===================
+// Sistem ini memastikan hanya maksimal 2 proses booking yang berjalan bersamaan
+// bahkan jika ada multiple cron jobs yang dipicu:
+//
+// 1. Global Semaphore: Membatasi maksimal 2 proses bersamaan secara global
+// 2. Process Tracking: Melacak jumlah proses yang sedang aktif
+// 3. Cron Run Tracking: Setiap cron run memiliki ID unik untuk logging
+// 4. Queueing System: Cron baru akan menunggu jika sudah ada 2 proses berjalan
+//
+// Contoh skenario:
+// - CRON-RUN-1 mulai dengan 2 booking -> Proses 1 & 2 berjalan (2/2 slot terisi)
+// - CRON-RUN-2 mulai dengan 1 booking -> Menunggu slot kosong
+// - Proses 1 selesai -> Slot kosong (1/2) -> Proses 3 dari CRON-RUN-2 mulai
+// - dst...
+// ====================================================================
 
 // isRetryableError menentukan apakah error layak untuk di-retry
 func isRetryableError(err error) bool {
@@ -146,13 +184,22 @@ func StartBookingVideoCron(cfg *config.Config) {
 		}
 
 		schedule.Start()
-		log.Println("processBookings : Booking video processing cron job started - will run every 1 minute (testing mode)")
+		log.Println("🚀 CRON SCHEDULER: Booking video processing cron job started - will run every 2 minutes (testing mode)")
+		log.Println("📊 CONCURRENCY: Sistem antrian dimulai - maksimal 2 proses booking bersamaan")
+		log.Printf("📊 CONCURRENCY: Slot processing tersedia: %d/2", 2-getActiveProcessesCount())
 	}()
 }
 
 // processBookings handles fetching bookings from database and processing them
 func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
-	log.Println("processBookings : Running booking video processing task...")
+	// Get cron run ID untuk tracking
+	processingMutex.Lock()
+	cronCounter++
+	currentCronID := cronCounter
+	processingMutex.Unlock()
+
+	log.Printf("🔄 CRON-RUN-%d: Starting booking video processing task...", currentCronID)
+	logProcessingStatus(currentCronID, "CRON START")
 
 	// Use fixed date for testing
 	today := time.Now().Format("2006-01-02")
@@ -161,21 +208,30 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 	// Get bookings from database by date
 	bookingsData, err := db.GetBookingsByDate(today)
 	if err != nil {
-		log.Printf("processBookings : Error fetching bookings from database: %v", err)
+		log.Printf("❌ CRON-RUN-%d: Error fetching bookings from database: %v", currentCronID, err)
 		return
 	}
 
 	if len(bookingsData) == 0 {
-		log.Println("processBookings : No bookings found for today in database")
+		log.Printf("ℹ️ CRON-RUN-%d: No bookings found for today in database", currentCronID)
 		return
 	}
 
-	log.Printf("processBookings : Found %d bookings for today in database", len(bookingsData))
+	log.Printf("📋 CRON-RUN-%d: Found %d bookings for today in database", currentCronID, len(bookingsData))
 
-	// Process bookings concurrently with a limit on parallelism
-	const maxConcurrent = 2 // Maximum number of concurrent booking processing
+	// Process bookings menggunakan global semaphore
 	var wg sync.WaitGroup
-	sem := semaphore.NewWeighted(maxConcurrent)
+	
+	// Count valid bookings yang akan diproses
+	validBookings := 0
+	for _, bookingItem := range bookingsData {
+		status := strings.ToLower(bookingItem.Status)
+		if status == "success" {
+			validBookings++
+		}
+	}
+	
+	log.Printf("📊 CRON-RUN-%d: %d dari %d bookings memenuhi syarat untuk diproses", currentCronID, validBookings, len(bookingsData))
 
 	// Process each booking from database
 	for _, bookingItem := range bookingsData {
@@ -189,10 +245,10 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		field_id := float64(bookingItem.FieldID)
 		bookingSource := bookingItem.BookingSource
 
-		log.Printf("processBookings : Processing booking from DB: %s (Status: %s, Source: %s)", bookingID, status, bookingSource)
+		log.Printf("📋 CRON-RUN-%d: Processing booking from DB: %s (Status: %s, Source: %s)", currentCronID, bookingID, status, bookingSource)
 
 		// 2. THEN: Continue with video processing logic
-		log.Printf("processBookings : Processing booking %s (Order Detail ID: %d)", bookingID, int(orderDetailID))
+		log.Printf("📋 CRON-RUN-%d: Processing booking %s (Order Detail ID: %d)", currentCronID, bookingID, int(orderDetailID))
 
 		// akan menggunakan kode parsing date di bawah untuk menghindari duplikasi
 
@@ -211,11 +267,11 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 			}
 			if hasReadyVideo {
-				log.Printf("processBookings : Skipping booking %s: already has a video with 'ready' status", bookingID)
+				log.Printf("⏭️ CRON-RUN-%d: Skipping booking %s: already has a video with 'ready' status", currentCronID, bookingID)
 				if status == "cancelled" {
 					// update status to cancelled
 					db.UpdateVideoStatus(existingVideos[0].ID, database.StatusCancelled, "Cancel from api")
-					log.Printf("processBookings : Booking %s is cancelled, updating status to 'cancelled'", bookingID)
+					log.Printf("❌ CRON-RUN-%d: Booking %s is cancelled, updating status to 'cancelled'", currentCronID, bookingID)
 				}
 				continue
 			}
@@ -238,12 +294,12 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 					}
 				}
 			}
-			log.Printf("processBookings : Booking %s is cancelled, skipping video processing", bookingID)
+			log.Printf("❌ CRON-RUN-%d: Booking %s is cancelled, skipping video processing", currentCronID, bookingID)
 			continue
 		}
 
 		if status != "success" {
-			log.Printf("processBookings : Booking %s status is '%s', skipping video processing", bookingID, status)
+			log.Printf("⏭️ CRON-RUN-%d: Booking %s status is '%s', skipping video processing", currentCronID, bookingID, status)
 			continue
 		}
 
@@ -290,12 +346,12 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Add a 3-minute tolerance to endTime for processing
 		tolerantEndTime := endTime.Add(3 * time.Minute)
 		if now.After(tolerantEndTime) {
-			log.Printf("processBookings : Booking %s end time (%s) with 3-min tolerance (%s) is in the past, proceeding with processing. Current time: %s",
-				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
+			log.Printf("✅ CRON-RUN-%d: Booking %s end time (%s) with 3-min tolerance (%s) is in the past, proceeding with processing. Current time: %s",
+				currentCronID, bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 		} else {
 			// Skip bookings that haven't ended yet
-			log.Printf("processBookings : Skipping booking %s: booking end time (%s) with 3-min tolerance (%s) is in the future, because now is %s",
-				bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
+			log.Printf("⏭️ CRON-RUN-%d: Skipping booking %s: booking end time (%s) with 3-min tolerance (%s) is in the future, because now is %s",
+				currentCronID, bookingID, endTime.Format("2006-01-02 15:04:05 -0700"), tolerantEndTime.Format("2006-01-02 15:04:05 -0700"), now.Format("2006-01-02 15:04:05 -0700"))
 			continue
 		}
 
@@ -304,25 +360,58 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Venue code tidak digunakan lagi karena sudah diakses melalui service
 
 		// Loop through all cameras for this booking
-		log.Printf("processBookings : Processing booking %s in timeframe %s to %s for all cameras",
-			bookingID, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
-
-		// Acquire semaphore before processing this booking
-		if err := sem.Acquire(context.Background(), 1); err != nil {
-			log.Printf("processBookings : Error acquiring semaphore for booking %s: %v", bookingID, err)
-			continue
-		}
+		log.Printf("📋 CRON-RUN-%d: Processing booking %s in timeframe %s to %s for all cameras",
+			currentCronID, bookingID, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Process this booking in a separate goroutine
 		wg.Add(1)
 		go func(bookingData database.BookingData, bookingID string, startTime, endTime time.Time,
-			orderDetailID float64, localOffsetHours time.Duration, field_id float64) {
+			orderDetailID float64, localOffsetHours time.Duration, field_id float64, cronID int) {
 			defer wg.Done()
-			defer sem.Release(1) // Release semaphore when done
 
-			// Track successful camera count
+			// Acquire global semaphore before processing this booking
+			processingMutex.Lock()
+			currentActive := activeProcesses
+			processingMutex.Unlock()
+
+			log.Printf("⏳ CRON-RUN-%d: Booking %s menunggu slot processing (aktif: %d/2)...", cronID, bookingID, currentActive)
+
+			// Record start time untuk menghitung waktu tunggu
+			waitStartTime := time.Now()
+			
+			if err := globalSemaphore.Acquire(context.Background(), 1); err != nil {
+				log.Printf("❌ CRON-RUN-%d: Error acquiring global semaphore for booking %s: %v", cronID, bookingID, err)
+				return
+			}
+
+			// Update active processes counter
+			processingMutex.Lock()
+			activeProcesses++
+			currentActive = activeProcesses
+			processingMutex.Unlock()
+
+			defer func() {
+				// Release semaphore dan update counter
+				globalSemaphore.Release(1)
+				processingMutex.Lock()
+				activeProcesses--
+				newActive := activeProcesses
+				processingMutex.Unlock()
+				log.Printf("✅ CRON-RUN-%d: Booking %s processing selesai (aktif: %d/2)", cronID, bookingID, newActive)
+			}()
+
+			// Calculate wait time
+			waitDuration := time.Since(waitStartTime)
+			if waitDuration > 100*time.Millisecond {
+				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing setelah menunggu %v (aktif: %d/2)", cronID, bookingID, waitDuration.Round(time.Millisecond), currentActive)
+			} else {
+				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing langsung (aktif: %d/2)", cronID, bookingID, currentActive)
+			}
+
+			// Track successful camera count dan waktu processing
 			camerasWithVideo := 0
 			videoType := "full"
+			bookingStartTime := time.Now()
 			// Process each camera
 			for _, camera := range cfg.Cameras {
 				// Skip disabled cameras
@@ -552,18 +641,20 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("🎉 SUCCESS: Completed processing for booking %s on camera %s (ID: %s)", bookingID, camera.Name, uniqueID)
 			}
 
-			// Log summary of camera processing
+			// Log summary of camera processing dengan waktu processing
+			processingDuration := time.Since(bookingStartTime)
 			if camerasWithVideo > 0 {
-				log.Printf("processBookings : Successfully processed %d cameras for booking %s", camerasWithVideo, bookingID)
+				log.Printf("✅ CRON-RUN-%d: Successfully processed %d cameras for booking %s in %v", cronID, camerasWithVideo, bookingID, processingDuration.Round(time.Second))
 			} else {
-				log.Printf("processBookings : No camera videos found for booking %s in the specified time range", bookingID)
+				log.Printf("⚠️ CRON-RUN-%d: No camera videos found for booking %s in the specified time range (took %v)", cronID, bookingID, processingDuration.Round(time.Second))
 			}
-		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id) // Pass variables to goroutine
+		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id, currentCronID) // Pass variables to goroutine
 	}
 
 	// Wait for all booking processing goroutines to complete
 	wg.Wait()
-	log.Println("processBookings : Booking video processing task completed")
+	log.Printf("🎉 CRON-RUN-%d: Booking video processing task completed", currentCronID)
+	logProcessingStatus(currentCronID, "CRON END")
 }
 
 // Semua fungsi helper sudah dipindahkan ke BookingVideoService di service/booking_video.go

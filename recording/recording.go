@@ -156,7 +156,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	}
 
 	// Start the MP4 segmenter in the background (legacy HLS-based segmentation)
-	StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
+	// StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
 	log.Printf("Starting capture for camera: %s", cameraName)
 

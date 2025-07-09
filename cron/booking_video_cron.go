@@ -408,6 +408,58 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing langsung (aktif: %d/2)", cronID, bookingID, currentActive)
 			}
 
+			// 🔒 RACE CONDITION FIX: Double-check existing videos INSIDE goroutine
+			// Kondisi sama persis seperti pengecekan di luar goroutine
+			existingVideos, err := db.GetVideosByBookingID(bookingID)
+			if err != nil {
+				log.Printf("processBookings : Error checking existing videos for booking %s: %v", bookingID, err)
+			} else {
+				hasReadyVideo := false
+				for _, video := range existingVideos {
+					log.Printf("video.Status %s", video.Status)
+
+					if (video.Status == database.StatusReady || video.Status == database.StatusUploading || video.Status == database.StatusInitial) && video.VideoType == "full" {
+						hasReadyVideo = true
+						break
+					}
+				}
+				if hasReadyVideo {
+					log.Printf("⏭️ CRON-RUN-%d: Skipping booking %s: already has a video with 'ready' status", cronID, bookingID)
+					if status == "cancelled" {
+						// update status to cancelled
+						db.UpdateVideoStatus(existingVideos[0].ID, database.StatusCancelled, "Cancel from api")
+						log.Printf("❌ CRON-RUN-%d: Booking %s is cancelled, updating status to 'cancelled'", cronID, bookingID)
+					}
+					return
+				}
+			}
+			// Handle cancelled bookings - update video status if exists
+			if status == "cancelled" || status == "canceled" {
+				existingVideos, err := db.GetVideosByBookingID(bookingID)
+				if err != nil {
+					log.Printf("processBookings : Error checking existing videos for cancelled booking %s: %v", bookingID, err)
+				} else if len(existingVideos) > 0 {
+					// Update all videos for this booking to cancelled status
+					for _, video := range existingVideos {
+						if video.Status != database.StatusCancelled {
+							err := db.UpdateVideoStatus(video.ID, database.StatusCancelled, "Booking cancelled via API")
+							if err != nil {
+								log.Printf("processBookings : Error updating video status to cancelled for booking %s: %v", bookingID, err)
+							} else {
+								log.Printf("📅 BOOKING: Updated video %s to cancelled status for booking %s", video.ID, bookingID)
+							}
+						}
+					}
+				}
+				log.Printf("❌ CRON-RUN-%d: Booking %s is cancelled, skipping video processing", cronID, bookingID)
+				return
+			}
+
+			if status != "success" {
+				log.Printf("⏭️ CRON-RUN-%d: Booking %s status is '%s', skipping video processing", cronID, bookingID, status)
+				return
+			}
+
 			// Track successful camera count dan waktu processing
 			camerasWithVideo := 0
 			videoType := "full"

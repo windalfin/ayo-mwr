@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -473,5 +474,161 @@ s.config.Cameras = newCams
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": fmt.Sprintf("Reloaded %d cameras", len(newCams)),
+	})
+}
+
+// ---------- System Configuration handlers ----------
+
+// GET /api/admin/system-config
+// Get all system configuration
+func (s *Server) getSystemConfig(c *gin.Context) {
+	configs, err := s.db.GetAllSystemConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get system configuration",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Convert to a more user-friendly format
+	configMap := make(map[string]interface{})
+	for _, cfg := range configs {
+		switch cfg.Type {
+		case "int":
+			if val, err := strconv.Atoi(cfg.Value); err == nil {
+				configMap[cfg.Key] = val
+			} else {
+				configMap[cfg.Key] = cfg.Value
+			}
+		case "string":
+			configMap[cfg.Key] = cfg.Value
+		default:
+			configMap[cfg.Key] = cfg.Value
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": configMap,
+	})
+}
+
+// PUT /api/admin/system-config
+// Update system configuration
+func (s *Server) updateSystemConfig(c *gin.Context) {
+	var request map[string]interface{}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validate and update each configuration
+	for key, value := range request {
+		var strValue string
+		var configType string
+
+		switch key {
+		case dbmod.ConfigBookingWorkerConcurrency,
+			dbmod.ConfigVideoRequestWorkerConcurrency:
+			// These should be integers with range 1-20
+			if intVal, ok := value.(float64); ok {
+				if intVal < 1 || intVal > 20 {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Booking and video request worker concurrency must be between 1 and 20, got %v", intVal),
+					})
+					return
+				}
+				strValue = strconv.Itoa(int(intVal))
+				configType = "int"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected integer", key),
+				})
+				return
+			}
+		case dbmod.ConfigPendingTaskWorkerConcurrency:
+			// Pending task worker has different range 1-50
+			if intVal, ok := value.(float64); ok {
+				if intVal < 1 || intVal > 50 {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Pending task worker concurrency must be between 1 and 50, got %v", intVal),
+					})
+					return
+				}
+				strValue = strconv.Itoa(int(intVal))
+				configType = "int"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected integer", key),
+				})
+				return
+			}
+		case dbmod.ConfigEnabledQualities:
+			// This should be a string (comma-separated qualities)
+			if strVal, ok := value.(string); ok {
+				// Validate qualities
+				validQualities := map[string]bool{
+					"1080p": true, "720p": true, "480p": true, "360p": true,
+				}
+				qualities := strings.Split(strVal, ",")
+				for _, q := range qualities {
+					q = strings.TrimSpace(q)
+					if q != "" && !validQualities[q] {
+						c.JSON(http.StatusBadRequest, gin.H{
+							"error": fmt.Sprintf("Invalid quality '%s'. Valid qualities: 1080p, 720p, 480p, 360p", q),
+						})
+						return
+					}
+				}
+				strValue = strVal
+				configType = "string"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected string", key),
+				})
+				return
+			}
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Unknown configuration key: %s", key),
+			})
+			return
+		}
+
+		// Update in database
+		config := dbmod.SystemConfig{
+			Key:       key,
+			Value:     strValue,
+			Type:      configType,
+			UpdatedBy: "admin",
+		}
+		if err := s.db.SetSystemConfig(config); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to update %s", key),
+				"details": err.Error(),
+			})
+			return
+		}
+	}
+
+	// Update in-memory configuration
+	sysConfigService := config.NewSystemConfigService(s.db)
+	if err := sysConfigService.LoadSystemConfigToConfig(s.config); err != nil {
+		log.Printf("Warning: Failed to reload system config to memory: %v", err)
+	}
+
+	// Log hot reload notification
+	log.Printf("🔄 HOT RELOAD: System configuration updated - all workers will use new settings on next run")
+	log.Printf("📊 CURRENT CONFIG: BookingWorker=%d, VideoRequestWorker=%d, PendingTaskWorker=%d", 
+		s.config.BookingWorkerConcurrency, s.config.VideoRequestWorkerConcurrency, s.config.PendingTaskWorkerConcurrency)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "System configuration updated successfully - hot reload active",
+		"note": "Changes will take effect on next cron run (within 2 minutes)",
 	})
 }

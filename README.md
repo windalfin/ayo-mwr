@@ -244,6 +244,62 @@ You can monitor worker activity through the application logs:
 📦 QUEUE: 🔄 Memproses 8 task yang tertunda (max 5 concurrent)...
 ```
 
+### Hot Reload Worker Concurrency
+
+The application supports **hot reload** for worker concurrency settings, allowing you to update the number of concurrent workers without restarting the application.
+
+#### Features
+
+- **Zero Downtime**: Update worker concurrency without stopping the application
+- **Instant Effect**: Changes take effect within 2 minutes maximum
+- **Thread Safe**: Safe concurrent access to worker settings
+- **Automatic Monitoring**: Built-in configuration monitoring and reloading
+- **Comprehensive Logging**: Detailed logs for all concurrency changes
+
+#### How It Works
+
+1. **Dynamic Semaphore Management**: Each worker type uses a dynamic semaphore that can be resized at runtime
+2. **Configuration Monitoring**: Background process monitors configuration changes every 2 minutes
+3. **Safe Updates**: Thread-safe mechanisms ensure no race conditions during updates
+4. **Graceful Scaling**: Workers can scale up or down without affecting running tasks
+
+#### Updating Concurrency Settings
+
+You can update worker concurrency through the API:
+
+```bash
+# Update worker concurrency via API
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"booking_worker_concurrency":5,"video_request_worker_concurrency":4,"pending_task_worker_concurrency":6}' \
+  http://localhost:3000/api/config/update
+```
+
+Or update the database directly and wait for automatic reload (max 2 minutes).
+
+#### Monitoring Hot Reload Activity
+
+Watch for hot reload logs in the application output:
+
+```
+🔄 CONFIG: Hot reload - Booking worker concurrency: 2 → 5
+🔄 CONFIG: Hot reload - Video request worker concurrency: 2 → 4  
+🔄 CONFIG: Hot reload - Pending task worker concurrency: 3 → 6
+📊 BOOKING-CRON: Konkurensi diperbarui: 2 → 5 worker
+📊 VIDEO-REQUEST-CRON: Konkurensi diperbarui: 2 → 4 worker
+📦 QUEUE: Konkurensi diperbarui: 3 → 6 worker
+```
+
+#### Benefits
+
+- **Production Ready**: Update settings in production without downtime
+- **Performance Tuning**: Adjust worker counts based on real-time load
+- **Resource Management**: Scale workers up/down based on system resources
+- **Operational Flexibility**: Quick response to changing requirements
+
+#### Technical Details
+
+For detailed technical information about the hot reload implementation, see [HOT_RELOAD_CONCURRENCY.md](HOT_RELOAD_CONCURRENCY.md).
+
 ## Quality Presets Configuration
 
 The application supports configurable video quality presets for transcoding. You can control which quality variants are generated during video processing.

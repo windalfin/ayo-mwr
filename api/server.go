@@ -115,6 +115,10 @@ func (s *Server) setupRoutes(r *gin.Engine) {
             admin.PUT("/arduino-config", s.updateArduinoConfig)
 			admin.PUT("/cameras-config", s.updateCamerasConfig)
 			admin.POST("/reload-cameras", s.reloadCameras)
+			
+			// System configuration endpoints
+			admin.GET("/system-config", s.getSystemConfig)
+			admin.PUT("/system-config", s.updateSystemConfig)
 		}
 	}
 }

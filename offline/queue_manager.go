@@ -89,6 +89,29 @@ func (qm *QueueManager) Stop() {
 	close(qm.stopChan)
 }
 
+// UpdateConcurrency updates the maximum concurrency and recreates semaphore
+func (qm *QueueManager) UpdateConcurrency(newMaxConcurrency int) {
+	qm.tasksMutex.Lock()
+	defer qm.tasksMutex.Unlock()
+	
+	if qm.maxConcurrency != newMaxConcurrency {
+		log.Printf("🔄 QUEUE: Updating concurrency from %d to %d", qm.maxConcurrency, newMaxConcurrency)
+		
+		// Create new semaphore with updated capacity
+		oldSemaphore := qm.semaphore
+		qm.maxConcurrency = newMaxConcurrency
+		qm.semaphore = make(chan struct{}, newMaxConcurrency)
+		
+		// Transfer existing tokens from old semaphore to new one
+		currentTokens := len(oldSemaphore)
+		for i := 0; i < currentTokens && i < newMaxConcurrency; i++ {
+			qm.semaphore <- struct{}{}
+		}
+		
+		log.Printf("✅ QUEUE: Concurrency updated successfully to %d (transferred %d active tokens)", newMaxConcurrency, currentTokens)
+	}
+}
+
 // processingLoop is the main processing loop
 func (qm *QueueManager) processingLoop() {
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds for faster processing
@@ -128,6 +151,13 @@ func (qm *QueueManager) processQueuedTasks() {
 		log.Printf("📦 QUEUE: ❌ Tidak ada koneksi internet - melewati pemrosesan task")
 		return
 	}
+	
+	// Load latest configuration and update concurrency if needed
+	sysConfigService := config.NewSystemConfigService(qm.db)
+	if err := sysConfigService.LoadSystemConfigToConfig(qm.config); err != nil {
+		log.Printf("Warning: Failed to reload system config: %v", err)
+	}
+	qm.UpdateConcurrency(qm.config.PendingTaskWorkerConcurrency)
 
 	tasks, err := qm.db.GetPendingTasks(10) // Process 10 tasks at a time
 	if err != nil {

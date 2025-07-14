@@ -454,6 +454,7 @@
     <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
     <a href="#videos" data-tab="videos">Videos/Clips</a>
     <a href="#camera-config" data-tab="camera-config">Camera Config</a>
+    <a href="#system-config" data-tab="system-config">System Config</a>
     <a href="#system" data-tab="system">System Health</a>
     <a href="#logs" data-tab="logs">Logs</a>
   </nav>
@@ -623,6 +624,70 @@
               <button type="submit" class="btn btn-primary">Save</button>
             </div>
           </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- System Config Tab -->
+    <section class="tab-section" id="tab-system-config" style="display:none">
+      <h3>System Configuration</h3>
+      <div class="camera-config-actions">
+        <button id="load-system-config-btn" class="btn btn-secondary">Load Config</button>
+        <button id="save-system-config-btn" class="btn btn-success">Save Changes</button>
+      </div>
+      
+      <div style="background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 1px 5px rgba(0,0,0,0.05);">
+        <h4 style="margin-top: 0; color: #273c75;">Worker Concurrency Settings</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="booking-worker-concurrency">Booking Worker Concurrency</label>
+            <input type="number" id="booking-worker-concurrency" min="1" max="10" value="2">
+            <small style="color: #666; font-size: 0.9em;">Number of concurrent booking video processing workers (1-10)</small>
+          </div>
+          <div class="form-group">
+            <label for="video-request-worker-concurrency">Video Request Worker Concurrency</label>
+            <input type="number" id="video-request-worker-concurrency" min="1" max="10" value="3">
+            <small style="color: #666; font-size: 0.9em;">Number of concurrent video request processing workers (1-10)</small>
+          </div>
+          <div class="form-group">
+            <label for="pending-task-worker-concurrency">Pending Task Worker Concurrency</label>
+            <input type="number" id="pending-task-worker-concurrency" min="1" max="10" value="2">
+            <small style="color: #666; font-size: 0.9em;">Number of concurrent pending task processing workers (1-10)</small>
+          </div>
+        </div>
+        
+        <h4 style="color: #273c75;">Quality Presets Configuration</h4>
+        <div class="form-group">
+          <label for="enabled-qualities">Enabled Qualities</label>
+          <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" class="quality-checkbox" value="1080p" checked>
+              1080p (Full HD)
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" class="quality-checkbox" value="720p" checked>
+              720p (HD)
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" class="quality-checkbox" value="480p">
+              480p (SD)
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" class="quality-checkbox" value="360p">
+              360p (Low)
+            </label>
+          </div>
+          <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">Select which quality presets should be available for transcoding</small>
+        </div>
+        
+        <div style="margin-top: 2rem; padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #273c75;">
+          <h5 style="margin: 0 0 0.5rem 0; color: #273c75;">Configuration Notes:</h5>
+          <ul style="margin: 0; padding-left: 1.5rem; color: #666;">
+            <li>Worker concurrency settings control how many tasks can be processed simultaneously</li>
+            <li>Higher concurrency may improve performance but will use more system resources</li>
+            <li>Quality presets determine which video qualities are available for transcoding</li>
+            <li>Changes will take effect after saving and may require a system restart for some settings</li>
+          </ul>
         </div>
       </div>
     </section>
@@ -1301,6 +1366,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       initDashboard();
       initPasswordToggles();
+      initSystemConfig();
     });
   </script>
   <!-- Arduino Config Modal -->
@@ -1324,6 +1390,107 @@
   </div>
 
 <script>
+// ---------- System Config ----------
+let systemConfig = {};
+
+// Load system configuration from backend
+async function loadSystemConfig() {
+  try {
+    const response = await fetch('/api/admin/system-config');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const result = await response.json();
+    systemConfig = result.data || {};
+    
+    // Update form fields with loaded values
+    document.getElementById('booking-worker-concurrency').value = 
+      systemConfig['booking_worker_concurrency'] || 2;
+    document.getElementById('video-request-worker-concurrency').value = 
+      systemConfig['video_request_worker_concurrency'] || 3;
+    document.getElementById('pending-task-worker-concurrency').value = 
+      systemConfig['pending_task_worker_concurrency'] || 2;
+    
+    // Update quality checkboxes
+    const enabledQualities = (systemConfig['enabled_qualities'] || '1080p,720p').split(',');
+    document.querySelectorAll('.quality-checkbox').forEach(checkbox => {
+      checkbox.checked = enabledQualities.includes(checkbox.value);
+    });
+    
+    showNotification('System configuration loaded successfully', 'success');
+  } catch (error) {
+    console.error('Error loading system config:', error);
+    showNotification(`Error loading system config: ${error.message}`, 'error');
+  }
+}
+
+// Save system configuration to backend
+async function saveSystemConfig() {
+  try {
+    // Collect form data
+    const configData = {
+      'booking_worker_concurrency': parseInt(document.getElementById('booking-worker-concurrency').value),
+      'video_request_worker_concurrency': parseInt(document.getElementById('video-request-worker-concurrency').value),
+      'pending_task_worker_concurrency': parseInt(document.getElementById('pending-task-worker-concurrency').value)
+    };
+    
+    // Collect enabled qualities
+    const enabledQualities = [];
+    document.querySelectorAll('.quality-checkbox:checked').forEach(checkbox => {
+      enabledQualities.push(checkbox.value);
+    });
+    configData['enabled_qualities'] = enabledQualities.join(',');
+    
+    // Validate data
+    if (configData['booking_worker_concurrency'] < 1 || configData['booking_worker_concurrency'] > 10 ||
+        configData['video_request_worker_concurrency'] < 1 || configData['video_request_worker_concurrency'] > 10 ||
+        configData['pending_task_worker_concurrency'] < 1 || configData['pending_task_worker_concurrency'] > 10) {
+      throw new Error('Worker concurrency values must be between 1 and 10');
+    }
+    
+    if (enabledQualities.length === 0) {
+      throw new Error('At least one quality preset must be enabled');
+    }
+    
+    // Send to backend
+    const response = await fetch('/api/admin/system-config', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(configData)
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    systemConfig = { ...systemConfig, ...configData };
+    showNotification('System configuration saved successfully', 'success');
+    
+  } catch (error) {
+    console.error('Error saving system config:', error);
+    showNotification(`Error saving system config: ${error.message}`, 'error');
+  }
+}
+
+// Initialize system config event listeners
+function initSystemConfig() {
+  document.getElementById('load-system-config-btn').addEventListener('click', loadSystemConfig);
+  document.getElementById('save-system-config-btn').addEventListener('click', saveSystemConfig);
+  
+  // Auto-load config when tab is first accessed
+  let systemConfigLoaded = false;
+  document.querySelector('nav a[data-tab="system-config"]').addEventListener('click', () => {
+    if (!systemConfigLoaded) {
+      loadSystemConfig();
+      systemConfigLoaded = true;
+    }
+  });
+}
+
 // ---------- Arduino status ----------
 async function fetchArduinoStatus() {
   try {

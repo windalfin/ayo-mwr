@@ -30,6 +30,33 @@ var (
 	videoRequestCronCounter     int
 )
 
+// Global variables untuk dynamic semaphore management
+var (
+	videoRequestCronMutex sync.RWMutex
+	currentVideoRequestMaxConcurrent int
+	currentVideoRequestSemaphore *semaphore.Weighted
+)
+
+// updateVideoRequestConcurrency updates the semaphore with new concurrency value
+func updateVideoRequestConcurrency(newMaxConcurrent int) {
+	videoRequestCronMutex.Lock()
+	defer videoRequestCronMutex.Unlock()
+	
+	if currentVideoRequestMaxConcurrent != newMaxConcurrent {
+		log.Printf("🔄 VIDEO-REQUEST-CRON: Updating concurrency from %d to %d", currentVideoRequestMaxConcurrent, newMaxConcurrent)
+		currentVideoRequestMaxConcurrent = newMaxConcurrent
+		currentVideoRequestSemaphore = semaphore.NewWeighted(int64(newMaxConcurrent))
+		log.Printf("✅ VIDEO-REQUEST-CRON: Concurrency updated successfully to %d", newMaxConcurrent)
+	}
+}
+
+// getVideoRequestConcurrencySettings returns current semaphore and max concurrent value
+func getVideoRequestConcurrencySettings() (*semaphore.Weighted, int) {
+	videoRequestCronMutex.RLock()
+	defer videoRequestCronMutex.RUnlock()
+	return currentVideoRequestSemaphore, currentVideoRequestMaxConcurrent
+}
+
 // getActiveVideoRequestProcessesCount mengembalikan jumlah proses yang sedang aktif
 func getActiveVideoRequestProcessesCount() int {
 	videoRequestProcessingMutex.Lock()
@@ -149,22 +176,21 @@ func StartVideoRequestCron(cfg *config.Config) {
 		}
 
 		// Initialize semaphore dengan konfigurasi dinamis
-		maxConcurrent := cfg.VideoRequestWorkerConcurrency
-		globalVideoRequestSemaphore := semaphore.NewWeighted(int64(maxConcurrent))
-		log.Printf("📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal %d proses video request bersamaan", maxConcurrent)
+		updateVideoRequestConcurrency(cfg.VideoRequestWorkerConcurrency)
+		log.Printf("📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal %d proses video request bersamaan", cfg.VideoRequestWorkerConcurrency)
 
 		// Initial delay before first run (5 seconds)
 		time.Sleep(5 * time.Second)
 
 		// Run immediately once at startup
-		processVideoRequests(cfg, db, ayoClient, r2Client, globalVideoRequestSemaphore, maxConcurrent)
+		processVideoRequests(cfg, db, ayoClient, r2Client)
 
 		// Start the cron job
 		schedule := cron.New()
 
 		// Schedule the task every 30 minutes
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processVideoRequests(cfg, db, ayoClient, r2Client, globalVideoRequestSemaphore, maxConcurrent)
+			processVideoRequests(cfg, db, ayoClient, r2Client)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling video request cron: %v", err)
@@ -172,12 +198,24 @@ func StartVideoRequestCron(cfg *config.Config) {
 
 		schedule.Start()
 		log.Println("🚀 VIDEO-REQUEST-CRON: Video request processing cron job started - will run every 2 minutes")
-		log.Printf("📊 VIDEO-REQUEST-CONCURRENCY: Slot processing tersedia: %d/%d", maxConcurrent-getActiveVideoRequestProcessesCount(), maxConcurrent)
+		// Get current concurrency settings for logging
+		_, currentMax := getVideoRequestConcurrencySettings()
+		log.Printf("📊 VIDEO-REQUEST-CONCURRENCY: Slot processing tersedia: %d/%d", currentMax-getActiveVideoRequestProcessesCount(), currentMax)
 	}()
 }
 
 // processVideoRequests handles fetching and processing video requests
-func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, globalVideoRequestSemaphore *semaphore.Weighted, maxConcurrent int) {
+func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
+	// Load latest configuration and update semaphore if needed
+	sysConfigService := config.NewSystemConfigService(db)
+	if err := sysConfigService.LoadSystemConfigToConfig(cfg); err != nil {
+		log.Printf("Warning: Failed to reload system config: %v", err)
+	}
+	updateVideoRequestConcurrency(cfg.VideoRequestWorkerConcurrency)
+	
+	// Get current semaphore and max concurrent settings
+	globalVideoRequestSemaphore, maxConcurrent := getVideoRequestConcurrencySettings()
+	
 	// Get cron run ID untuk tracking
 	videoRequestProcessingMutex.Lock()
 	videoRequestCronCounter++

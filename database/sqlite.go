@@ -413,6 +413,148 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Create system_config table for storing system configuration
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS system_config (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			type TEXT NOT NULL DEFAULT 'string',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_by TEXT DEFAULT 'system'
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Insert default system configurations if they don't exist
+	defaultConfigs := []struct {
+		key, value, configType string
+	}{
+		{"booking_worker_concurrency", "2", "int"},
+		{"video_request_worker_concurrency", "3", "int"},
+		{"pending_task_worker_concurrency", "5", "int"},
+		{"enabled_qualities", "1080p,720p,480p,360p", "string"},
+	}
+
+	for _, config := range defaultConfigs {
+		_, err = db.Exec(`
+			INSERT OR IGNORE INTO system_config (key, value, type, updated_at, updated_by)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'system')
+		`, config.key, config.value, config.configType)
+		if err != nil {
+			return fmt.Errorf("failed to insert default config %s: %v", config.key, err)
+		}
+	}
+
+	return nil
+}
+
+// GetSystemConfig retrieves a system configuration by key
+func (s *SQLiteDB) GetSystemConfig(key string) (*SystemConfig, error) {
+	var config SystemConfig
+	var updatedAt sql.NullTime
+	var updatedBy sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT key, value, type, updated_at, updated_by
+		FROM system_config
+		WHERE key = ?
+	`, key).Scan(&config.Key, &config.Value, &config.Type, &updatedAt, &updatedBy)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("configuration key '%s' not found", key)
+		}
+		return nil, fmt.Errorf("error getting system config: %v", err)
+	}
+
+	if updatedAt.Valid {
+		config.UpdatedAt = updatedAt.Time
+	}
+	if updatedBy.Valid {
+		config.UpdatedBy = updatedBy.String
+	}
+
+	return &config, nil
+}
+
+// SetSystemConfig creates or updates a system configuration
+func (s *SQLiteDB) SetSystemConfig(config SystemConfig) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO system_config (key, value, type, updated_at, updated_by)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+	`, config.Key, config.Value, config.Type, config.UpdatedBy)
+
+	if err != nil {
+		return fmt.Errorf("error setting system config: %v", err)
+	}
+
+	log.Printf("⚙️ CONFIG: Updated system config '%s' = '%s' (type: %s) by %s", 
+		config.Key, config.Value, config.Type, config.UpdatedBy)
+	return nil
+}
+
+// GetAllSystemConfigs retrieves all system configurations
+func (s *SQLiteDB) GetAllSystemConfigs() ([]SystemConfig, error) {
+	rows, err := s.db.Query(`
+		SELECT key, value, type, updated_at, updated_by
+		FROM system_config
+		ORDER BY key
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("error querying system configs: %v", err)
+	}
+	defer rows.Close()
+
+	var configs []SystemConfig
+	for rows.Next() {
+		var config SystemConfig
+		var updatedAt sql.NullTime
+		var updatedBy sql.NullString
+
+		err := rows.Scan(&config.Key, &config.Value, &config.Type, &updatedAt, &updatedBy)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning system config row: %v", err)
+		}
+
+		if updatedAt.Valid {
+			config.UpdatedAt = updatedAt.Time
+		}
+		if updatedBy.Valid {
+			config.UpdatedBy = updatedBy.String
+		}
+
+		configs = append(configs, config)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating system config rows: %v", err)
+	}
+
+	return configs, nil
+}
+
+// DeleteSystemConfig deletes a system configuration by key
+func (s *SQLiteDB) DeleteSystemConfig(key string) error {
+	result, err := s.db.Exec(`
+		DELETE FROM system_config WHERE key = ?
+	`, key)
+
+	if err != nil {
+		return fmt.Errorf("error deleting system config: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("configuration key '%s' not found", key)
+	}
+
+	log.Printf("⚙️ CONFIG: Deleted system config '%s'", key)
 	return nil
 }
 

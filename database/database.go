@@ -167,6 +167,23 @@ type BookingData struct {
 	LastSyncAt       time.Time `json:"lastSyncAt"`       // Last time we synced this booking
 }
 
+// SystemConfig represents system configuration stored in the database
+type SystemConfig struct {
+	Key       string    `json:"key"`       // Configuration key
+	Value     string    `json:"value"`     // Configuration value
+	Type      string    `json:"type"`      // Value type: "string", "int", "bool", "json"
+	UpdatedAt time.Time `json:"updatedAt"` // When configuration was last updated
+	UpdatedBy string    `json:"updatedBy"` // Who updated the configuration
+}
+
+// System configuration keys
+const (
+	ConfigBookingWorkerConcurrency      = "booking_worker_concurrency"
+	ConfigVideoRequestWorkerConcurrency = "video_request_worker_concurrency"
+	ConfigPendingTaskWorkerConcurrency  = "pending_task_worker_concurrency"
+	ConfigEnabledQualities              = "enabled_qualities"
+)
+
 // Database defines the interface for database operations
 type Database interface {
 	// Video operations
@@ -229,6 +246,12 @@ type Database interface {
 	GetBookingsByStatus(status string) ([]BookingData, error)
 	UpdateBookingStatus(bookingID string, status string) error
 	DeleteOldBookings(olderThan time.Time) error
+
+	// System configuration operations
+	GetSystemConfig(key string) (*SystemConfig, error)
+	SetSystemConfig(config SystemConfig) error
+	GetAllSystemConfigs() ([]SystemConfig, error)
+	DeleteSystemConfig(key string) error
 
 	// Helper operations
 	Close() error

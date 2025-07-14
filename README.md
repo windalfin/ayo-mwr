@@ -60,7 +60,15 @@ R2_ACCESS_KEY=your_access_key
 R2_SECRET_KEY=your_secret_key
 R2_ACCOUNT_ID=your_account_id
 R2_BUCKET=your_bucket_name
+R2_ENDPOINT=your_endpoint
+R2_BASE_URL=https://your-domain.com
 R2_REGION=auto
+R2_TOKEN_VALUE=your_token_value
+
+# Worker Concurrency Configuration
+BOOKING_WORKER_CONCURRENCY=2      # Max concurrent booking process workers
+VIDEO_REQUEST_WORKER_CONCURRENCY=2 # Max concurrent video request workers
+PENDING_TASK_WORKER_CONCURRENCY=3  # Max concurrent pending task workers
 ```
 
 ## Directory Structure
@@ -188,6 +196,50 @@ The application supports hardware acceleration for different GPUs:
 - **macOS**: Uses VideoToolbox for hardware-accelerated encoding
 
 Set the `HW_ACCEL` environment variable to enable hardware acceleration.
+
+## Worker Concurrency Configuration
+
+The application uses multiple background workers for different tasks. You can configure the maximum number of concurrent workers for each type:
+
+### Available Worker Types
+
+1. **Booking Process Workers** (`BOOKING_WORKER_CONCURRENCY`)
+   - Process booking videos from database
+   - Default: 2 concurrent workers
+   - Handles video merging, watermarking, and upload
+
+2. **Video Request Workers** (`VIDEO_REQUEST_WORKER_CONCURRENCY`)
+   - Process video requests from AYO API
+   - Default: 2 concurrent workers
+   - Handles video validation and API notifications
+
+3. **Pending Task Workers** (`PENDING_TASK_WORKER_CONCURRENCY`)
+   - Process offline queue tasks (uploads, notifications)
+   - Default: 3 concurrent workers
+   - Handles R2 uploads and API notifications when offline
+
+### Configuration Examples
+
+```bash
+# High-performance setup (more workers)
+export BOOKING_WORKER_CONCURRENCY=4
+export VIDEO_REQUEST_WORKER_CONCURRENCY=3
+export PENDING_TASK_WORKER_CONCURRENCY=5
+
+# Low-resource setup (fewer workers)
+export BOOKING_WORKER_CONCURRENCY=1
+export VIDEO_REQUEST_WORKER_CONCURRENCY=1
+export PENDING_TASK_WORKER_CONCURRENCY=2
+```
+
+### Monitoring Worker Status
+
+You can monitor worker activity through the application logs:
+```
+📊 BOOKING-CRON: Sistem antrian dimulai - maksimal 4 proses booking bersamaan
+📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal 3 proses video request bersamaan
+📦 QUEUE: 🔄 Memproses 8 task yang tertunda (max 5 concurrent)...
+```
 
 ## Troubleshooting
 

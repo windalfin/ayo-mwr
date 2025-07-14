@@ -37,7 +37,7 @@ type QueueManager struct {
 
 // NewQueueManager creates a new queue manager
 func NewQueueManager(db database.Database, uploadService *service.UploadService, r2Storage *storage.R2Storage, ayoClient service.AyoAPIClient, cfg *config.Config) *QueueManager {
-	maxConcurrency := 3 // Process max 3 tasks concurrently
+	maxConcurrency := cfg.PendingTaskWorkerConcurrency // Process max N tasks concurrently (configurable)
 	
 	return &QueueManager{
 		db:                  db,

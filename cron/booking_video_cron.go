@@ -23,9 +23,8 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// Global semaphore untuk membatasi maksimal 2 proses bersamaan
+// Global variables untuk tracking proses
 var (
-	globalSemaphore = semaphore.NewWeighted(2) // Maksimal 2 proses bersamaan
 	processingMutex sync.Mutex
 	activeProcesses int
 	cronCounter     int
@@ -39,10 +38,10 @@ func getActiveProcessesCount() int {
 }
 
 // logProcessingStatus menampilkan status proses yang sedang berjalan
-func logProcessingStatus(cronID int, action string) {
+func logProcessingStatus(cronID int, action string, maxConcurrent int) {
 	processingMutex.Lock()
 	defer processingMutex.Unlock()
-	log.Printf("📊 CRON-RUN-%d: %s - Proses aktif: %d/2", cronID, action, activeProcesses)
+	log.Printf("📊 CRON-RUN-%d: %s - Proses aktif: %d/%d", cronID, action, activeProcesses, maxConcurrent)
 }
 
 // Semua helper function telah dipindahkan ke BookingVideoService
@@ -165,11 +164,16 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Initialize booking video service
 		bookingVideoService := service.NewBookingVideoService(db, ayoClient, r2Client, cfg)
 
+		// Initialize semaphore dengan konfigurasi dinamis
+		maxConcurrent := cfg.BookingWorkerConcurrency
+		globalSemaphore := semaphore.NewWeighted(int64(maxConcurrent))
+		log.Printf("📊 BOOKING-CRON: Sistem antrian dimulai - maksimal %d proses booking bersamaan", maxConcurrent)
+
 		// Initial delay before first run (10 seconds)
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
+		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, globalSemaphore, maxConcurrent)
 
 		// Start the booking video cron
 		schedule := cron.New()
@@ -177,7 +181,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Schedule the task every minute for testing
 		// In production, you'd use a more reasonable interval like "@every 30m"
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
+			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, globalSemaphore, maxConcurrent)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling booking video cron: %v", err)
@@ -185,13 +189,12 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 		schedule.Start()
 		log.Println("🚀 CRON SCHEDULER: Booking video processing cron job started - will run every 2 minutes (testing mode)")
-		log.Println("📊 CONCURRENCY: Sistem antrian dimulai - maksimal 2 proses booking bersamaan")
-		log.Printf("📊 CONCURRENCY: Slot processing tersedia: %d/2", 2-getActiveProcessesCount())
+		log.Printf("📊 CONCURRENCY: Slot processing tersedia: %d/%d", maxConcurrent-getActiveProcessesCount(), maxConcurrent)
 	}()
 }
 
 // processBookings handles fetching bookings from database and processing them
-func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
+func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService, globalSemaphore *semaphore.Weighted, maxConcurrent int) {
 	// Get cron run ID untuk tracking
 	processingMutex.Lock()
 	cronCounter++
@@ -199,7 +202,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 	processingMutex.Unlock()
 
 	log.Printf("🔄 CRON-RUN-%d: Starting booking video processing task...", currentCronID)
-	logProcessingStatus(currentCronID, "CRON START")
+	logProcessingStatus(currentCronID, "CRON START", maxConcurrent)
 
 	// Use fixed date for testing
 	today := time.Now().Format("2006-01-02")
@@ -366,7 +369,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Process this booking in a separate goroutine
 		wg.Add(1)
 		go func(bookingData database.BookingData, bookingID string, startTime, endTime time.Time,
-			orderDetailID float64, localOffsetHours time.Duration, field_id float64, cronID int) {
+			orderDetailID float64, localOffsetHours time.Duration, field_id float64, cronID int, maxConcurrent int) {
 			defer wg.Done()
 
 			// Acquire global semaphore before processing this booking
@@ -374,7 +377,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			currentActive := activeProcesses
 			processingMutex.Unlock()
 
-			log.Printf("⏳ CRON-RUN-%d: Booking %s menunggu slot processing (aktif: %d/2)...", cronID, bookingID, currentActive)
+			log.Printf("⏳ CRON-RUN-%d: Booking %s menunggu slot processing (aktif: %d/%d)...", cronID, bookingID, currentActive, maxConcurrent)
 
 			// Record start time untuk menghitung waktu tunggu
 			waitStartTime := time.Now()
@@ -397,15 +400,15 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				activeProcesses--
 				newActive := activeProcesses
 				processingMutex.Unlock()
-				log.Printf("✅ CRON-RUN-%d: Booking %s processing selesai (aktif: %d/2)", cronID, bookingID, newActive)
+				log.Printf("✅ CRON-RUN-%d: Booking %s processing selesai (aktif: %d/%d)", cronID, bookingID, newActive, maxConcurrent)
 			}()
 
 			// Calculate wait time
 			waitDuration := time.Since(waitStartTime)
 			if waitDuration > 100*time.Millisecond {
-				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing setelah menunggu %v (aktif: %d/2)", cronID, bookingID, waitDuration.Round(time.Millisecond), currentActive)
+				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing setelah menunggu %v (aktif: %d/%d)", cronID, bookingID, waitDuration.Round(time.Millisecond), currentActive, maxConcurrent)
 			} else {
-				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing langsung (aktif: %d/2)", cronID, bookingID, currentActive)
+				log.Printf("🚀 CRON-RUN-%d: Booking %s mulai processing langsung (aktif: %d/%d)", cronID, bookingID, currentActive, maxConcurrent)
 			}
 
 			// 🔒 RACE CONDITION FIX: Double-check existing videos INSIDE goroutine
@@ -700,13 +703,13 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			} else {
 				log.Printf("⚠️ CRON-RUN-%d: No camera videos found for booking %s in the specified time range (took %v)", cronID, bookingID, processingDuration.Round(time.Second))
 			}
-		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id, currentCronID) // Pass variables to goroutine
+		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id, currentCronID, maxConcurrent) // Pass variables to goroutine
 	}
 
 	// Wait for all booking processing goroutines to complete
 	wg.Wait()
 	log.Printf("🎉 CRON-RUN-%d: Booking video processing task completed", currentCronID)
-	logProcessingStatus(currentCronID, "CRON END")
+	logProcessingStatus(currentCronID, "CRON END", maxConcurrent)
 }
 
 // Semua fungsi helper sudah dipindahkan ke BookingVideoService di service/booking_video.go

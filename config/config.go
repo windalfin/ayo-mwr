@@ -81,6 +81,11 @@ type Config struct {
 	// Multi-camera Configuration
 	Cameras          []CameraConfig
 	CameraByButtonNo map[string]*CameraConfig // Fast lookup by button_no
+
+	// Worker Concurrency Configuration
+	BookingWorkerConcurrency     int // Max concurrent booking process workers
+	VideoRequestWorkerConcurrency int // Max concurrent video request workers
+	PendingTaskWorkerConcurrency  int // Max concurrent pending task workers
 }
 
 // LoadConfig loads configuration from environment variables
@@ -147,6 +152,20 @@ func LoadConfig() Config {
 		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
 		R2BaseURL:    getEnv("R2_BASE_URL", ""),
 		R2Region:     getEnv("R2_REGION", "auto"),
+
+		// Worker Concurrency Configuration
+		BookingWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("BOOKING_WORKER_CONCURRENCY", "2"))
+			return workers
+		}(),
+		VideoRequestWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("VIDEO_REQUEST_WORKER_CONCURRENCY", "2"))
+			return workers
+		}(),
+		PendingTaskWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("PENDING_TASK_WORKER_CONCURRENCY", "3"))
+			return workers
+		}(),
 	}
 
 	// Load ClipDuration from environment variable if available

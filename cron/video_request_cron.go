@@ -23,9 +23,8 @@ import (
 )
 
 // =================== GLOBAL CONCURRENCY CONTROL SYSTEM ===================
-// Global semaphore untuk membatasi maksimal 2 proses bersamaan
+// Global variables untuk tracking proses video request
 var (
-	globalVideoRequestSemaphore = semaphore.NewWeighted(2) // Maksimal 2 proses bersamaan
 	videoRequestProcessingMutex sync.Mutex
 	activeVideoRequestProcesses int
 	videoRequestCronCounter     int
@@ -39,10 +38,10 @@ func getActiveVideoRequestProcessesCount() int {
 }
 
 // logVideoRequestProcessingStatus menampilkan status proses yang sedang berjalan
-func logVideoRequestProcessingStatus(cronID int, action string) {
+func logVideoRequestProcessingStatus(cronID int, action string, maxConcurrent int) {
 	videoRequestProcessingMutex.Lock()
 	defer videoRequestProcessingMutex.Unlock()
-	log.Printf("📊 VIDEO-REQUEST-CRON-%d: %s - Proses aktif: %d/2", cronID, action, activeVideoRequestProcesses)
+	log.Printf("📊 VIDEO-REQUEST-CRON-%d: %s - Proses aktif: %d/%d", cronID, action, activeVideoRequestProcesses, maxConcurrent)
 }
 
 // =================== CONCURRENCY CONTROL SYSTEM ===================
@@ -149,18 +148,23 @@ func StartVideoRequestCron(cfg *config.Config) {
 			return
 		}
 
+		// Initialize semaphore dengan konfigurasi dinamis
+		maxConcurrent := cfg.VideoRequestWorkerConcurrency
+		globalVideoRequestSemaphore := semaphore.NewWeighted(int64(maxConcurrent))
+		log.Printf("📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal %d proses video request bersamaan", maxConcurrent)
+
 		// Initial delay before first run (5 seconds)
 		time.Sleep(5 * time.Second)
 
 		// Run immediately once at startup
-		processVideoRequests(cfg, db, ayoClient, r2Client)
+		processVideoRequests(cfg, db, ayoClient, r2Client, globalVideoRequestSemaphore, maxConcurrent)
 
 		// Start the cron job
 		schedule := cron.New()
 
 		// Schedule the task every 30 minutes
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processVideoRequests(cfg, db, ayoClient, r2Client)
+			processVideoRequests(cfg, db, ayoClient, r2Client, globalVideoRequestSemaphore, maxConcurrent)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling video request cron: %v", err)
@@ -168,13 +172,12 @@ func StartVideoRequestCron(cfg *config.Config) {
 
 		schedule.Start()
 		log.Println("🚀 VIDEO-REQUEST-CRON: Video request processing cron job started - will run every 2 minutes")
-		log.Println("📊 VIDEO-REQUEST-CONCURRENCY: Sistem antrian dimulai - maksimal 2 proses video request bersamaan")
-		log.Printf("📊 VIDEO-REQUEST-CONCURRENCY: Slot processing tersedia: %d/2", 2-getActiveVideoRequestProcessesCount())
+		log.Printf("📊 VIDEO-REQUEST-CONCURRENCY: Slot processing tersedia: %d/%d", maxConcurrent-getActiveVideoRequestProcessesCount(), maxConcurrent)
 	}()
 }
 
 // processVideoRequests handles fetching and processing video requests
-func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage) {
+func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, globalVideoRequestSemaphore *semaphore.Weighted, maxConcurrent int) {
 	// Get cron run ID untuk tracking
 	videoRequestProcessingMutex.Lock()
 	videoRequestCronCounter++
@@ -182,7 +185,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 	videoRequestProcessingMutex.Unlock()
 
 	log.Printf("🔄 VIDEO-REQUEST-CRON-%d: Starting video request processing task...", currentCronID)
-	logVideoRequestProcessingStatus(currentCronID, "CRON START")
+	logVideoRequestProcessingStatus(currentCronID, "CRON START", maxConcurrent)
 
 	// Get video requests from AYO API
 	response, err := ayoClient.GetVideoRequests("")
@@ -240,7 +243,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 		// Process this request in a separate goroutine
 		wg.Add(1)
-		go func(videoRequestID, uniqueID, bookingID, status string, cronID int) {
+		go func(videoRequestID, uniqueID, bookingID, status string, cronID int, maxConcurrent int) {
 			defer wg.Done()
 
 			// Acquire global semaphore before processing this request
@@ -248,7 +251,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			currentActive := activeVideoRequestProcesses
 			videoRequestProcessingMutex.Unlock()
 
-			log.Printf("⏳ VIDEO-REQUEST-CRON-%d: Request %s menunggu slot processing (aktif: %d/2)...", cronID, videoRequestID, currentActive)
+			log.Printf("⏳ VIDEO-REQUEST-CRON-%d: Request %s menunggu slot processing (aktif: %d/%d)...", cronID, videoRequestID, currentActive, maxConcurrent)
 
 			// Record start time untuk menghitung waktu tunggu
 			waitStartTime := time.Now()
@@ -271,15 +274,15 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				activeVideoRequestProcesses--
 				newActive := activeVideoRequestProcesses
 				videoRequestProcessingMutex.Unlock()
-				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/2)", cronID, videoRequestID, newActive)
+				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/%d)", cronID, videoRequestID, newActive, maxConcurrent)
 			}()
 
 			// Calculate wait time
 			waitDuration := time.Since(waitStartTime)
 			if waitDuration > 100*time.Millisecond {
-				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: Request %s mulai processing setelah menunggu %v (aktif: %d/2)", cronID, videoRequestID, waitDuration.Round(time.Millisecond), currentActive)
+				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: Request %s mulai processing setelah menunggu %v (aktif: %d/%d)", cronID, videoRequestID, waitDuration.Round(time.Millisecond), currentActive, maxConcurrent)
 			} else {
-				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: Request %s mulai processing langsung (aktif: %d/2)", cronID, videoRequestID, currentActive)
+				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: Request %s mulai processing langsung (aktif: %d/%d)", cronID, videoRequestID, currentActive, maxConcurrent)
 			}
 
 			// Skip if not pending
@@ -576,13 +579,13 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return
 			}
-		}(videoRequestID, uniqueID, bookingID, status, currentCronID) // End of goroutine
+		}(videoRequestID, uniqueID, bookingID, status, currentCronID, maxConcurrent) // End of goroutine
 	}
 
 	// Wait for all request processing goroutines to complete
 	wg.Wait()
 	log.Printf("🎉 VIDEO-REQUEST-CRON-%d: Video request processing task completed", currentCronID)
-	logVideoRequestProcessingStatus(currentCronID, "CRON END")
+	logVideoRequestProcessingStatus(currentCronID, "CRON END", maxConcurrent)
 
 	// Mark invalid video requests if any were found
 	if len(videoRequestIDs) > 0 {

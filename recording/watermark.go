@@ -24,7 +24,12 @@ func GetWatermark(venueCode string) (string, error) {
 		ayoindoAPIBase = "http://iot-api.ayodev.xyz:6060/api/v1"
 	}
 	ayoindoAPIToken := os.Getenv("AYOINDO_API_TOKEN")
-	folder := filepath.Join("..", "recording", "watermark", venueCode)
+	// Use storage path from environment (updated by active disk selection)
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "./videos"
+	}
+	folder := filepath.Join(storagePath, "watermark", venueCode)
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
 	}

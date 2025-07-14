@@ -284,6 +284,21 @@ func initTables(db *sql.DB) error {
 		log.Printf("Success: Added deprecated_hls column to videos table")
 	}
 
+	// Add start_time and end_time columns for clip time tracking
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN start_time DATETIME")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for start_time: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added start_time column to videos table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE videos ADD COLUMN end_time DATETIME")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for end_time: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added end_time column to videos table")
+	}
+
 	// Create indexes
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_videos_status ON videos (status)
@@ -313,6 +328,91 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Create pending_tasks table for offline queue
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_tasks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_type TEXT NOT NULL,
+			task_data TEXT NOT NULL,
+			attempts INTEGER DEFAULT 0,
+			max_attempts INTEGER DEFAULT 5,
+			next_retry_at DATETIME,
+			status TEXT DEFAULT 'pending',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			error_msg TEXT
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create bookings table for storing AYO API booking data
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS bookings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			booking_id TEXT NOT NULL UNIQUE,
+			order_detail_id INTEGER,
+			field_id INTEGER,
+			date TEXT,
+			start_time TEXT,
+			end_time TEXT,
+			booking_source TEXT,
+			status TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			raw_json TEXT,
+			last_sync_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for pending_tasks
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_pending_tasks_status ON pending_tasks (status)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_pending_tasks_next_retry ON pending_tasks (next_retry_at)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for bookings
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_booking_id ON bookings (booking_id)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings (date)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings (status)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_field_id ON bookings (field_id)
+	`)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -325,8 +425,8 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file, video_type, storage_disk_id, mp4_full_path, deprecated_hls
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size, duration, resolution, has_request, last_check_file, video_type, storage_disk_id, mp4_full_path, deprecated_hls, start_time, end_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metadata.ID,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -358,6 +458,8 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 		metadata.StorageDiskID,
 		metadata.MP4FullPath,
 		metadata.DeprecatedHLS,
+		metadata.StartTime,
+		metadata.EndTime,
 	)
 	return err
 }
@@ -365,7 +467,7 @@ func (s *SQLiteDB) CreateVideo(metadata VideoMetadata) error {
 // GetVideo retrieves a video record by ID
 func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 	var video VideoMetadata
-	var finishedAt, uploadedAt, lastCheckFile sql.NullTime
+	var finishedAt, uploadedAt, lastCheckFile, startTime, endTime sql.NullTime
 	var cameraName, uniqueID, orderDetailID, bookingID, rawJSON, videoType, requestID, storageDiskID, mp4FullPath sql.NullString
 	var deprecatedHLS sql.NullBool
 
@@ -374,7 +476,7 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url,
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file, video_type, request_id, storage_disk_id, mp4_full_path, deprecated_hls
+			size, duration, resolution, has_request, last_check_file, video_type, request_id, storage_disk_id, mp4_full_path, deprecated_hls, start_time, end_time
 		FROM videos WHERE id = ?`, id).Scan(
 		&video.ID,
 		&cameraName,
@@ -408,6 +510,8 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		&storageDiskID,
 		&mp4FullPath,
 		&deprecatedHLS,
+		&startTime,
+		&endTime,
 	)
 
 	if err == sql.ErrNoRows {
@@ -476,6 +580,14 @@ func (s *SQLiteDB) GetVideo(id string) (*VideoMetadata, error) {
 		video.DeprecatedHLS = deprecatedHLS.Bool
 	}
 
+	// Set StartTime and EndTime if valid
+	if startTime.Valid {
+		video.StartTime = &startTime.Time
+	}
+	if endTime.Valid {
+		video.EndTime = &endTime.Time
+	}
+
 	return &video, nil
 }
 
@@ -523,7 +635,9 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 			resolution = ?,
 			has_request = ?,
 			last_check_file = ?,
-			video_type = ?
+			video_type = ?,
+			start_time = ?,
+			end_time = ?
 		WHERE id = ?`,
 		metadata.CameraName,
 		metadata.LocalPath,
@@ -551,6 +665,8 @@ func (s *SQLiteDB) UpdateVideo(metadata VideoMetadata) error {
 		metadata.HasRequest,
 		metadata.LastCheckFile,
 		metadata.VideoType,
+		metadata.StartTime,
+		metadata.EndTime,
 		metadata.ID,
 	)
 	return err
@@ -1171,6 +1287,14 @@ func (s *SQLiteDB) UpdateDiskSpace(id string, totalGB, availableGB int64) error 
 	return err
 }
 
+// UpdateDiskPriority updates the priority_order for a storage disk
+func (s *SQLiteDB) UpdateDiskPriority(id string, priority int) error {
+    _, err := s.db.Exec(`
+        UPDATE storage_disks SET priority_order = ?, last_scan = ? WHERE id = ?
+    `, priority, time.Now(), id)
+    return err
+}
+
 // SetActiveDisk sets a disk as active and deactivates all others
 func (s *SQLiteDB) SetActiveDisk(id string) error {
 	tx, err := s.db.Begin()
@@ -1309,3 +1433,551 @@ func (s *SQLiteDB) Close() error {
 func (s *SQLiteDB) GetDB() *sql.DB {
 	return s.db
 }
+
+// Offline Queue Methods
+
+// CreatePendingTask creates a new pending task
+func (s *SQLiteDB) CreatePendingTask(task PendingTask) error {
+	_, err := s.db.Exec(`
+		INSERT INTO pending_tasks (
+			task_type, task_data, attempts, max_attempts, next_retry_at, 
+			status, created_at, updated_at, error_msg
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.TaskType,
+		task.TaskData,
+		task.Attempts,
+		task.MaxAttempts,
+		task.NextRetryAt,
+		task.Status,
+		task.CreatedAt,
+		task.UpdatedAt,
+		task.ErrorMsg,
+	)
+	return err
+}
+
+// GetPendingTasks retrieves pending tasks ready for execution
+func (s *SQLiteDB) GetPendingTasks(limit int) ([]PendingTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, task_type, task_data, attempts, max_attempts, next_retry_at,
+			   status, created_at, updated_at, error_msg
+		FROM pending_tasks 
+		WHERE status = 'pending' 
+		  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime'))
+		ORDER BY created_at ASC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []PendingTask
+	for rows.Next() {
+		var task PendingTask
+		var nextRetryAt sql.NullTime
+		var errorMsg sql.NullString
+
+		err := rows.Scan(
+			&task.ID,
+			&task.TaskType,
+			&task.TaskData,
+			&task.Attempts,
+			&task.MaxAttempts,
+			&nextRetryAt,
+			&task.Status,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+			&errorMsg,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if nextRetryAt.Valid {
+			task.NextRetryAt = nextRetryAt.Time
+		}
+		if errorMsg.Valid {
+			task.ErrorMsg = errorMsg.String
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// UpdateTaskStatus updates the status of a task
+func (s *SQLiteDB) UpdateTaskStatus(taskID int, status string, errorMsg string) error {
+	_, err := s.db.Exec(`
+		UPDATE pending_tasks 
+		SET status = ?, error_msg = ?, updated_at = datetime('now', 'localtime')
+		WHERE id = ?`,
+		status, errorMsg, taskID)
+	return err
+}
+
+// UpdateTaskNextRetry updates the next retry time and attempt count
+func (s *SQLiteDB) UpdateTaskNextRetry(taskID int, nextRetryAt time.Time, attempts int) error {
+	_, err := s.db.Exec(`
+		UPDATE pending_tasks 
+		SET next_retry_at = ?, attempts = ?, status = 'failed', updated_at = datetime('now', 'localtime')
+		WHERE id = ?`,
+		nextRetryAt, attempts, taskID)
+	return err
+}
+
+// DeleteCompletedTasks removes completed tasks older than specified time
+func (s *SQLiteDB) DeleteCompletedTasks(olderThan time.Time) error {
+	_, err := s.db.Exec(`
+		DELETE FROM pending_tasks 
+		WHERE status = 'completed' AND updated_at < ?`,
+		olderThan)
+	return err
+}
+
+// GetTaskByID retrieves a specific task by ID
+func (s *SQLiteDB) GetTaskByID(taskID int) (*PendingTask, error) {
+	var task PendingTask
+	var nextRetryAt sql.NullTime
+	var errorMsg sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, task_type, task_data, attempts, max_attempts, next_retry_at,
+			   status, created_at, updated_at, error_msg
+		FROM pending_tasks WHERE id = ?`, taskID).Scan(
+		&task.ID,
+		&task.TaskType,
+		&task.TaskData,
+		&task.Attempts,
+		&task.MaxAttempts,
+		&nextRetryAt,
+		&task.Status,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+		&errorMsg,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if nextRetryAt.Valid {
+		task.NextRetryAt = nextRetryAt.Time
+	}
+	if errorMsg.Valid {
+		task.ErrorMsg = errorMsg.String
+	}
+
+	return &task, nil
+}
+
+// CreateOrUpdateBooking creates a new booking or updates existing one
+func (s *SQLiteDB) CreateOrUpdateBooking(booking BookingData) error {
+	// Check if booking already exists
+	existingBooking, err := s.GetBookingByID(booking.BookingID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("error checking existing booking: %v", err)
+	}
+
+	now := time.Now()
+	booking.LastSyncAt = now
+
+	if existingBooking != nil {
+		// Update existing booking
+		booking.UpdatedAt = now
+		booking.ID = existingBooking.ID // Preserve original ID
+
+		_, err = s.db.Exec(`
+			UPDATE bookings SET
+				order_detail_id = ?,
+				field_id = ?,
+				date = ?,
+				start_time = ?,
+				end_time = ?,
+				booking_source = ?,
+				status = ?,
+				updated_at = ?,
+				raw_json = ?,
+				last_sync_at = ?
+			WHERE booking_id = ?`,
+			booking.OrderDetailID,
+			booking.FieldID,
+			booking.Date,
+			booking.StartTime,
+			booking.EndTime,
+			booking.BookingSource,
+			booking.Status,
+			booking.UpdatedAt,
+			booking.RawJSON,
+			booking.LastSyncAt,
+			booking.BookingID,
+		)
+		
+		if err != nil {
+			return fmt.Errorf("error updating booking: %v", err)
+		}
+		
+		log.Printf("📅 BOOKING: Updated booking %s (status: %s)", booking.BookingID, booking.Status)
+	} else {
+		// Create new booking
+		booking.CreatedAt = now
+		booking.UpdatedAt = now
+
+		_, err = s.db.Exec(`
+			INSERT INTO bookings (
+				booking_id, order_detail_id, field_id, date, start_time, end_time,
+				booking_source, status, created_at, updated_at, raw_json, last_sync_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			booking.BookingID,
+			booking.OrderDetailID,
+			booking.FieldID,
+			booking.Date,
+			booking.StartTime,
+			booking.EndTime,
+			booking.BookingSource,
+			booking.Status,
+			booking.CreatedAt,
+			booking.UpdatedAt,
+			booking.RawJSON,
+			booking.LastSyncAt,
+		)
+		
+		if err != nil {
+			return fmt.Errorf("error creating booking: %v", err)
+		}
+		
+		log.Printf("📅 BOOKING: Created new booking %s (status: %s)", booking.BookingID, booking.Status)
+	}
+
+	return nil
+}
+
+// GetBookingByID retrieves a booking by its booking ID
+func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
+	var booking BookingData
+	var createdAt, updatedAt, lastSyncAt sql.NullTime
+	var orderDetailID, fieldID sql.NullInt64
+	var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings WHERE booking_id = ?`, bookingID).Scan(
+		&booking.ID,
+		&booking.BookingID,
+		&orderDetailID,
+		&fieldID,
+		&date,
+		&startTime,
+		&endTime,
+		&bookingSource,
+		&status,
+		&createdAt,
+		&updatedAt,
+		&rawJSON,
+		&lastSyncAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle nullable fields
+	if orderDetailID.Valid {
+		booking.OrderDetailID = int(orderDetailID.Int64)
+	}
+	if fieldID.Valid {
+		booking.FieldID = int(fieldID.Int64)
+	}
+	if date.Valid {
+		booking.Date = date.String
+	}
+	if startTime.Valid {
+		booking.StartTime = startTime.String
+	}
+	if endTime.Valid {
+		booking.EndTime = endTime.String
+	}
+	if bookingSource.Valid {
+		booking.BookingSource = bookingSource.String
+	}
+	if status.Valid {
+		booking.Status = status.String
+	}
+	if rawJSON.Valid {
+		booking.RawJSON = rawJSON.String
+	}
+	if createdAt.Valid {
+		booking.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		booking.UpdatedAt = updatedAt.Time
+	}
+	if lastSyncAt.Valid {
+		booking.LastSyncAt = lastSyncAt.Time
+	}
+
+	return &booking, nil
+}
+
+// GetBookingsByDate retrieves all bookings for a specific date
+func (s *SQLiteDB) GetBookingsByDate(date string) ([]BookingData, error) {
+	rows, err := s.db.Query(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings 
+		WHERE date = ?
+		ORDER BY start_time ASC`, date)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting bookings by date: %v", err)
+	}
+	defer rows.Close()
+
+	return s.scanBookings(rows)
+}
+
+// GetBookingsByStatus retrieves all bookings with a specific status
+func (s *SQLiteDB) GetBookingsByStatus(status string) ([]BookingData, error) {
+	rows, err := s.db.Query(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+		FROM bookings 
+		WHERE status = ?
+		ORDER BY date DESC, start_time ASC`, status)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting bookings by status: %v", err)
+	}
+	defer rows.Close()
+
+	return s.scanBookings(rows)
+}
+
+// UpdateBookingStatus updates only the status of a booking
+func (s *SQLiteDB) UpdateBookingStatus(bookingID string, status string) error {
+	now := time.Now()
+	
+	result, err := s.db.Exec(`
+		UPDATE bookings SET 
+			status = ?, 
+			updated_at = ?,
+			last_sync_at = ?
+		WHERE booking_id = ?`,
+		status, now, now, bookingID)
+	
+	if err != nil {
+		return fmt.Errorf("error updating booking status: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no booking found with ID: %s", bookingID)
+	}
+
+	log.Printf("📅 BOOKING: Updated status for booking %s to %s", bookingID, status)
+	return nil
+}
+
+// DeleteOldBookings removes bookings older than specified time
+func (s *SQLiteDB) DeleteOldBookings(olderThan time.Time) error {
+	result, err := s.db.Exec(`
+		DELETE FROM bookings 
+		WHERE created_at < ?`,
+		olderThan)
+	
+	if err != nil {
+		return fmt.Errorf("error deleting old bookings: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	log.Printf("📅 BOOKING: Deleted %d old bookings", rowsAffected)
+	return nil
+}
+
+// scanBookings is a helper function to scan multiple booking rows
+func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
+	var bookings []BookingData
+
+	for rows.Next() {
+		var booking BookingData
+		var createdAt, updatedAt, lastSyncAt sql.NullTime
+		var orderDetailID, fieldID sql.NullInt64
+		var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+
+		err := rows.Scan(
+			&booking.ID,
+			&booking.BookingID,
+			&orderDetailID,
+			&fieldID,
+			&date,
+			&startTime,
+			&endTime,
+			&bookingSource,
+			&status,
+			&createdAt,
+			&updatedAt,
+			&rawJSON,
+			&lastSyncAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("error scanning booking row: %v", err)
+		}
+
+		// Handle nullable fields
+		if orderDetailID.Valid {
+			booking.OrderDetailID = int(orderDetailID.Int64)
+		}
+		if fieldID.Valid {
+			booking.FieldID = int(fieldID.Int64)
+		}
+		if date.Valid {
+			booking.Date = date.String
+		}
+		if startTime.Valid {
+			booking.StartTime = startTime.String
+		}
+		if endTime.Valid {
+			booking.EndTime = endTime.String
+		}
+		if bookingSource.Valid {
+			booking.BookingSource = bookingSource.String
+		}
+		if status.Valid {
+			booking.Status = status.String
+		}
+		if rawJSON.Valid {
+			booking.RawJSON = rawJSON.String
+		}
+		if createdAt.Valid {
+			booking.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			booking.UpdatedAt = updatedAt.Time
+		}
+		if lastSyncAt.Valid {
+			booking.LastSyncAt = lastSyncAt.Time
+		}
+
+		bookings = append(bookings, booking)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating booking rows: %v", err)
+	}
+
+	return bookings, nil
+}
+
+// UpdateCameraConfig updates specific configuration fields for a camera
+func (s *SQLiteDB) UpdateCameraConfig(cameraName string, resolution string, frameRate int, autoDelete int, width int, height int) error {
+	_, err := s.db.Exec(`
+		UPDATE cameras SET 
+			resolution = ?, 
+			frame_rate = ?, 
+			auto_delete = ?,
+			width = ?,
+			height = ?
+		WHERE name = ?`,
+		resolution, frameRate, autoDelete, width, height, cameraName)
+	
+	if err != nil {
+		return fmt.Errorf("error updating camera config: %v", err)
+	}
+	
+	log.Printf("📹 CAMERA: Updated config for %s - Resolution: %s (%dx%d), FrameRate: %d, AutoDelete: %d", 
+		cameraName, resolution, width, height, frameRate, autoDelete)
+	return nil
+}
+
+// CleanupStuckVideosOnStartup cleans up video records that might be stuck in intermediate states
+// This function is SYNCHRONOUS and MUST complete before other services start
+func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
+	startTime := time.Now()
+	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup of stuck videos and request_ids...")
+	
+	// Part 1: Change stuck videos to failed status using direct SQL
+	// Part 2: Clear request_ids for Ready videos using direct SQL
+	
+	var totalStuckVideos int
+	
+	// === PART 1: Process stuck videos (change status to failed) ===
+	log.Println("🧹 STARTUP CLEANUP: Part 1 - Processing stuck videos...")
+	
+	// Use direct SQL for efficiency - update all stuck videos to failed status
+	result, err := s.db.Exec(`
+		UPDATE videos 
+		SET status = ?, 
+		    error = ?
+		WHERE status IN (?, ?, ?, ?, ?)
+	`, StatusFailed, 
+		"Video stuck during service restart - marked as failed",
+		StatusPending, StatusProcessing, StatusRecording, StatusInitial, StatusUploading)
+	
+	if err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error updating stuck videos: %v", err)
+	} else {
+		rowsAffected, _ := result.RowsAffected()
+		totalStuckVideos = int(rowsAffected)
+		if totalStuckVideos > 0 {
+			log.Printf("✅ STARTUP CLEANUP: Updated %d stuck videos to failed status", totalStuckVideos)
+		} else {
+			log.Printf("✅ STARTUP CLEANUP: No stuck videos found")
+		}
+	}
+	
+	// === PART 2: Process stuck request_ids (for Ready videos) ===
+	log.Println("🧹 STARTUP CLEANUP: Part 2 - Processing stuck request_ids...")
+	
+	var stuckRequestCount int
+	
+	// Use direct SQL for efficiency - clear all request_ids for Ready videos
+	result, err = s.db.Exec(`
+		UPDATE videos 
+		SET request_id = '' 
+		WHERE status = ? AND request_id != '' AND request_id IS NOT NULL
+	`, StatusReady)
+	
+	if err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error clearing stuck request_ids: %v", err)
+	} else {
+		rowsAffected, _ := result.RowsAffected()
+		stuckRequestCount = int(rowsAffected)
+		if stuckRequestCount > 0 {
+			log.Printf("✅ STARTUP CLEANUP: Cleared %d stuck request_ids for Ready videos", stuckRequestCount)
+		} else {
+			log.Printf("✅ STARTUP CLEANUP: No stuck request_ids found for Ready videos")
+		}
+	}
+	
+	duration := time.Since(startTime)
+	
+	if totalStuckVideos > 0 || stuckRequestCount > 0 {
+		log.Printf("✅ STARTUP CLEANUP: COMPLETED! Found %d stuck videos, %d stuck request_ids in %v", 
+			totalStuckVideos, stuckRequestCount, duration)
+		log.Printf("🧹 STARTUP CLEANUP: Part 1 - %d stuck videos marked as failed", totalStuckVideos)
+		log.Printf("🧹 STARTUP CLEANUP: Part 2 - %d stuck request_ids cleared", stuckRequestCount)
+		log.Printf("📤 STARTUP CLEANUP: Videos with uploading status were left untouched (may take hours for large files)")
+	} else {
+		log.Printf("✅ STARTUP CLEANUP: No stuck videos or request_ids found - system is clean! (completed in %v)", duration)
+	}
+	
+	return nil
+}
+
+

@@ -123,6 +123,8 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		Resolution:    camera.Resolution,
 		HasRequest:    false,     // Explicitly set default to false
 		VideoType:     videoType, // Set from the parameter
+		StartTime:     &startTime, // Store actual clip start time
+		EndTime:       &endTime,   // Store actual clip end time
 	}
 
 	// Create initial database entry
@@ -136,7 +138,7 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	segmentDir := filepath.Dir(segments[0])
 
 	// Gabungkan video segments dan tambahkan watermark dalam satu operasi FFmpeg
-	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".mp4", camera.Name)
+	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".ts", camera.Name)
 	log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
 
 	// Mendapatkan watermark dan pengaturannya
@@ -170,11 +172,21 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	videoPathForNextStep := watermarkedVideoPath
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
+	
+	// Determine storage disk ID and full path for the processed video
+	storageDiskID, mp4FullPath, err := s.determineStorageInfo(videoPathForNextStep)
+	if err != nil {
+		log.Printf("ProcessVideoSegments : Warning: Could not determine storage disk info: %v", err)
+		// Continue without storage info rather than failing
+	}
+	
 	// Step 3: update video metadata
 	videoMeta := database.VideoMetadata{
-		ID:        uniqueID,
-		Status:    database.StatusUploading,
-		LocalPath: videoPathForNextStep,
+		ID:            uniqueID,
+		Status:        database.StatusUploading,
+		LocalPath:     videoPathForNextStep,
+		StorageDiskID: storageDiskID,
+		MP4FullPath:   mp4FullPath,
 	}
 
 	// Update database entry with processing status and local path
@@ -508,17 +520,23 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	for i, interval := range intervals {
 		clipPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
 
-		// Extract the clip using ffmpeg (using fast encoding but good quality)
-		cmd := exec.Command(
-			"ffmpeg", "-y",
+		// Extract the clip using ffmpeg with software encoding
+		ffmpegArgs := []string{"-y",
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
-			"-to", interval.end, // End time
-			"-c:v", "libx264", "-c:a", "aac", // Use consistent codecs across all clips
+			"-to", interval.end,   // End time
+		}
+		
+		// Add software encoder
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "libx264",
 			"-crf", "22", // Good quality (lower number = better quality)
 			"-preset", "ultrafast", // Faster encoding
+			"-c:a", "aac", // Use consistent audio codec
 			clipPath,
 		)
+		
+		cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -532,18 +550,28 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 	// Close the clip list file before using it
 	clipListFile.Close()
 
-	// Concatenate all clips into the final preview video
-	cmd := exec.Command(
-		"ffmpeg", "-y",
+	// Concatenate all clips into the final preview video with software encoding
+	ffmpegArgs := []string{"-y"}
+	
+	ffmpegArgs = append(ffmpegArgs,
 		"-f", "concat",
 		"-safe", "0",
 		"-i", clipListPath,
+	)
+	
+	// Add software encoder
+	ffmpegArgs = append(ffmpegArgs,
 		"-c:v", "libx264",
-		"-c:a", "aac",
 		"-crf", "22", // Good quality
 		"-preset", "ultrafast",
+	)
+	
+	ffmpegArgs = append(ffmpegArgs,
+		"-c:a", "aac",
 		outputPath,
 	)
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -714,14 +742,18 @@ func determineIntervals(durationSeconds int) []timeInterval {
 
 // CreateThumbnail extracts a frame from the middle of the video as a thumbnail
 func (s *BookingVideoService) CreateThumbnail(inputPath, outputPath string) error {
-	// Use ffmpeg to extract a thumbnail from the middle of the video
-	cmd := exec.Command(
-		"ffmpeg", "-y", "-i", inputPath,
+	// Use ffmpeg to extract a thumbnail from the middle of the video with software encoding
+	
+	// Build FFmpeg arguments for thumbnail generation with software encoding
+	ffmpegArgs := []string{"-y",
+		"-i", inputPath,
 		"-ss", "00:00:05", // Take frame at 5 seconds
-		"-vframes", "1", // Extract just one frame
+		"-vframes", "1",   // Extract just one frame
 		"-vf", "scale=480:-2", // 480p width thumbnail, maintain aspect ratio
 		outputPath,
-	)
+	}
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -748,11 +780,12 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 		return fmt.Errorf("error creating HLS output directory: %v", err)
 	}
 
-	// Buat playlist HLS dengan ffmpeg
-	// ffmpeg -i input.mp4 -profile:v baseline -level 3.0 -start_number 0 -hls_time 5 -hls_list_size 0 -f hls output/playlist.m3u8
-	cmd := exec.Command(
-		"ffmpeg",
-		"-i", videoPath,
+	// Buat playlist HLS dengan ffmpeg dengan software encoding
+	ffmpegArgs := []string{"-i", videoPath}
+	
+	// Add software encoder
+	ffmpegArgs = append(ffmpegArgs,
+		"-c:v", "libx264",
 		"-profile:v", "baseline",
 		"-level", "3.0",
 		"-start_number", "0",
@@ -762,6 +795,8 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 		"-hls_segment_filename", filepath.Join(outputDir, "%03d.ts"),
 		filepath.Join(outputDir, "playlist.m3u8"),
 	)
+	
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -878,4 +913,45 @@ func (s *BookingVideoService) GetBookingJSON(booking map[string]interface{}) str
 		return ""
 	}
 	return string(jsonBytes)
+}
+
+// determineStorageInfo determines which storage disk contains the given file path
+// and returns the disk ID and full absolute path
+func (s *BookingVideoService) determineStorageInfo(filePath string) (string, string, error) {
+	// Get absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get absolute path: %v", err)
+	}
+	
+	// Get all storage disks from database
+	disks, err := s.db.GetStorageDisks()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get storage disks: %v", err)
+	}
+	
+	// Find which disk contains this file
+	for _, disk := range disks {
+		// Check if the file path starts with the disk path
+		diskPath := filepath.Clean(disk.Path)
+		if strings.HasPrefix(absPath, diskPath) {
+			log.Printf("determineStorageInfo: File %s found on disk %s (%s)", absPath, disk.ID, diskPath)
+			return disk.ID, absPath, nil
+		}
+	}
+	
+	// If no disk found, try to determine from current storage path
+	// This handles cases where the file is in the primary storage path
+	if strings.Contains(absPath, s.config.StoragePath) {
+		// Try to find a disk that matches the storage path
+		for _, disk := range disks {
+			if disk.Path == s.config.StoragePath {
+				log.Printf("determineStorageInfo: File %s matched primary storage disk %s", absPath, disk.ID)
+				return disk.ID, absPath, nil
+			}
+		}
+	}
+	
+	log.Printf("determineStorageInfo: Could not determine storage disk for file: %s", absPath)
+	return "", absPath, fmt.Errorf("could not determine storage disk for file: %s", absPath)
 }

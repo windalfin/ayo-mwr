@@ -81,6 +81,11 @@ type Config struct {
 	// Multi-camera Configuration
 	Cameras          []CameraConfig
 	CameraByButtonNo map[string]*CameraConfig // Fast lookup by button_no
+
+	// Worker Concurrency Configuration
+	BookingWorkerConcurrency     int // Max concurrent booking process workers
+	VideoRequestWorkerConcurrency int // Max concurrent video request workers
+	PendingTaskWorkerConcurrency  int // Max concurrent pending task workers
 }
 
 // LoadConfig loads configuration from environment variables
@@ -147,6 +152,20 @@ func LoadConfig() Config {
 		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
 		R2BaseURL:    getEnv("R2_BASE_URL", ""),
 		R2Region:     getEnv("R2_REGION", "auto"),
+
+		// Worker Concurrency Configuration
+		BookingWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("BOOKING_WORKER_CONCURRENCY", "2"))
+			return workers
+		}(),
+		VideoRequestWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("VIDEO_REQUEST_WORKER_CONCURRENCY", "2"))
+			return workers
+		}(),
+		PendingTaskWorkerConcurrency: func() int {
+			workers, _ := strconv.Atoi(getEnv("PENDING_TASK_WORKER_CONCURRENCY", "3"))
+			return workers
+		}(),
 	}
 
 	// Load ClipDuration from environment variable if available
@@ -180,18 +199,18 @@ func LoadConfig() Config {
 					dbCams := make([]database.CameraConfig, len(envCams))
 					for i, c := range envCams {
 						dbCams[i] = database.CameraConfig{
-							ButtonNo: c.ButtonNo,
-							Name:     c.Name,
-							IP:       c.IP,
-							Port:     c.Port,
-							Path:     c.Path,
-							Username: c.Username,
-							Password: c.Password,
-							Enabled:  c.Enabled,
-							Width:    c.Width,
-							Height:   c.Height,
-							FrameRate: c.FrameRate,
-							Field:     c.Field,
+							ButtonNo:   c.ButtonNo,
+							Name:       c.Name,
+							IP:         c.IP,
+							Port:       c.Port,
+							Path:       c.Path,
+							Username:   c.Username,
+							Password:   c.Password,
+							Enabled:    c.Enabled,
+							Width:      c.Width,
+							Height:     c.Height,
+							FrameRate:  c.FrameRate,
+							Field:      c.Field,
 							Resolution: c.Resolution,
 							AutoDelete: c.AutoDelete,
 						}
@@ -210,8 +229,8 @@ func LoadConfig() Config {
 		cfg.Cameras = make([]CameraConfig, len(cameras))
 		for i, c := range cameras {
 			cfg.Cameras[i] = CameraConfig{
-                ButtonNo: c.ButtonNo,
-                Name: c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
+				ButtonNo: c.ButtonNo,
+				Name:     c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
 				Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
 			}
 		}
@@ -222,8 +241,8 @@ func LoadConfig() Config {
 	}
 	// --- END CAMERA CONFIG LOAD ---
 
-    // Build lookup map now that cameras are loaded
-    cfg.BuildCameraLookup()
+	// Build lookup map now that cameras are loaded
+	cfg.BuildCameraLookup()
 
 	// If no cameras configured, use legacy camera settings
 	if len(cfg.Cameras) == 0 {
@@ -243,8 +262,8 @@ func LoadConfig() Config {
 			AutoDelete: cfg.AutoDelete,
 		})
 
-        // Rebuild lookup map to include legacy camera
-        cfg.BuildCameraLookup()
+		// Rebuild lookup map to include legacy camera
+		cfg.BuildCameraLookup()
 	}
 
 	// Log configuration
@@ -254,7 +273,7 @@ func LoadConfig() Config {
 			i+1, camera.Name, camera.IP, camera.Port, camera.Path, camera.Enabled)
 	}
 
-	log.Printf("Storage Path: %s", cfg.StoragePath)
+	log.Printf("Storage Path: %s (multi-disk managed automatically)", cfg.StoragePath)
 	log.Printf("Server running on port %s with base URL %s", cfg.ServerPort, cfg.BaseURL)
 	log.Printf("R2 Storage Enabled: %v", cfg.R2Enabled)
 	log.Printf("Arduino COM Port: %s", cfg.ArduinoCOMPort)
@@ -305,7 +324,7 @@ func LoadConfigFromFile(filePath string) (Config, error) {
 }
 
 // LoadConfigFromAPI loads configuration from AYO API using the provided client
-func LoadConfigFromAPI(cfg Config, client APIClient) (Config, error) {
+func LoadConfigFromAPI(cfg Config, client APIClient, db database.Database) (Config, error) {
 	// Get video configuration from API
 	response, err := client.GetVideoConfiguration()
 	if err != nil {
@@ -321,7 +340,7 @@ func LoadConfigFromAPI(cfg Config, client APIClient) (Config, error) {
 	log.Printf("Video configuration from API: %+v", data)
 
 	// Update config from API response
-	UpdateConfigFromAPIResponse(&cfg, data)
+	UpdateConfigFromAPIResponse(&cfg, data, db)
 
 	return cfg, nil
 }
@@ -337,22 +356,22 @@ func getEnv(key, fallback string) string {
 // BuildCameraLookup constructs the CameraByButtonNo map for quick lookup.
 // Call this whenever cfg.Cameras may have changed.
 func (cfg *Config) BuildCameraLookup() {
-    if cfg == nil {
-        return
-    }
-    if cfg.CameraByButtonNo == nil {
-        cfg.CameraByButtonNo = make(map[string]*CameraConfig)
-    }
-    // clear existing
-    for k := range cfg.CameraByButtonNo {
-        delete(cfg.CameraByButtonNo, k)
-    }
-    for i := range cfg.Cameras {
-        cam := &cfg.Cameras[i]
-        if cam.ButtonNo != "" {
-            cfg.CameraByButtonNo[cam.ButtonNo] = cam
-        }
-    }
+	if cfg == nil {
+		return
+	}
+	if cfg.CameraByButtonNo == nil {
+		cfg.CameraByButtonNo = make(map[string]*CameraConfig)
+	}
+	// clear existing
+	for k := range cfg.CameraByButtonNo {
+		delete(cfg.CameraByButtonNo, k)
+	}
+	for i := range cfg.Cameras {
+		cam := &cfg.Cameras[i]
+		if cam.ButtonNo != "" {
+			cfg.CameraByButtonNo[cam.ButtonNo] = cam
+		}
+	}
 }
 
 // EnsurePaths creates necessary paths

@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"sync"
+	"time"
 )
 
 // AyoIndoClient handles interactions with the AYO Indonesia API
@@ -106,19 +106,19 @@ func loadEnvFile() error {
 
 // defaultAyoIndoClient holds the singleton instance
 var (
-    defaultAyoIndoClient *AyoIndoClient
-    clientInitOnce       sync.Once
+	defaultAyoIndoClient *AyoIndoClient
+	clientInitOnce       sync.Once
 )
 
 // NewAyoIndoClient returns a singleton AyoIndoClient instance. Subsequent calls
 // return the same instance to avoid repeated environment loading and duplicated
 // debug output.
 func NewAyoIndoClient() (*AyoIndoClient, error) {
-    var err error
-    clientInitOnce.Do(func() {
-        defaultAyoIndoClient, err = newAyoIndoClientInternal()
-    })
-    return defaultAyoIndoClient, err
+	var err error
+	clientInitOnce.Do(func() {
+		defaultAyoIndoClient, err = newAyoIndoClientInternal()
+	})
+	return defaultAyoIndoClient, err
 }
 
 // newAyoIndoClientInternal performs the actual construction logic that used to
@@ -150,7 +150,7 @@ func newAyoIndoClientInternal() (*AyoIndoClient, error) {
 		return nil, fmt.Errorf("missing required environment variables for AYO API client")
 	}
 
-	    return &AyoIndoClient{
+	return &AyoIndoClient{
 		baseURL:    baseURL,
 		apiToken:   apiToken,
 		venueCode:  venueCode,
@@ -273,7 +273,7 @@ func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
 // GetBookings retrieves booking information for a specific date
 func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error) {
 	// Validate date format (YYYY-MM-DD)
-	if _, err := time.Parse("2006-01-02", date); err != nil {
+	if _, err := time.ParseInLocation("2006-01-02", date, time.Local); err != nil {
 		return nil, fmt.Errorf("invalid date format, should be YYYY-MM-DD: %w", err)
 	}
 
@@ -352,8 +352,8 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 		"preview_path":    previewPath,
 		"image_path":      imagePath,
 		"unique_id":       uniqueID,
-		"start_timestamp": startTime.Format(time.RFC3339),
-		"end_timestamp":   endTime.Format(time.RFC3339),
+		"start_timestamp": startTime.UTC().Format(time.RFC3339),
+		"end_timestamp":   endTime.UTC().Format(time.RFC3339),
 	}
 
 	// Generate signature
@@ -503,8 +503,8 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 		"booking_id":       bookingID,
 		"type":             videoType,
 		"video":            videoObj, // Menggunakan "video" (bukan "videos") dan format single objek
-		"start_timestamp":  startTime.Format(time.RFC3339),
-		"end_timestamp":    endTime.Format(time.RFC3339),
+		"start_timestamp":  startTime.UTC().Format(time.RFC3339),
+		"end_timestamp":    endTime.UTC().Format(time.RFC3339),
 	}
 
 	// Generate signature
@@ -637,7 +637,12 @@ func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Create watermark directory if it doesn't exist
 	venueCode := c.venueCode
-	folder := filepath.Join("watermark", venueCode)
+	// Use storage path from environment (updated by active disk selection)
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "./videos"
+	}
+	folder := filepath.Join(storagePath, "watermark", venueCode)
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory %s: %w", folder, err)
 	}
@@ -661,13 +666,27 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Check if watermark file for the specified resolution exists
 	specificPath := filepath.Join(folder, sizes[resolution])
 	log.Printf("GetWatermark : Watermark path: %s", specificPath)
-	if _, err := os.Stat(specificPath); err == nil {
-		log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+
+	// Check file age to determine if we need to update from API
+	needsUpdate := false
+	if stat, err := os.Stat(specificPath); err == nil {
+		// Check if file is older than 24 hours
+		if time.Since(stat.ModTime()) > 24*time.Hour {
+			needsUpdate = true
+			log.Printf("GetWatermark : Watermark exists but is older than 24 hours, checking for updates")
+		} else {
+			log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+			return specificPath, nil
+		}
+	} else {
+		needsUpdate = true
+		log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
+	}
+
+	// Only proceed with API check if we need to update
+	if !needsUpdate {
 		return specificPath, nil
 	}
-	log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
-
-	// No existing watermark for the specified resolution
 
 	// Download metadata JSON from API
 	response, err := c.GetWatermarkMetadata()

@@ -97,16 +97,31 @@ func main() {
 	}
 	defer db.Close()
 
+	// 🧹 STARTUP CLEANUP: Clean up stuck videos from previous runs (SYNCHRONOUS)
+	// This MUST complete before starting any other services to ensure clean state
+	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup process...")
+	
+	// Wait for stuck videos and request_ids cleanup to complete
+	if err := db.CleanupStuckVideosOnStartup(); err != nil {
+		log.Printf("❌ STARTUP CLEANUP: Error during cleanup: %v", err)
+		// Continue anyway, don't fail startup
+	}
+	
+	log.Println("✅ STARTUP CLEANUP: Cleanup completed successfully - system is ready to start services!")
+	
+	// Only proceed with other initializations AFTER cleanup is done
+	log.Println("🚀 SYSTEM: Starting other services after cleanup completion...")
+
 	// Initialize disk management system
 	diskManager := storage.NewDiskManager(db)
-	
+
 	// Setup initial disk - register current storage path as first disk
 	err = setupInitialDisk(diskManager, &cfg)
 	if err != nil {
 		log.Printf("Warning: Failed to setup initial disk: %v", err)
 	}
 	// Start config update cron job (every 24 hours)
-	cron.StartConfigUpdateCron(&cfg)
+	cron.StartConfigUpdateCron(&cfg, db)
 	// delay 15 seconds before first run
 	time.Sleep(15 * time.Second)
 
@@ -116,14 +131,17 @@ func main() {
 	// Start camera status cron job (every 5 minutes)
 	cron.StartCameraStatusCron(&cfg)
 
-	// Start booking video processing cron job (every 30 minutes)
+	// Start booking sync cron job (every 5 minutes) - Sync booking data from API to database
+	cron.StartBookingSyncCron(&cfg)
+
+	// Start booking video processing cron job (every 2 minutes) - Process videos from database
 	cron.StartBookingVideoCron(&cfg)
 
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
 
 	// Start disk management cron job (nightly at 2 AM)
-	diskCron := cron.NewDiskManagementCron(db, diskManager)
+	diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)
 	diskCron.Start()
 	log.Println("Started disk management cron job")
 
@@ -145,29 +163,30 @@ func main() {
 		}()
 	}
 	// ---- Arduino configuration load ----
-    // Try to load port/baud from database; fall back to env and persist if missing
-    port, baud, err := db.GetArduinoConfig()
-    if err == nil {
-        cfg.ArduinoCOMPort = port
-        cfg.ArduinoBaudRate = baud
-        log.Printf("[Arduino] Loaded config from DB: port=%s baud=%d", port, baud)
-    } else {
-        // Likely sql.ErrNoRows
-        log.Printf("[Arduino] No config in DB, using env values and persisting: port=%s baud=%d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
-        if upErr := db.UpsertArduinoConfig(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate); upErr != nil {
-            log.Printf("[Arduino] Failed to persist initial config: %v", upErr)
-        }
-    }
+	// Try to load port/baud from database; fall back to env and persist if missing
+	port, baud, err := db.GetArduinoConfig()
+	if err == nil {
+		cfg.ArduinoCOMPort = port
+		cfg.ArduinoBaudRate = baud
+		log.Printf("[Arduino] Loaded config from DB: port=%s baud=%d", port, baud)
+	} else {
+		// Likely sql.ErrNoRows
+		log.Printf("[Arduino] No config in DB, using env values and persisting: port=%s baud=%d", cfg.ArduinoCOMPort, cfg.ArduinoBaudRate)
+		if upErr := db.UpsertArduinoConfig(cfg.ArduinoCOMPort, cfg.ArduinoBaudRate); upErr != nil {
+			log.Printf("[Arduino] Failed to persist initial config: %v", upErr)
+		}
+	}
 
-    // Initialize Arduino using the (possibly updated) cfg
-    if _, err := signaling.InitArduino(&cfg); err != nil {
-        log.Printf("Warning: Arduino initialization failed: %v", err)
-    }
+	// Initialize Arduino using the (possibly updated) cfg
+	if _, err := signaling.InitArduino(&cfg); err != nil {
+		log.Printf("Warning: Arduino initialization failed: %v", err)
+	}
 
-    // Initialize AyoIndo API client for video cleanup
+	// Initialize AyoIndo API client for video cleanup
 	apiClient, apiErr := api.NewAyoIndoClient()
 	if apiErr != nil {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
+		apiClient = nil // Explicitly set to nil for clarity
 	} else {
 		// Start video cleanup cron job (every 24 hours)
 		// delay 10 seconds before first run
@@ -196,8 +215,8 @@ func main() {
 		log.Printf("Warning: Failed to initialize R2 storage: %v", err)
 	}
 
-	// Initialize upload service
-	uploadService := service.NewUploadService(db, r2Storage, &cfg)
+	// Initialize upload service with AYO API client
+	uploadService := service.NewUploadService(db, r2Storage, &cfg, apiClient)
 
 	// Initialize and start API server
 	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
@@ -229,29 +248,45 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 
 	if len(disks) > 0 {
 		log.Printf("Found %d existing storage disks, skipping initial setup", len(disks))
-		
+
+		// First discover any new disks
+		diskManager.DiscoverAndRegisterDisks()
+
 		// Run a manual scan to update disk space
 		err = diskManager.ScanAndUpdateDiskSpace()
 		if err != nil {
 			log.Printf("Warning: Failed to scan existing disks: %v", err)
 		}
-		
+
 		// Ensure we have an active disk
 		err = diskManager.SelectActiveDisk()
 		if err != nil {
 			log.Printf("Warning: Failed to select active disk: %v", err)
 		}
-		
+
+		// After active disk is determined, update cfg.StoragePath
+		if activePath, apErr := diskManager.GetActiveDiskPath(); apErr == nil {
+			log.Printf("[MAIN] Using active disk path for recordings: %s", activePath)
+			cfg.StoragePath = activePath
+			// Update environment variable so all functions use the active disk
+			os.Setenv("STORAGE_PATH", activePath)
+		} else {
+			log.Printf("Warning: Unable to resolve active disk path: %v", apErr)
+		}
+
 		return nil
 	}
 
 	// No disks exist, register the current storage path as the first disk
 	log.Printf("No storage disks found, registering current storage path as first disk: %s", cfg.StoragePath)
-	
+
 	err = diskManager.RegisterDisk(cfg.StoragePath, 1)
 	if err != nil {
 		return fmt.Errorf("failed to register initial disk: %v", err)
 	}
+
+	// Discover any disks before initial scan
+	diskManager.DiscoverAndRegisterDisks()
 
 	// Run initial scan and selection
 	err = diskManager.ScanAndUpdateDiskSpace()

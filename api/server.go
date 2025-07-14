@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
@@ -22,6 +23,10 @@ type Server struct {
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
 	dashboardFS         embed.FS
+	
+	// Mutex untuk prevent concurrent uploads
+	uploadMutex     sync.Mutex
+	activeUploads   map[string]bool // key: cameraName, value: isUploading
 }
 
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
@@ -35,6 +40,7 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		uploadService:       uploadService,
 		videoRequestHandler: videoRequestHandler,
 		dashboardFS:         dashboardFS,
+		activeUploads:       make(map[string]bool),
 	}
 }
 
@@ -94,6 +100,13 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/system_health", s.getSystemHealth)
 		api.GET("/logs", s.getLogs)
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
+		api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
+		
+		// Booking management endpoints
+		api.GET("/bookings", s.getBookings)
+		api.GET("/bookings/:booking_id", s.getBookingByID)
+		api.GET("/bookings/status/:status", s.getBookingsByStatus)
+		api.GET("/bookings/date/:date", s.getBookingsByDate)
 		
 		// Admin endpoints for camera configuration
 		admin := api.Group("/admin")

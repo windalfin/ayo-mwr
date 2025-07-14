@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ayo-mwr/config"
@@ -321,4 +322,50 @@ func SplitFFmpegParams(hwAccel, codec string) ([]string, []string) {
 
 	outputParams := GetOutputParams(hwAccel, codec, defaultPreset)
 	return inputParams, outputParams
+}
+
+// ConvertTSToMP4 converts a TS file to MP4 format without changing quality
+// This is essentially a remux operation that preserves the original quality
+func ConvertTSToMP4(inputPath, outputPath string) error {
+	// Create output directory if it doesn't exist (do this first)
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Check if input file exists
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		return fmt.Errorf("input TS file does not exist: %s", inputPath)
+	}
+
+	// FFmpeg command to convert TS to MP4 without re-encoding
+	// -c copy means copy streams without re-encoding (preserves quality)
+	cmd := exec.Command("ffmpeg",
+		"-i", inputPath,
+		"-c", "copy",           // Copy streams without re-encoding
+		"-avoid_negative_ts", "make_zero", // Handle negative timestamps
+		"-fflags", "+genpts",   // Generate presentation timestamps
+		"-y",                   // Overwrite output file if exists
+		outputPath)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to convert TS to MP4: %v", err)
+	}
+
+	return nil
+}
+
+// IsTSFile checks if the given file is a TS file based on extension
+func IsTSFile(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	return ext == ".ts"
+}
+
+// IsMP4File checks if the given file is an MP4 file based on extension
+func IsMP4File(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	return ext == ".mp4"
 }

@@ -18,23 +18,28 @@ import (
 const (
 	MinimumFreeSpaceGB = 100 // Minimum free space in GB required for a disk to be active
 	
-	// Priority ranges for different disk types
-	PriorityExternal    = 1   // External USB/removable disks: 1-100
-	PriorityInternalNVMe = 101 // Internal NVMe disks: 101-200  
-	PriorityInternalSATA = 201 // Internal SATA disks: 201-300
+	// Priority ranges for different disk types (lower number = higher priority)
+	PriorityExternal         = 1   // External USB/removable disks: 1-100
+	PriorityMountedStorage   = 50  // Mounted storage disks (/mnt/*): 50-99
+	PriorityInternalNVMe     = 101 // Internal NVMe disks: 101-200  
+	PriorityInternalSATA     = 201 // Internal SATA disks: 201-300
+	PriorityRootFilesystem   = 500 // Root filesystem disk: 500+ (lowest priority)
 )
 
 // DiskType represents the type of storage disk
 type DiskType string
 
 const (
-	DiskTypeExternal    DiskType = "external"    // External USB/removable disk
-	DiskTypeInternalNVMe DiskType = "internal_nvme" // Internal NVMe SSD
-	DiskTypeInternalSATA DiskType = "internal_sata" // Internal SATA disk
-	DiskTypeUnknown     DiskType = "unknown"     // Unknown disk type
+	DiskTypeExternal        DiskType = "external"        // External USB/removable disk
+	DiskTypeMountedStorage  DiskType = "mounted_storage" // Mounted storage disk (/mnt/*)
+	DiskTypeInternalNVMe    DiskType = "internal_nvme"   // Internal NVMe SSD
+	DiskTypeInternalSATA    DiskType = "internal_sata"   // Internal SATA disk
+	DiskTypeRootFilesystem  DiskType = "root_filesystem" // Root filesystem disk
+	DiskTypeUnknown         DiskType = "unknown"         // Unknown disk type
 )
 
 // DiskManager handles storage disk management and selection
+// It also supports automatic discovery of new storage disks (Linux only).
 type DiskManager struct {
 	db database.Database
 }
@@ -47,6 +52,9 @@ func NewDiskManager(db database.Database) *DiskManager {
 }
 
 // ScanAndUpdateDiskSpace scans all registered disks and updates their space information
+// ScanAndUpdateDiskSpace updates space info for all known disks.
+// NOTE: It does *not* discover new disks; call DiscoverAndRegisterDisks first if you
+// want to pick up freshly mounted devices.
 func (dm *DiskManager) ScanAndUpdateDiskSpace() error {
 	log.Println("Starting disk space scan...")
 
@@ -68,8 +76,19 @@ func (dm *DiskManager) ScanAndUpdateDiskSpace() error {
 			continue
 		}
 
-		log.Printf("Updated disk %s (%s): %dGB total, %dGB available",
-			disk.ID, disk.Path, totalGB, availableGB)
+        // Recalculate priority based on current disk type every scan
+        diskType := dm.detectDiskType(disk.Path)
+        newPriority := dm.getAutoPriority(diskType, totalGB)
+        if newPriority != disk.PriorityOrder {
+            if err := dm.db.UpdateDiskPriority(disk.ID, newPriority); err != nil {
+                log.Printf("Warning: Failed to update priority for %s: %v", disk.ID, err)
+            } else {
+                disk.PriorityOrder = newPriority
+            }
+        }
+
+		log.Printf("Updated disk %s (%s): %dGB total, %dGB available (priority %d)",
+			disk.ID, disk.Path, totalGB, availableGB, disk.PriorityOrder)
 	}
 
 	log.Println("Disk space scan completed")
@@ -143,7 +162,7 @@ func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
 	
 	if priorityOrder == 0 {
 		diskType = dm.detectDiskType(path)
-		finalPriority = dm.getAutoPriority(diskType)
+		finalPriority = dm.getAutoPriority(diskType, totalGB)
 		log.Printf("Auto-detected disk type: %s, assigned priority: %d", diskType, finalPriority)
 	}
 
@@ -306,6 +325,23 @@ func (dm *DiskManager) detectDiskType(mountPath string) DiskType {
 		return DiskTypeUnknown
 	}
 
+	// Get absolute path for consistent comparison
+	absPath, err := filepath.Abs(mountPath)
+	if err != nil {
+		log.Printf("Failed to get absolute path for %s: %v", mountPath, err)
+		absPath = mountPath
+	}
+
+	// Check if it's a mounted storage disk (e.g., /mnt/*)
+	if strings.HasPrefix(absPath, "/mnt/") {
+		return DiskTypeMountedStorage
+	}
+
+	// Check if it's the root filesystem or system disk
+	if dm.isRootFilesystem(absPath) {
+		return DiskTypeRootFilesystem
+	}
+
 	// Find the block device for this mount path
 	blockDevice := dm.findBlockDevice(mountPath)
 	if blockDevice == "" {
@@ -428,15 +464,150 @@ func (dm *DiskManager) isRotationalDevice(blockDevice string) bool {
 }
 
 // getAutoPriority returns the automatic priority for a given disk type
-func (dm *DiskManager) getAutoPriority(diskType DiskType) int {
+// DiscoverAndRegisterDisks scans /proc/mounts (Linux) and registers any block
+// devices that are not yet present in the storage_disks table. It intentionally
+// skips well-known system mount points (/, /boot, /proc, etc.) and read-only/virtual
+// filesystems.
+func (dm *DiskManager) DiscoverAndRegisterDisks() {
+    if runtime.GOOS != "linux" {
+        log.Println("[DiskManager] Auto discovery only supported on Linux")
+        return
+    }
+
+    disks, err := dm.db.GetStorageDisks()
+    if err != nil {
+        log.Printf("[DiskManager] Failed to get existing disks: %v", err)
+        return
+    }
+    existing := make(map[string]struct{})
+    for _, d := range disks {
+        existing[d.Path] = struct{}{}
+    }
+
+    content, err := ioutil.ReadFile("/proc/mounts")
+    if err != nil {
+        log.Printf("[DiskManager] Failed to read /proc/mounts: %v", err)
+        return
+    }
+
+    for _, line := range strings.Split(string(content), "\n") {
+        fields := strings.Fields(line)
+        if len(fields) < 3 {
+            continue
+        }
+        device := fields[0]
+        mountPoint := fields[1]
+        fsType := fields[2]
+
+        if !strings.HasPrefix(device, "/dev/") { // ignore pseudo/virtual mounts
+            continue
+        }
+        if dm.shouldSkipMount(mountPoint, fsType) {
+            continue
+        }
+        if _, ok := existing[mountPoint]; ok {
+            continue // already registered
+        }
+
+        // Attempt to register
+        if err := dm.RegisterDisk(mountPoint, 0); err != nil {
+            log.Printf("[DiskManager] Auto-register skipped %s: %v", mountPoint, err)
+        } else {
+            log.Printf("[DiskManager] Auto-registered new disk: %s", mountPoint)
+        }
+    }
+}
+
+// shouldSkipMount returns true for system mount points or unsupported fs types.
+func (dm *DiskManager) shouldSkipMount(mountPoint, fsType string) bool {
+    // System mount prefixes that we do not want to treat as recording disks.
+    skipPrefixes := []string{"/proc", "/sys", "/run", "/dev", "/boot", "/snap", "/var", "/tmp"}
+    for _, p := range skipPrefixes {
+        if strings.HasPrefix(mountPoint, p) {
+            return true
+        }
+    }
+    // Always ignore root filesystem ("/") to prevent filling OS disk inadvertently
+    if mountPoint == "/" {
+        return true
+    }
+    // Skip read-only or special filesystems
+    specialFSTypes := []string{"squashfs", "ramfs", "tmpfs", "devtmpfs"}
+    for _, t := range specialFSTypes {
+        if fsType == t {
+            return true
+        }
+    }
+    return false
+}
+
+// isRootFilesystem checks if a mount path is on the same filesystem as root
+func (dm *DiskManager) isRootFilesystem(mountPath string) bool {
+	// Get the block device for root filesystem
+	rootDevice := dm.findBlockDevice("/")
+	if rootDevice == "" {
+		return false
+	}
+
+	// Get the block device for the mount path
+	pathDevice := dm.findBlockDevice(mountPath)
+	if pathDevice == "" {
+		return false
+	}
+
+	// They're on the same filesystem if they use the same block device
+	return rootDevice == pathDevice
+}
+
+// getAutoPriority returns the automatic priority for a given disk type with size-based adjustment
+func (dm *DiskManager) getAutoPriority(diskType DiskType, sizeGB int64) int {
+	basePriority := 0
+	
 	switch diskType {
 	case DiskTypeExternal:
-		return PriorityExternal
+		basePriority = PriorityExternal
+	case DiskTypeMountedStorage:
+		basePriority = PriorityMountedStorage
 	case DiskTypeInternalNVMe:
-		return PriorityInternalNVMe
+		basePriority = PriorityInternalNVMe
 	case DiskTypeInternalSATA:
-		return PriorityInternalSATA
+		basePriority = PriorityInternalSATA
+	case DiskTypeRootFilesystem:
+		basePriority = PriorityRootFilesystem
 	default:
-		return PriorityInternalSATA // Default to SATA priority for unknown types
+		basePriority = PriorityInternalSATA // Default to SATA priority for unknown types
 	}
+
+	// Apply size-based adjustment within the same type range
+	// Larger disks get slightly higher priority (lower number)
+	sizeAdjustment := 0
+	if sizeGB > 2000 {
+		sizeAdjustment = -10 // Very large disks get +10 priority
+	} else if sizeGB > 1000 {
+		sizeAdjustment = -5  // Large disks get +5 priority
+	} else if sizeGB < 500 {
+		sizeAdjustment = 10  // Small disks get -10 priority
+	}
+
+	finalPriority := basePriority + sizeAdjustment
+	
+	// Ensure we don't cross type boundaries
+	switch diskType {
+	case DiskTypeExternal:
+		if finalPriority > 100 { finalPriority = 100 }
+		if finalPriority < 1 { finalPriority = 1 }
+	case DiskTypeMountedStorage:
+		if finalPriority > 99 { finalPriority = 99 }
+		if finalPriority < 50 { finalPriority = 50 }
+	case DiskTypeInternalNVMe:
+		if finalPriority > 200 { finalPriority = 200 }
+		if finalPriority < 101 { finalPriority = 101 }
+	case DiskTypeInternalSATA:
+		if finalPriority > 300 { finalPriority = 300 }
+		if finalPriority < 201 { finalPriority = 201 }
+	case DiskTypeRootFilesystem:
+		if finalPriority < 500 { finalPriority = 500 }
+	}
+
+	return finalPriority
 }

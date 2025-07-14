@@ -6,13 +6,14 @@ import (
 
 	"ayo-mwr/api"
 	"ayo-mwr/config"
+	"ayo-mwr/database"
 )
 
 // StartConfigUpdateCron initializes a cron job that runs every 24 hours to:
 // 1. Get video configuration from AYO API
 // 2. Update the application configuration with values from the API
 // 3. Apply the updated configuration to all cameras
-func StartConfigUpdateCron(cfg *config.Config) {
+func StartConfigUpdateCron(cfg *config.Config, db database.Database) {
 	go func() {
 		// Initialize AYO API client
 		ayoClient, err := api.NewAyoIndoClient()
@@ -25,21 +26,21 @@ func StartConfigUpdateCron(cfg *config.Config) {
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		updateConfigFromAPI(cfg, ayoClient)
+		updateConfigFromAPI(cfg, ayoClient, db)
 
 		// Then set up ticker for recurring updates every 24 hours
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			updateConfigFromAPI(cfg, ayoClient)
+			updateConfigFromAPI(cfg, ayoClient, db)
 		}
 	}()
 	log.Println("Config update cron job started - will update configuration from API every 24 hours")
 }
 
 // updateConfigFromAPI handles fetching configuration from API and updating the application config
-func updateConfigFromAPI(cfg *config.Config, ayoClient *api.AyoIndoClient) {
+func updateConfigFromAPI(cfg *config.Config, ayoClient *api.AyoIndoClient, db database.Database) {
 	// Create config API client wrapper
 	configClient := api.NewConfigAPIClient(ayoClient)
 	log.Println("Running configuration update task...")
@@ -67,7 +68,7 @@ func updateConfigFromAPI(cfg *config.Config, ayoClient *api.AyoIndoClient) {
 	prevAutoDelete := cfg.AutoDelete
 
 	// Update config using helper function
-	config.UpdateConfigFromAPIResponse(cfg, data)
+	config.UpdateConfigFromAPIResponse(cfg, data, db)
 
 	// Log changes
 	updated := false

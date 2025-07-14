@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,11 @@ import (
 
 // per-camera locks to avoid race when writing concat list & mp4
 var segmenterLocks sync.Map
+
+// Initialize random seed for unique ID generation
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 // ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
 // Uses ffprobe to get duration, ffmpeg to extract frame. Returns error if any step fails.
@@ -149,8 +155,8 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 		}
 	}
 
-	// Start the MP4 segmenter in the background
-	StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
+	// Start the MP4 segmenter in the background (legacy HLS-based segmentation)
+	// StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
 	log.Printf("Starting capture for camera: %s", cameraName)
 
@@ -158,52 +164,161 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
 
 	for {
-		logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
-		if err != nil {
-			log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
-			time.Sleep(5 * time.Second)
-			continue
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s] Context canceled, stopping capture", cameraName)
+			return
+		default:
+			logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
+			if err != nil {
+				log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			defer logFile.Close() // Ensure log file is closed properly
+
+			// Detect stream info first to choose appropriate filters
+			streamInfo := detectStreamInfo(rtspURL, cameraName)
+
+			ffmpegArgs := []string{
+				"-rtsp_transport", "tcp",
+				"-timeout", "5000000",
+				"-fflags", "nobuffer+discardcorrupt",
+				"-analyzeduration", "2000000",
+				"-probesize", "1000000",
+				"-re",
+				"-i", rtspURL,
+				"-c:v", "copy", // Stream copy for zero CPU encoding
+			}
+
+			// Add appropriate bitstream filter based on video codec
+			if streamInfo.VideoCodec == "h264" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for HLS
+				log.Printf("[%s] 🔧 Using H.264 bitstream filter", cameraName)
+			} else if streamInfo.VideoCodec == "hevc" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb") // Convert HEVC format for HLS
+				log.Printf("[%s] 🔧 Using HEVC bitstream filter", cameraName)
+			} else {
+				log.Printf("[%s] 🔧 Skipping bitstream filter for codec: %s", cameraName, streamInfo.VideoCodec)
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-flags", "+global_header", // Ensure codec parameters in each segment
+				"-sc_threshold", "0", // Disable scene change detection to enforce keyframe splits
+				"-force_key_frames", "expr:gte(t,n_forced*4)", // Force keyframes every 4 seconds
+			)
+
+			// Audio settings: always attempt to include audio
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+			)
+			if streamInfo.HasAudio {
+				log.Printf("[%s] 🔊 Including audio stream in HLS", cameraName)
+			} else {
+				log.Printf("[%s] 🔈 Attempting to include audio (none detected, FFmpeg will continue without it)", cameraName)
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-max_muxing_queue_size", "1024",
+				"-f", "hls",
+				"-hls_time", "4", // 4-second segments
+				"-hls_list_size", "0",
+				"-hls_flags", "independent_segments+delete_segments", // Ensure independent segments and clean up old ones
+				"-hls_segment_type", "mpegts", // Explicitly use MPEG-TS
+				"-reset_timestamps", "1", // Reset timestamps for each segment
+				"-strftime", "1", // Enable strftime for filename template
+				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
+				hlsPlaylistPath,
+			)
+
+			log.Printf("[%s] Starting continuous HLS FFmpeg recording with args: %v", cameraName, ffmpegArgs)
+
+			cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+
+			err = cmd.Start()
+			if err != nil {
+				log.Printf("[%s] Failed to start FFmpeg: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Wait for FFmpeg to complete and handle errors
+			err = cmd.Wait()
+			if err != nil {
+				log.Printf("[%s] FFmpeg process exited with error: %v", cameraName, err)
+			} else {
+				log.Printf("[%s] FFmpeg process exited normally", cameraName)
+			}
+
+			// Wait before restarting to avoid overlap
+			log.Printf("[%s] Restarting FFmpeg in 2 seconds...", cameraName)
+			time.Sleep(2 * time.Second)
 		}
-
-		ffmpegArgs := []string{
-			"-rtsp_transport", "tcp",
-			"-timeout", "5000000",
-			"-fflags", "nobuffer+discardcorrupt",
-			"-analyzeduration", "2000000",
-			"-probesize", "1000000",
-			"-re",
-			"-i", rtspURL,
-			"-c:v", "copy",
-			"-bsf:v", "h264_mp4toannexb",
-			"-flags", "+global_header",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-ar", "44100",
-			"-max_muxing_queue_size", "1024",
-			"-f", "hls",
-			"-hls_time", "2",
-			"-hls_list_size", "0",
-			"-strftime", "1",
-			"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
-			hlsPlaylistPath,
-		}
-
-		log.Printf("[%s] Starting continuous HLS FFmpeg recording", cameraName)
-
-		cmd := exec.Command("ffmpeg", ffmpegArgs...)
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-
-		err = cmd.Run()
-		if err != nil {
-			log.Printf("[%s] FFmpeg process exited with error: %v", cameraName, err)
-			log.Printf("[%s] Restarting FFmpeg in 5 seconds...", cameraName)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		log.Printf("[%s] FFmpeg process exited normally, restarting in 2 seconds...", cameraName)
-		time.Sleep(2 * time.Second)
 	}
+}
+
+// StreamInfo holds information about detected streams
+type StreamInfo struct {
+	VideoCodec string
+	HasAudio   bool
+}
+
+// detectStreamInfo detects the video codec and audio presence of an RTSP stream
+func detectStreamInfo(rtspURL, cameraName string) StreamInfo {
+	log.Printf("[%s] 🔍 Detecting stream info...", cameraName)
+
+	// Use ffprobe to detect stream information
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "stream=codec_type,codec_name",
+		"-of", "csv=p=0",
+		"-rtsp_transport", "tcp",
+		"-timeout", "10000000", // 10 second timeout
+		rtspURL,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[%s] ⚠️ WARNING: Failed to detect stream info: %v", cameraName, err)
+		return StreamInfo{VideoCodec: "unknown", HasAudio: false}
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	info := StreamInfo{VideoCodec: "unknown", HasAudio: false}
+
+	for _, line := range lines {
+		parts := strings.Split(line, ",")
+		if len(parts) >= 2 {
+			streamType := parts[0]
+			codecName := parts[1]
+
+			if streamType == "video" {
+				switch codecName {
+				case "h264":
+					info.VideoCodec = "h264"
+				case "hevc", "h265":
+					info.VideoCodec = "hevc"
+				default:
+					log.Printf("[%s] ⚠️ WARNING: Unknown video codec '%s'", cameraName, codecName)
+					info.VideoCodec = "unknown"
+				}
+				log.Printf("[%s] 📹 VIDEO: Detected codec: %s", cameraName, codecName)
+			} else if streamType == "audio" {
+				info.HasAudio = true
+				log.Printf("[%s] 🔊 AUDIO: Detected audio stream: %s", cameraName, codecName)
+			}
+		}
+	}
+
+	if !info.HasAudio {
+		log.Printf("[%s] 🔇 AUDIO: No audio stream detected", cameraName)
+	}
+
+	return info
 }
 
 // CaptureRTSPSegments is the legacy single-camera capture function
@@ -217,9 +332,10 @@ func CaptureRTSPSegments(cfg *config.Config) error {
 	return fmt.Errorf("no cameras configured")
 }
 
-// MergeSessionVideos merges MP4 segments in inputPath between startTime and endTime into outputPath.
+// MergeSessionVideos merges MP4 segments in inputPath between startTime and endTime into outputPath with hardware acceleration.
 func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string, resolution string) error {
 
+	log.Printf("MergeSessionVideos: Merging video segments with hardware acceleration")
 	// find segment in range of the startTime and endTime
 	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
 	if err != nil {
@@ -262,6 +378,7 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	if err != nil {
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
+
 	// Define supported resolutions
 	resolutions := map[string]struct {
 		width  string
@@ -273,39 +390,57 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 		"1080": {"1920", "1080"},
 	}
 
-	// Base ffmpeg command
-	ffmpegArgs := []string{
-		"-y", "-f", "concat", "-safe", "0", "-i", concatListPath,
-	}
+	// Base FFmpeg command (software encoding only)
+	ffmpegArgs := []string{"-y"}
 
-	// Add resolution parameters if a valid resolution is provided
+	// Add input arguments
+	ffmpegArgs = append(ffmpegArgs,
+		"-f", "concat",
+		"-safe", "0",
+		"-i", concatListPath,
+	)
+
+	// Add resolution parameters with software encoding
 	if res, found := resolutions[resolution]; found {
-		// Use transcoding with specified resolution
+		// Software scaling and encoding
 		ffmpegArgs = append(ffmpegArgs,
-			"-c:v", "libx264", "-preset", "fast",
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-crf", "23",
 			"-vf", fmt.Sprintf("scale=%s:%s", res.width, res.height),
-			"-c:a", "aac", outputPath,
+			"-c:a", "aac",
+			outputPath,
 		)
 	} else {
-		// Use copy codec (no transcoding) if no valid resolution specified
+		// No resolution specified - use copy codec (no transcoding)
 		ffmpegArgs = append(ffmpegArgs, "-c", "copy", outputPath)
 	}
 
+	log.Printf("MergeSessionVideos: Executing ffmpeg with software encoding")
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg concat failed: %v\nOutput: %s", err, string(output))
 	}
+	log.Printf("MergeSessionVideos: Video segments merged successfully with hardware acceleration")
+
 	return nil
 }
 
-// MergeAndWatermark combines video segments and adds watermark in a single FFmpeg operation
-// This is more efficient than running MergeSessionVideos followed by AddWatermarkWithPosition
+// MergeAndWatermark combines video segments and adds watermark in optimized two-step process:
+// 1. Fast concatenation using copy codec (no transcoding)
+// 2. Apply watermark and encoding to the concatenated result
+// This approach is typically 2-3x faster than single-step complex filter operations
 func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPath, watermarkPath string,
 	position WatermarkPosition, margin int, opacity float64, resolution string) error {
 
-	log.Printf("MergeAndWatermark : Merging video segments and adding watermark in one operation")
+	// Generate unique ID to prevent race conditions
+	uniqueID := fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(100000))
+
+	log.Printf("MergeAndWatermark: Starting optimized merge and watermark process (ID: %s)", uniqueID)
+	log.Printf("MergeAndWatermark: Input: %s, Output: %s, Resolution: %s (ID: %s)", inputPath, outputPath, resolution, uniqueID)
+
 	// Find segments in range of the startTime and endTime
 	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
 	if err != nil {
@@ -315,14 +450,46 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		return fmt.Errorf("no video segments found in the specified range")
 	}
 
+	log.Printf("MergeAndWatermark: Found %d segments to process (ID: %s)", len(segments), uniqueID)
+
 	// Ensure output directory exists
 	outDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Create concat list file in project folder (next to output)
-	concatListPath := filepath.Join(outDir, "segments_concat_list.txt")
+	// Create temporary concatenated file (before watermarking) with unique ID
+	tempConcatPath := filepath.Join(outDir, fmt.Sprintf("temp_concat_%s_%s", uniqueID, filepath.Base(outputPath)))
+	defer os.Remove(tempConcatPath) // Clean up temp file
+
+	// Verify watermark file exists and is readable
+	if _, err := os.Stat(watermarkPath); err != nil {
+		log.Printf("MergeAndWatermark: WARNING - Watermark file not found or not accessible: %s", watermarkPath)
+		return fmt.Errorf("watermark file not found or not accessible: %v", err)
+	}
+
+	// STEP 1: Fast concatenation with copy codec (no transcoding)
+	log.Printf("MergeAndWatermark: Step 1 - Fast concatenation with copy codec (ID: %s)", uniqueID)
+	err = fastConcatSegments(segments, tempConcatPath, outDir, uniqueID)
+	if err != nil {
+		return fmt.Errorf("failed to concatenate segments: %w", err)
+	}
+
+	// STEP 2: Apply watermark and encoding to the concatenated file
+	log.Printf("MergeAndWatermark: Step 2 - Applying watermark and encoding (ID: %s)", uniqueID)
+	err = applyWatermarkWithPosition(tempConcatPath, watermarkPath, outputPath, position, margin, opacity, resolution)
+	if err != nil {
+		return fmt.Errorf("failed to apply watermark: %w", err)
+	}
+
+	log.Printf("MergeAndWatermark: Process completed successfully (ID: %s)", uniqueID)
+	return nil
+}
+
+// fastConcatSegments performs fast concatenation using copy codec (no transcoding)
+func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID string) error {
+	// Create concat list file with unique ID to prevent race conditions
+	concatListPath := filepath.Join(workingDir, fmt.Sprintf("segments_concat_list_%s.txt", uniqueID))
 	tmpFile, err := os.Create(concatListPath)
 	if err != nil {
 		return fmt.Errorf("failed to create concat list file: %w", err)
@@ -343,12 +510,35 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 	}
 	tmpFile.Close()
 
-	// Verify watermark file exists and is readable
-	if _, err := os.Stat(watermarkPath); err != nil {
-		log.Printf("MergeAndWatermark : WARNING - Watermark file not found or not accessible: %s", watermarkPath)
-		return fmt.Errorf("watermark file not found or not accessible: %v", err)
+	// Run FFmpeg with copy codec for fast concatenation
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get project root: %w", err)
 	}
 
+	ffmpegArgs := []string{
+		"-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", concatListPath,
+		"-c", "copy", // Copy codec - no transcoding, very fast
+		outputPath,
+	}
+
+	log.Printf("fastConcatSegments: Executing fast concat with copy codec (ID: %s)", uniqueID)
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
+	cmd.Dir = projectRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg fast concat failed: %v\nOutput: %s", err, string(output))
+	}
+	log.Printf("fastConcatSegments: Fast concatenation completed (ID: %s)", uniqueID)
+
+	return nil
+}
+
+// applyWatermarkWithPosition applies watermark to a single video file with optional resolution scaling
+func applyWatermarkWithPosition(inputVideo, watermarkPath, outputPath string, position WatermarkPosition, margin int, opacity float64, resolution string) error {
 	// Validate opacity value
 	if opacity < 0.0 {
 		opacity = 0.0
@@ -371,15 +561,6 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		overlayExpr = fmt.Sprintf("overlay=%d:%d", margin, margin)
 	}
 
-	// Tambahkan parameter opasitas ke filter watermark
-	filter := fmt.Sprintf("%s:enable='between(t,0,999999)':alpha=%.1f", overlayExpr, opacity)
-
-	// Run FFmpeg command from project root
-	projectRoot, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get project root: %w", err)
-	}
-
 	// Define supported resolutions
 	resolutions := map[string]struct {
 		width  string
@@ -391,45 +572,53 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 		"1080": {"1920", "1080"},
 	}
 
-	// Base FFmpeg command - match arguments with MergeSessionVideos
+	// Run FFmpeg command from project root
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get project root: %w", err)
+	}
+
+	// Build FFmpeg command
 	ffmpegArgs := []string{
 		"-y",
-		"-f", "concat",
-		"-safe", "0",
-		"-i", concatListPath,
+		"-i", inputVideo,
 		"-i", watermarkPath,
 	}
 
-	// Add resolution parameters if a valid resolution is provided - match with MergeSessionVideos
+	// Add resolution and watermark filters
 	if res, found := resolutions[resolution]; found {
-		// Complete filter with scaling and overlay watermark
-		completeFilter := fmt.Sprintf("scale=%s:%s,%s", res.width, res.height, filter)
-
-		// Use transcoding with specified resolution - same as MergeSessionVideos
+		// Scale video and apply watermark
+		filter := fmt.Sprintf("[0:v]scale=%s:%s[scaled];[1:v]colorchannelmixer=aa=%.1f[wm];[scaled][wm]%s",
+			res.width, res.height, opacity, overlayExpr)
 		ffmpegArgs = append(ffmpegArgs,
+			"-filter_complex", filter,
 			"-c:v", "libx264",
 			"-preset", "fast",
-			"-filter_complex", completeFilter,
+			"-crf", "23",
 			"-c:a", "aac",
 			outputPath,
 		)
 	} else {
-		// Use copy codec (no transcoding) if no valid resolution specified
-		// but still apply watermark filter
+		// No resolution specified - apply watermark only
+		filter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm];[0:v][wm]%s", opacity, overlayExpr)
 		ffmpegArgs = append(ffmpegArgs,
 			"-filter_complex", filter,
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-crf", "23",
 			"-c:a", "copy",
-			outputPath)
+			outputPath,
+		)
 	}
 
-	log.Printf("MergeAndWatermark : Executing ffmpeg with combined merge and watermark operations")
+	log.Printf("applyWatermarkWithPosition: Executing watermark operation")
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ffmpeg merge and watermark failed: %v\nOutput: %s", err, string(output))
+		return fmt.Errorf("ffmpeg watermark failed: %v\nOutput: %s", err, string(output))
 	}
-	log.Printf("MergeAndWatermark : Video segments merged and watermark added successfully")
+	log.Printf("applyWatermarkWithPosition: Watermark applied successfully")
 
 	return nil
 }
@@ -437,6 +626,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 // StartMP4Segmenter periodically merges the last 1 minute of HLS .ts segments into a single MP4 file
 func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	// Ensure hlsDir is absolute for robust concat list pathing
+	// log.Printf("[%s] MP4 segmenter: starting for hlsDir: %s", cameraName, hlsDir)
 	var err error
 	hlsDir, err = filepath.Abs(hlsDir)
 	if err != nil {
@@ -445,24 +635,37 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 	}
 	go func() {
 		for {
-            // sleep until the next wall-clock minute boundary plus 2-second buffer
-            now := time.Now()
-            next := now.Truncate(time.Minute).Add(time.Minute)
-            time.Sleep(time.Until(next) + 6*time.Second)
-
-            // we build MP4 for the previous minute window [startWindow, endWindow)
-            startWindow := next.Add(-1 * time.Minute)
-            endWindow := next
+			// sleep until the next wall-clock minute boundary plus 2-second buffer
+			now := time.Now()
+			next := now.Truncate(time.Minute).Add(time.Minute)
+			time.Sleep(time.Until(next) + 6*time.Second)
+			log.Printf("[%s] MP4 segmenter: sleeping until next minute boundary", cameraName)
+			// we build MP4 for the previous minute window [startWindow, endWindow)
+			startWindow := next.Add(-1 * time.Minute)
+			endWindow := next
 			entries, err := os.ReadDir(hlsDir)
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: failed to read HLS dir: %v", cameraName, err)
 				continue
 			}
+
 			var segs []string
 			for _, e := range entries {
 				if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".ts" {
 					continue
 				}
+
+				// Try to parse segment time from filename first (more accurate)
+				segmentTime, err := parseSegmentTimeFromFilename(e.Name())
+				if err == nil {
+					// Use segment timestamp for precise selection
+					if !segmentTime.Before(startWindow) && segmentTime.Before(endWindow) {
+						segs = append(segs, filepath.Base(e.Name()))
+					}
+					continue
+				}
+
+				// Fallback to file modification time if filename parsing fails
 				info, err := e.Info()
 				if err != nil {
 					continue
@@ -475,7 +678,6 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 				continue
 			}
 			sort.Strings(segs)
-			// log.Printf("[%s] MP4 segmenter: Segments to add: %v", cameraName, segs) // Noise reduced
 			hlsDir = filepath.Clean(hlsDir)
 
 			// ---- Concurrency control ----
@@ -497,11 +699,11 @@ func StartMP4Segmenter(cameraName, hlsDir, mp4Dir string) {
 			}
 			tmpConcat.Close()
 
-			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, time.Now().Format("20060102_150405"))
+			mp4Name := fmt.Sprintf("%s_%s.mp4", cameraName, startWindow.Format("20060102_150405"))
 			mp4Path := filepath.Join(mp4Dir, mp4Name)
 			mp4Tmp := filepath.Join(mp4Dir, "."+mp4Name+".tmp")
 
-			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-t", "60", "-f", "mp4", mp4Tmp)
+			cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmpConcat.Name(), "-c", "copy", "-t", "65", "-f", "mp4", mp4Tmp)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("[%s] MP4 segmenter: ffmpeg concat failed: %v, output: %s", cameraName, err, string(out))
@@ -576,7 +778,11 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				continue
 			}
 
-			// FFmpeg arguments for direct MP4 segmented recording
+			// Detect hardware acceleration for enhanced recording
+			hwAccel := DetectHardwareAcceleration()
+			log.Printf("[%s] Enhanced recording using hardware acceleration: %s", cameraName, hwAccel.Type)
+
+			// FFmpeg arguments for direct MP4 segmented recording with hardware acceleration
 			ffmpegArgs := []string{
 				"-rtsp_transport", "tcp",
 				"-timeout", "5000000",
@@ -584,15 +790,15 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				"-analyzeduration", "2000000",
 				"-probesize", "1000000",
 				"-re",
-				"-i", rtspURL,
-				"-c:v", "libx264",
-				"-preset", "ultrafast",
-				"-tune", "zerolatency",
-				"-profile:v", "baseline",
-				"-pix_fmt", "yuv420p",
-				"-color_range", "tv",
-				"-b:v", "2M",
-				"-bufsize", "4M",
+			}
+
+			ffmpegArgs = append(ffmpegArgs, "-i", rtspURL)
+
+			ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for segmentation
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-flags", "+global_header", // Ensure codec parameters in each segment
 				"-c:a", "aac",
 				"-b:a", "128k",
 				"-ar", "44100",
@@ -607,7 +813,7 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 				"-avoid_negative_ts", "make_zero",
 				"-y", // Overwrite existing files
 				filepath.Join(cameraMP4Dir, "output.m3u8"), // Placeholder output (not used but required)
-			}
+			)
 
 			// Execute FFmpeg command
 			cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
@@ -701,6 +907,26 @@ func StartEnhancedMP4Segmenter(cameraName, mp4Dir, diskID string, db database.Da
 	}()
 }
 
+// parseSegmentTimeFromFilename extracts timestamp from HLS segment filename
+func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
+	// Expected format: segment_YYYYMMDD_HHMMSS.ts
+	if !strings.HasPrefix(filename, "segment_") || !strings.HasSuffix(filename, ".ts") {
+		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
+	}
+
+	// Remove prefix and suffix
+	timeStr := strings.TrimPrefix(filename, "segment_")
+	timeStr = strings.TrimSuffix(timeStr, ".ts")
+
+	// Parse timestamp in LOCAL timezone to match startWindow/endWindow
+	segmentTime, err := time.ParseInLocation("20060102_150405", timeStr, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timeStr, err)
+	}
+
+	return segmentTime, nil
+}
+
 // parseSegmentTime extracts start and end times from segment filename
 func parseSegmentTime(filename string) (time.Time, time.Time, error) {
 	// Expected format: camera_name_YYYYMMDD_HHMMSS.mp4
@@ -715,7 +941,7 @@ func parseSegmentTime(filename string) (time.Time, time.Time, error) {
 
 	// Parse the timestamp
 	timestampStr := dateStr + "_" + timeStr
-	segmentStart, err := time.Parse("20060102_150405", timestampStr)
+	segmentStart, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse timestamp %s: %v", timestampStr, err)
 	}

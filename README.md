@@ -69,6 +69,9 @@ R2_TOKEN_VALUE=your_token_value
 BOOKING_WORKER_CONCURRENCY=2      # Max concurrent booking process workers
 VIDEO_REQUEST_WORKER_CONCURRENCY=2 # Max concurrent video request workers
 PENDING_TASK_WORKER_CONCURRENCY=3  # Max concurrent pending task workers
+
+# Transcoding Quality Configuration
+ENABLED_QUALITIES=1080p,720p,480p,360p  # Comma-separated list of enabled quality presets
 ```
 
 ## Directory Structure
@@ -240,6 +243,52 @@ You can monitor worker activity through the application logs:
 📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal 3 proses video request bersamaan
 📦 QUEUE: 🔄 Memproses 8 task yang tertunda (max 5 concurrent)...
 ```
+
+## Quality Presets Configuration
+
+The application supports configurable video quality presets for transcoding. You can control which quality variants are generated during video processing.
+
+### Available Quality Presets
+
+| Preset | Resolution | Bitrate | Bandwidth | Use Case |
+|--------|------------|---------|-----------|----------|
+| 1080p  | 1920x1080  | 5000k   | 5000000   | High quality, good internet |
+| 720p   | 1280x720   | 2800k   | 2800000   | Standard quality, balanced |
+| 480p   | 854x480    | 1400k   | 1400000   | Lower quality, slower internet |
+| 360p   | 640x360    | 800k    | 800000    | Lowest quality, very slow internet |
+
+### Configuration Examples
+
+```bash
+# Enable all quality presets (default)
+ENABLED_QUALITIES=1080p,720p,480p,360p
+
+# Enable only high quality presets
+ENABLED_QUALITIES=1080p,720p
+
+# Enable only lower quality presets (bandwidth saving)
+ENABLED_QUALITIES=480p,360p
+
+# Enable single quality preset
+ENABLED_QUALITIES=720p
+
+# Custom combination
+ENABLED_QUALITIES=1080p,480p
+```
+
+### Benefits
+
+- **Bandwidth Optimization**: Choose only the qualities you need
+- **Storage Savings**: Fewer quality variants = less disk space
+- **Processing Speed**: Fewer variants = faster transcoding
+- **Flexible Deployment**: Different configurations for different environments
+
+### Notes
+
+- If `ENABLED_QUALITIES` is not set, all presets are enabled by default
+- Invalid quality names are ignored
+- If no valid presets are found, all presets are used as fallback
+- The master HLS playlist will only include enabled quality variants
 
 ## Troubleshooting
 

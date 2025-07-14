@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -21,6 +24,13 @@ import (
 	"ayo-mwr/signaling"
 	"ayo-mwr/storage"
 	"context"
+)
+
+// Version information set at build time
+var (
+	version = "dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
 )
 
 //go:embed .env
@@ -139,6 +149,50 @@ func main() {
 
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
+
+	// Setup OTA Updater
+	otaEnabled := strings.ToLower(os.Getenv("OTA_UPDATE_ENABLED")) == "true"
+	
+	if otaEnabled {
+		updaterConfig := &UpdaterConfig{
+			GitHubRepo:     os.Getenv("GITHUB_REPO"), // Format: "owner/repo"
+			GitHubToken:    os.Getenv("GITHUB_TOKEN"), // For private repositories
+			CurrentVersion: version,
+			UpdateInterval: 6 * time.Hour, // Check every 6 hours
+			BackupDir:      "./backups",
+			BinaryName:     "ayo-mwr-linux-amd64",
+		}
+		
+		// Only initialize updater if GitHub repo is configured
+		if updaterConfig.GitHubRepo != "" {
+			updater := NewUpdater(updaterConfig)
+			
+			// Start automatic update checker in background
+			go updater.StartUpdateChecker()
+			
+			// Setup signal handler for manual updates (SIGUSR1)
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGUSR1)
+			go func() {
+				for range sigChan {
+					updater.HandleUpdateSignal()
+				}
+			}()
+			
+			// Cleanup old backups (keep last 5)
+			go func() {
+				if err := updater.CleanupOldBackups(5); err != nil {
+					log.Printf("Failed to cleanup old backups: %v", err)
+				}
+			}()
+			
+			log.Printf("OTA Updater initialized - Current version: %s", version)
+		} else {
+			log.Println("GITHUB_REPO not configured, OTA updates disabled")
+		}
+	} else {
+		log.Println("OTA updates disabled by configuration (OTA_UPDATE_ENABLED=false)")
+	}
 
 	// Start disk management cron job (nightly at 2 AM)
 	diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)

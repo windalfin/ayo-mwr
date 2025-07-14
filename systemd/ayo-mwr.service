@@ -1,0 +1,48 @@
+[Unit]
+Description=Ayo-MWR Video Recording Service
+Documentation=https://github.com/username/ayo-mwr
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ayo-mwr
+Group=ayo-mwr
+WorkingDirectory=/opt/ayo-mwr
+ExecStart=/opt/ayo-mwr/ayo-mwr-linux-amd64
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+# Environment file
+EnvironmentFile=/opt/ayo-mwr/.env
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ayo-mwr
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ayo-mwr
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target 

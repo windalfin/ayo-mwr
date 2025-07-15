@@ -346,6 +346,75 @@ ENABLED_QUALITIES=1080p,480p
 - If no valid presets are found, all presets are used as fallback
 - The master HLS playlist will only include enabled quality variants
 
+## Disk Manager Configuration
+
+The application includes an intelligent disk management system that automatically selects the best available disk for video storage based on available space and disk priorities.
+
+### Configurable Parameters
+
+#### Minimum Free Space
+- **Parameter**: `minimum_free_space_gb`
+- **Default**: 100 GB
+- **Range**: 1-1000 GB
+- **Description**: Minimum free space required on a disk before it's considered full
+
+#### Disk Priorities
+The system assigns priorities to different disk types (lower number = higher priority):
+
+| Disk Type | Default Priority | Description |
+|-----------|------------------|-------------|
+| External | 1 | USB drives, external HDDs/SSDs |
+| Mounted Storage | 50 | Network drives, mounted volumes |
+| Internal NVMe | 101 | Internal NVMe SSDs |
+| Internal SATA | 201 | Internal SATA drives |
+| Root Filesystem | 500 | System root partition (fallback) |
+
+### Configuration via API
+
+You can update disk manager settings through the admin API:
+
+```bash
+# Get current disk manager configuration
+curl http://localhost:3000/api/admin/disk-manager-config
+
+# Update disk manager configuration
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{
+    "minimum_free_space_gb": 150,
+    "priority_external": 1,
+    "priority_mounted_storage": 50,
+    "priority_internal_nvme": 101,
+    "priority_internal_sata": 201,
+    "priority_root_filesystem": 500
+  }' \
+  http://localhost:3000/api/admin/disk-manager-config
+```
+
+### How It Works
+
+1. **Automatic Discovery**: The system automatically discovers and registers available disks
+2. **Priority-Based Selection**: Selects disks based on configured priorities and available space
+3. **Health Monitoring**: Continuously monitors disk health and available space
+4. **Dynamic Switching**: Automatically switches to alternative disks when current disk becomes full
+5. **Size-Based Adjustment**: Larger disks get slightly higher priority within the same type
+
+### Benefits
+
+- **Automatic Management**: No manual disk selection required
+- **Space Optimization**: Efficiently utilizes available storage across multiple disks
+- **Configurable Priorities**: Customize disk selection based on your setup
+- **Hot Configuration**: Update settings without restarting the application
+- **Intelligent Fallback**: Gracefully handles disk full scenarios
+
+### Monitoring
+
+Monitor disk manager activity through application logs:
+```
+💾 DISK: Disk terpilih: /Volumes/ExternalDrive (1.2TB tersisa, prioritas: 1)
+💾 DISK: Disk /Volumes/InternalSSD hampir penuh (8GB tersisa), beralih ke disk lain
+💾 DISK: Menemukan disk baru: /Volumes/NewDrive (tipe: External, prioritas: 1)
+```
+
 ## Troubleshooting
 
 - **RTSP Connection Issues**: Verify your camera's IP, username, password, and RTSP path

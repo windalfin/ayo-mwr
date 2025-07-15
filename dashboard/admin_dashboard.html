@@ -680,13 +680,55 @@
           <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">Select which quality presets should be available for transcoding</small>
         </div>
         
+        <h4 style="color: #273c75; margin-top: 2rem;">Disk Manager Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
+          <div class="form-group">
+            <label for="minimum-free-space-gb">Minimum Free Space (GB)</label>
+            <input type="number" id="minimum-free-space-gb" min="1" max="1000" value="10">
+            <small style="color: #666; font-size: 0.9em;">Minimum free space required on a disk before it's considered full (1-1000 GB)</small>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+          <h5 style="color: #273c75; margin-bottom: 1rem;">Disk Priorities (Lower number = Higher priority)</h5>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+              <label for="priority-external">External Drives</label>
+              <input type="number" id="priority-external" min="1" max="10" value="1">
+              <small style="color: #666; font-size: 0.9em;">USB drives, external HDDs/SSDs</small>
+            </div>
+            <div class="form-group">
+              <label for="priority-mounted-storage">Mounted Storage</label>
+              <input type="number" id="priority-mounted-storage" min="1" max="10" value="2">
+              <small style="color: #666; font-size: 0.9em;">Network drives, mounted volumes</small>
+            </div>
+            <div class="form-group">
+              <label for="priority-internal-nvme">Internal NVMe</label>
+              <input type="number" id="priority-internal-nvme" min="1" max="10" value="3">
+              <small style="color: #666; font-size: 0.9em;">Internal NVMe SSDs</small>
+            </div>
+            <div class="form-group">
+              <label for="priority-internal-sata">Internal SATA</label>
+              <input type="number" id="priority-internal-sata" min="1" max="10" value="4">
+              <small style="color: #666; font-size: 0.9em;">Internal SATA drives</small>
+            </div>
+            <div class="form-group">
+              <label for="priority-root-filesystem">Root Filesystem</label>
+              <input type="number" id="priority-root-filesystem" min="1" max="10" value="5">
+              <small style="color: #666; font-size: 0.9em;">System root partition (fallback)</small>
+            </div>
+          </div>
+        </div>
+        
         <div style="margin-top: 2rem; padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #273c75;">
           <h5 style="margin: 0 0 0.5rem 0; color: #273c75;">Configuration Notes:</h5>
           <ul style="margin: 0; padding-left: 1.5rem; color: #666;">
             <li>Worker concurrency settings control how many tasks can be processed simultaneously</li>
             <li>Higher concurrency may improve performance but will use more system resources</li>
             <li>Quality presets determine which video qualities are available for transcoding</li>
-            <li>Changes will take effect after saving and may require a system restart for some settings</li>
+            <li>Disk manager settings control automatic disk selection and storage management</li>
+            <li>Lower priority numbers mean higher priority (1 = highest, 10 = lowest)</li>
+            <li>Changes will take effect immediately after saving (hot reload enabled)</li>
           </ul>
         </div>
       </div>
@@ -1417,10 +1459,49 @@ async function loadSystemConfig() {
       checkbox.checked = enabledQualities.includes(checkbox.value);
     });
     
+    // Load disk manager configuration
+    await loadDiskManagerConfig();
+    
     showNotification('System configuration loaded successfully', 'success');
   } catch (error) {
     console.error('Error loading system config:', error);
     showNotification(`Error loading system config: ${error.message}`, 'error');
+  }
+}
+
+// Load disk manager configuration from backend
+async function loadDiskManagerConfig() {
+  try {
+    const response = await fetch('/api/admin/disk-manager-config');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const result = await response.json();
+    const config = result.data || {};
+    
+    // Update disk manager form fields with loaded values
+    document.getElementById('minimum-free-space-gb').value = 
+      config.minimum_free_space_gb || 10;
+    document.getElementById('priority-external').value = 
+      config.priority_external || 1;
+    document.getElementById('priority-mounted-storage').value = 
+      config.priority_mounted_storage || 2;
+    document.getElementById('priority-internal-nvme').value = 
+      config.priority_internal_nvme || 3;
+    document.getElementById('priority-internal-sata').value = 
+      config.priority_internal_sata || 4;
+    document.getElementById('priority-root-filesystem').value = 
+      config.priority_root_filesystem || 5;
+    
+  } catch (error) {
+    console.error('Error loading disk manager config:', error);
+    // Use default values if loading fails
+    document.getElementById('minimum-free-space-gb').value = 10;
+    document.getElementById('priority-external').value = 1;
+    document.getElementById('priority-mounted-storage').value = 2;
+    document.getElementById('priority-internal-nvme').value = 3;
+    document.getElementById('priority-internal-sata').value = 4;
+    document.getElementById('priority-root-filesystem').value = 5;
   }
 }
 
@@ -1452,7 +1533,7 @@ async function saveSystemConfig() {
       throw new Error('At least one quality preset must be enabled');
     }
     
-    // Send to backend
+    // Send system config to backend
     const response = await fetch('/api/admin/system-config', {
       method: 'PUT',
       headers: {
@@ -1468,11 +1549,67 @@ async function saveSystemConfig() {
     
     const result = await response.json();
     systemConfig = { ...systemConfig, ...configData };
+    
+    // Save disk manager configuration
+    await saveDiskManagerConfig();
+    
     showNotification('System configuration saved successfully', 'success');
     
   } catch (error) {
     console.error('Error saving system config:', error);
     showNotification(`Error saving system config: ${error.message}`, 'error');
+  }
+}
+
+// Save disk manager configuration to backend
+async function saveDiskManagerConfig() {
+  try {
+    // Collect disk manager form data
+    const diskManagerData = {
+      minimum_free_space_gb: parseInt(document.getElementById('minimum-free-space-gb').value),
+      priority_external: parseInt(document.getElementById('priority-external').value),
+      priority_mounted_storage: parseInt(document.getElementById('priority-mounted-storage').value),
+      priority_internal_nvme: parseInt(document.getElementById('priority-internal-nvme').value),
+      priority_internal_sata: parseInt(document.getElementById('priority-internal-sata').value),
+      priority_root_filesystem: parseInt(document.getElementById('priority-root-filesystem').value)
+    };
+    
+    // Validate disk manager data
+    if (diskManagerData.minimum_free_space_gb < 1 || diskManagerData.minimum_free_space_gb > 1000) {
+      throw new Error('Minimum free space must be between 1 and 1000 GB');
+    }
+    
+    const priorities = [
+      diskManagerData.priority_external,
+      diskManagerData.priority_mounted_storage,
+      diskManagerData.priority_internal_nvme,
+      diskManagerData.priority_internal_sata,
+      diskManagerData.priority_root_filesystem
+    ];
+    
+    for (const priority of priorities) {
+      if (priority < 1 || priority > 1000) {
+        throw new Error('All priority values must be between 1 and 1000');
+      }
+    }
+    
+    // Send disk manager config to backend
+    const response = await fetch('/api/admin/disk-manager-config', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(diskManagerData)
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+    }
+    
+  } catch (error) {
+    console.error('Error saving disk manager config:', error);
+    throw error; // Re-throw to be caught by parent function
   }
 }
 

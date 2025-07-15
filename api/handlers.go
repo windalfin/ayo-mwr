@@ -514,6 +514,106 @@ func (s *Server) getSystemConfig(c *gin.Context) {
 	})
 }
 
+// GET /api/admin/disk-manager-config
+// Get disk manager configuration
+func (s *Server) getDiskManagerConfig(c *gin.Context) {
+	sysConfigService := config.NewSystemConfigService(s.db)
+	minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem, err := sysConfigService.GetDiskManagerConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get disk manager configuration",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"minimum_free_space_gb": minimumFreeSpaceGB,
+			"priority_external": priorityExternal,
+			"priority_mounted_storage": priorityMountedStorage,
+			"priority_internal_nvme": priorityInternalNVMe,
+			"priority_internal_sata": priorityInternalSATA,
+			"priority_root_filesystem": priorityRootFilesystem,
+		},
+	})
+}
+
+// PUT /api/admin/disk-manager-config
+// Update disk manager configuration
+func (s *Server) updateDiskManagerConfig(c *gin.Context) {
+	var request struct {
+		MinimumFreeSpaceGB     int `json:"minimum_free_space_gb" binding:"required,min=1,max=1000"`
+		PriorityExternal       int `json:"priority_external" binding:"required,min=1,max=1000"`
+		PriorityMountedStorage int `json:"priority_mounted_storage" binding:"required,min=1,max=1000"`
+		PriorityInternalNVMe   int `json:"priority_internal_nvme" binding:"required,min=1,max=1000"`
+		PriorityInternalSATA   int `json:"priority_internal_sata" binding:"required,min=1,max=1000"`
+		PriorityRootFilesystem int `json:"priority_root_filesystem" binding:"required,min=1,max=1000"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validate using the validation function
+	if err := config.ValidateDiskManagerConfig(
+		request.MinimumFreeSpaceGB,
+		request.PriorityExternal,
+		request.PriorityMountedStorage,
+		request.PriorityInternalNVMe,
+		request.PriorityInternalSATA,
+		request.PriorityRootFilesystem,
+	); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid disk manager configuration",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Update configuration in database
+	sysConfigService := config.NewSystemConfigService(s.db)
+	if err := sysConfigService.SetDiskManagerConfig(
+		request.MinimumFreeSpaceGB,
+		request.PriorityExternal,
+		request.PriorityMountedStorage,
+		request.PriorityInternalNVMe,
+		request.PriorityInternalSATA,
+		request.PriorityRootFilesystem,
+		"admin",
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to update disk manager configuration",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Log hot reload notification
+	log.Printf("💾 HOT RELOAD: Disk manager configuration updated - new settings will be used immediately")
+	log.Printf("📊 DISK CONFIG: MinFreeSpace=%dGB, Priorities: Ext=%d, Mount=%d, NVMe=%d, SATA=%d, Root=%d",
+		request.MinimumFreeSpaceGB, request.PriorityExternal, request.PriorityMountedStorage,
+		request.PriorityInternalNVMe, request.PriorityInternalSATA, request.PriorityRootFilesystem)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Disk manager configuration updated successfully - changes are active immediately",
+		"data": gin.H{
+			"minimum_free_space_gb": request.MinimumFreeSpaceGB,
+			"priority_external": request.PriorityExternal,
+			"priority_mounted_storage": request.PriorityMountedStorage,
+			"priority_internal_nvme": request.PriorityInternalNVMe,
+			"priority_internal_sata": request.PriorityInternalSATA,
+			"priority_root_filesystem": request.PriorityRootFilesystem,
+		},
+	})
+}
+
 // PUT /api/admin/system-config
 // Update system configuration
 func (s *Server) updateSystemConfig(c *gin.Context) {

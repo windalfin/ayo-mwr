@@ -182,6 +182,13 @@ const (
 	ConfigVideoRequestWorkerConcurrency = "video_request_worker_concurrency"
 	ConfigPendingTaskWorkerConcurrency  = "pending_task_worker_concurrency"
 	ConfigEnabledQualities              = "enabled_qualities"
+	// Disk Manager Configuration
+	ConfigMinimumFreeSpaceGB            = "minimum_free_space_gb"
+	ConfigPriorityExternal              = "priority_external"
+	ConfigPriorityMountedStorage        = "priority_mounted_storage"
+	ConfigPriorityInternalNVMe          = "priority_internal_nvme"
+	ConfigPriorityInternalSATA          = "priority_internal_sata"
+	ConfigPriorityRootFilesystem        = "priority_root_filesystem"
 )
 
 // Database defines the interface for database operations

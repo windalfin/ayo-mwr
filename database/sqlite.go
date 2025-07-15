@@ -435,6 +435,13 @@ func initTables(db *sql.DB) error {
 		{"video_request_worker_concurrency", "3", "int"},
 		{"pending_task_worker_concurrency", "5", "int"},
 		{"enabled_qualities", "1080p,720p,480p,360p", "string"},
+		// Disk Manager Configuration
+		{"minimum_free_space_gb", "100", "int"},
+		{"priority_external", "1", "int"},
+		{"priority_mounted_storage", "50", "int"},
+		{"priority_internal_nvme", "101", "int"},
+		{"priority_internal_sata", "201", "int"},
+		{"priority_root_filesystem", "500", "int"},
 	}
 
 	for _, config := range defaultConfigs {

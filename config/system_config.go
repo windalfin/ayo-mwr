@@ -74,6 +74,61 @@ func (s *SystemConfigService) GetEnabledQualities() ([]string, error) {
 	return qualities, nil
 }
 
+// GetDiskManagerConfig retrieves disk manager configuration from database
+func (s *SystemConfigService) GetDiskManagerConfig() (minimumFreeSpaceGB int, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem int, err error) {
+	// Default values from storage/disk_manager.go constants
+	minimumFreeSpaceGB = 100
+	priorityExternal = 1
+	priorityMountedStorage = 50
+	priorityInternalNVMe = 101
+	priorityInternalSATA = 201
+	priorityRootFilesystem = 500
+
+	// Get minimum free space GB
+	if config, err := s.db.GetSystemConfig(database.ConfigMinimumFreeSpaceGB); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			minimumFreeSpaceGB = val
+		}
+	}
+
+	// Get priority external
+	if config, err := s.db.GetSystemConfig(database.ConfigPriorityExternal); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			priorityExternal = val
+		}
+	}
+
+	// Get priority mounted storage
+	if config, err := s.db.GetSystemConfig(database.ConfigPriorityMountedStorage); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			priorityMountedStorage = val
+		}
+	}
+
+	// Get priority internal NVMe
+	if config, err := s.db.GetSystemConfig(database.ConfigPriorityInternalNVMe); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			priorityInternalNVMe = val
+		}
+	}
+
+	// Get priority internal SATA
+	if config, err := s.db.GetSystemConfig(database.ConfigPriorityInternalSATA); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			priorityInternalSATA = val
+		}
+	}
+
+	// Get priority root filesystem
+	if config, err := s.db.GetSystemConfig(database.ConfigPriorityRootFilesystem); err == nil {
+		if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+			priorityRootFilesystem = val
+		}
+	}
+
+	return minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem, nil
+}
+
 // SetWorkerConcurrency updates worker concurrency settings in database
 func (s *SystemConfigService) SetWorkerConcurrency(booking, videoRequest, pendingTask int, updatedBy string) error {
 	configs := []database.SystemConfig{
@@ -123,6 +178,58 @@ func (s *SystemConfigService) SetEnabledQualities(qualities []string, updatedBy 
 	}
 
 	log.Printf("⚙️ CONFIG: Updated enabled qualities to [%s] by %s", value, updatedBy)
+	return nil
+}
+
+// SetDiskManagerConfig updates disk manager configuration in database
+func (s *SystemConfigService) SetDiskManagerConfig(minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem int, updatedBy string) error {
+	configs := []database.SystemConfig{
+		{
+			Key:       database.ConfigMinimumFreeSpaceGB,
+			Value:     strconv.Itoa(minimumFreeSpaceGB),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+		{
+			Key:       database.ConfigPriorityExternal,
+			Value:     strconv.Itoa(priorityExternal),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+		{
+			Key:       database.ConfigPriorityMountedStorage,
+			Value:     strconv.Itoa(priorityMountedStorage),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+		{
+			Key:       database.ConfigPriorityInternalNVMe,
+			Value:     strconv.Itoa(priorityInternalNVMe),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+		{
+			Key:       database.ConfigPriorityInternalSATA,
+			Value:     strconv.Itoa(priorityInternalSATA),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+		{
+			Key:       database.ConfigPriorityRootFilesystem,
+			Value:     strconv.Itoa(priorityRootFilesystem),
+			Type:      "int",
+			UpdatedBy: updatedBy,
+		},
+	}
+
+	for _, config := range configs {
+		if err := s.db.SetSystemConfig(config); err != nil {
+			return fmt.Errorf("failed to set %s: %v", config.Key, err)
+		}
+	}
+
+	log.Printf("💾 CONFIG: Updated disk manager config - MinFreeSpace: %dGB, Priorities: Ext=%d, Mount=%d, NVMe=%d, SATA=%d, Root=%d by %s",
+		minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem, updatedBy)
 	return nil
 }
 
@@ -208,6 +315,44 @@ func ValidateEnabledQualities(qualities []string) error {
 	for _, quality := range qualities {
 		if !validQualities[quality] {
 			return fmt.Errorf("invalid quality '%s', valid options: 1080p, 720p, 480p, 360p", quality)
+		}
+	}
+
+	return nil
+}
+
+// ValidateDiskManagerConfig validates disk manager configuration values
+func ValidateDiskManagerConfig(minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem int) error {
+	// Validate minimum free space
+	if minimumFreeSpaceGB < 1 || minimumFreeSpaceGB > 1000 {
+		return fmt.Errorf("minimum free space must be between 1 and 1000 GB")
+	}
+
+	// Validate priority values (1-1000, where 1 is highest priority)
+	priorities := map[string]int{
+		"external":         priorityExternal,
+		"mounted storage":  priorityMountedStorage,
+		"internal NVMe":    priorityInternalNVMe,
+		"internal SATA":    priorityInternalSATA,
+		"root filesystem":  priorityRootFilesystem,
+	}
+
+	for name, priority := range priorities {
+		if priority < 1 || priority > 1000 {
+			return fmt.Errorf("%s priority must be between 1 and 1000 (1 = highest priority)", name)
+		}
+	}
+
+	// Check for duplicate priorities (optional warning, not error)
+	priorityValues := []int{priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem}
+	priorityCount := make(map[int]int)
+	for _, p := range priorityValues {
+		priorityCount[p]++
+	}
+
+	for priority, count := range priorityCount {
+		if count > 1 {
+			log.Printf("⚠️ WARNING: Priority %d is used by %d disk types. Consider using unique priorities for better disk selection.", priority, count)
 		}
 	}
 

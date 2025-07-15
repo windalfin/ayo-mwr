@@ -111,6 +111,33 @@ func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName
 	return fmt.Errorf("%s gagal setelah %d percobaan: %v", operationName, maxRetries, lastErr)
 }
 
+// Global variables untuk dynamic semaphore management
+var (
+	bookingCronMutex sync.RWMutex
+	currentBookingMaxConcurrent int
+	currentBookingSemaphore *semaphore.Weighted
+)
+
+// updateBookingConcurrency updates the semaphore with new concurrency value
+func updateBookingConcurrency(newMaxConcurrent int) {
+	bookingCronMutex.Lock()
+	defer bookingCronMutex.Unlock()
+	
+	if currentBookingMaxConcurrent != newMaxConcurrent {
+		log.Printf("🔄 BOOKING-CRON: Updating concurrency from %d to %d", currentBookingMaxConcurrent, newMaxConcurrent)
+		currentBookingMaxConcurrent = newMaxConcurrent
+		currentBookingSemaphore = semaphore.NewWeighted(int64(newMaxConcurrent))
+		log.Printf("✅ BOOKING-CRON: Concurrency updated successfully to %d", newMaxConcurrent)
+	}
+}
+
+// getBookingConcurrencySettings returns current semaphore and max concurrent value
+func getBookingConcurrencySettings() (*semaphore.Weighted, int) {
+	bookingCronMutex.RLock()
+	defer bookingCronMutex.RUnlock()
+	return currentBookingSemaphore, currentBookingMaxConcurrent
+}
+
 // StartBookingVideoCron initializes a cron job that runs every 30 minutes to:
 // 1. Get bookings from AYO API
 // 2. Generate videos for bookings from all cameras
@@ -165,15 +192,14 @@ func StartBookingVideoCron(cfg *config.Config) {
 		bookingVideoService := service.NewBookingVideoService(db, ayoClient, r2Client, cfg)
 
 		// Initialize semaphore dengan konfigurasi dinamis
-		maxConcurrent := cfg.BookingWorkerConcurrency
-		globalSemaphore := semaphore.NewWeighted(int64(maxConcurrent))
-		log.Printf("📊 BOOKING-CRON: Sistem antrian dimulai - maksimal %d proses booking bersamaan", maxConcurrent)
+		updateBookingConcurrency(cfg.BookingWorkerConcurrency)
+		log.Printf("📊 BOOKING-CRON: Sistem antrian dimulai - maksimal %d proses booking bersamaan", cfg.BookingWorkerConcurrency)
 
 		// Initial delay before first run (10 seconds)
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, globalSemaphore, maxConcurrent)
+		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
 
 		// Start the booking video cron
 		schedule := cron.New()
@@ -181,7 +207,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Schedule the task every minute for testing
 		// In production, you'd use a more reasonable interval like "@every 30m"
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, globalSemaphore, maxConcurrent)
+			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling booking video cron: %v", err)
@@ -189,12 +215,24 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 		schedule.Start()
 		log.Println("🚀 CRON SCHEDULER: Booking video processing cron job started - will run every 2 minutes (testing mode)")
-		log.Printf("📊 CONCURRENCY: Slot processing tersedia: %d/%d", maxConcurrent-getActiveProcessesCount(), maxConcurrent)
+		// Get current concurrency settings for logging
+		_, currentMax := getBookingConcurrencySettings()
+		log.Printf("📊 CONCURRENCY: Slot processing tersedia: %d/%d", currentMax-getActiveProcessesCount(), currentMax)
 	}()
 }
 
 // processBookings handles fetching bookings from database and processing them
-func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService, globalSemaphore *semaphore.Weighted, maxConcurrent int) {
+func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
+	// Load latest configuration and update semaphore if needed
+	sysConfigService := config.NewSystemConfigService(db)
+	if err := sysConfigService.LoadSystemConfigToConfig(cfg); err != nil {
+		log.Printf("Warning: Failed to reload system config: %v", err)
+	}
+	updateBookingConcurrency(cfg.BookingWorkerConcurrency)
+	
+	// Get current semaphore and max concurrent settings
+	globalSemaphore , maxConcurrent := getBookingConcurrencySettings()
+	
 	// Get cron run ID untuk tracking
 	processingMutex.Lock()
 	cronCounter++
@@ -369,7 +407,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		// Process this booking in a separate goroutine
 		wg.Add(1)
 		go func(bookingData database.BookingData, bookingID string, startTime, endTime time.Time,
-			orderDetailID float64, localOffsetHours time.Duration, field_id float64, cronID int, maxConcurrent int) {
+			orderDetailID float64, localOffsetHours time.Duration, field_id float64, cronID int, currentMaxConcurrent int) {
 			defer wg.Done()
 
 			// Acquire global semaphore before processing this booking

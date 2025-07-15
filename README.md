@@ -69,6 +69,9 @@ R2_TOKEN_VALUE=your_token_value
 BOOKING_WORKER_CONCURRENCY=2      # Max concurrent booking process workers
 VIDEO_REQUEST_WORKER_CONCURRENCY=2 # Max concurrent video request workers
 PENDING_TASK_WORKER_CONCURRENCY=3  # Max concurrent pending task workers
+
+# Transcoding Quality Configuration
+ENABLED_QUALITIES=1080p,720p,480p,360p  # Comma-separated list of enabled quality presets
 ```
 
 ## Directory Structure
@@ -240,6 +243,108 @@ You can monitor worker activity through the application logs:
 📊 VIDEO-REQUEST-CRON: Sistem antrian dimulai - maksimal 3 proses video request bersamaan
 📦 QUEUE: 🔄 Memproses 8 task yang tertunda (max 5 concurrent)...
 ```
+
+### Hot Reload Worker Concurrency
+
+The application supports **hot reload** for worker concurrency settings, allowing you to update the number of concurrent workers without restarting the application.
+
+#### Features
+
+- **Zero Downtime**: Update worker concurrency without stopping the application
+- **Instant Effect**: Changes take effect within 2 minutes maximum
+- **Thread Safe**: Safe concurrent access to worker settings
+- **Automatic Monitoring**: Built-in configuration monitoring and reloading
+- **Comprehensive Logging**: Detailed logs for all concurrency changes
+
+#### How It Works
+
+1. **Dynamic Semaphore Management**: Each worker type uses a dynamic semaphore that can be resized at runtime
+2. **Configuration Monitoring**: Background process monitors configuration changes every 2 minutes
+3. **Safe Updates**: Thread-safe mechanisms ensure no race conditions during updates
+4. **Graceful Scaling**: Workers can scale up or down without affecting running tasks
+
+#### Updating Concurrency Settings
+
+You can update worker concurrency through the API:
+
+```bash
+# Update worker concurrency via API
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"booking_worker_concurrency":5,"video_request_worker_concurrency":4,"pending_task_worker_concurrency":6}' \
+  http://localhost:3000/api/config/update
+```
+
+Or update the database directly and wait for automatic reload (max 2 minutes).
+
+#### Monitoring Hot Reload Activity
+
+Watch for hot reload logs in the application output:
+
+```
+🔄 CONFIG: Hot reload - Booking worker concurrency: 2 → 5
+🔄 CONFIG: Hot reload - Video request worker concurrency: 2 → 4  
+🔄 CONFIG: Hot reload - Pending task worker concurrency: 3 → 6
+📊 BOOKING-CRON: Konkurensi diperbarui: 2 → 5 worker
+📊 VIDEO-REQUEST-CRON: Konkurensi diperbarui: 2 → 4 worker
+📦 QUEUE: Konkurensi diperbarui: 3 → 6 worker
+```
+
+#### Benefits
+
+- **Production Ready**: Update settings in production without downtime
+- **Performance Tuning**: Adjust worker counts based on real-time load
+- **Resource Management**: Scale workers up/down based on system resources
+- **Operational Flexibility**: Quick response to changing requirements
+
+#### Technical Details
+
+For detailed technical information about the hot reload implementation, see [HOT_RELOAD_CONCURRENCY.md](HOT_RELOAD_CONCURRENCY.md).
+
+## Quality Presets Configuration
+
+The application supports configurable video quality presets for transcoding. You can control which quality variants are generated during video processing.
+
+### Available Quality Presets
+
+| Preset | Resolution | Bitrate | Bandwidth | Use Case |
+|--------|------------|---------|-----------|----------|
+| 1080p  | 1920x1080  | 5000k   | 5000000   | High quality, good internet |
+| 720p   | 1280x720   | 2800k   | 2800000   | Standard quality, balanced |
+| 480p   | 854x480    | 1400k   | 1400000   | Lower quality, slower internet |
+| 360p   | 640x360    | 800k    | 800000    | Lowest quality, very slow internet |
+
+### Configuration Examples
+
+```bash
+# Enable all quality presets (default)
+ENABLED_QUALITIES=1080p,720p,480p,360p
+
+# Enable only high quality presets
+ENABLED_QUALITIES=1080p,720p
+
+# Enable only lower quality presets (bandwidth saving)
+ENABLED_QUALITIES=480p,360p
+
+# Enable single quality preset
+ENABLED_QUALITIES=720p
+
+# Custom combination
+ENABLED_QUALITIES=1080p,480p
+```
+
+### Benefits
+
+- **Bandwidth Optimization**: Choose only the qualities you need
+- **Storage Savings**: Fewer quality variants = less disk space
+- **Processing Speed**: Fewer variants = faster transcoding
+- **Flexible Deployment**: Different configurations for different environments
+
+### Notes
+
+- If `ENABLED_QUALITIES` is not set, all presets are enabled by default
+- Invalid quality names are ignored
+- If no valid presets are found, all presets are used as fallback
+- The master HLS playlist will only include enabled quality variants
 
 ## Troubleshooting
 

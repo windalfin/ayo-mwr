@@ -21,8 +21,13 @@ func TestSplitFFmpegParams(t *testing.T) {
 		{"software", "hevc"},
 	}
 
+	// Create test config with default enabled qualities
+	testCfg := config.Config{
+		EnabledQualities: []string{"1080p", "720p", "480p", "360p"},
+	}
+
 	for _, tc := range testCases {
-		inputParams, outputParams := SplitFFmpegParams(tc.hwAccel, tc.codec)
+		inputParams, outputParams := SplitFFmpegParams(tc.hwAccel, tc.codec, testCfg)
 		if tc.hwAccel != "software" && tc.hwAccel != "" && len(inputParams) == 0 {
 			t.Errorf("Expected non-empty input params for hwAccel=%s, codec=%s", tc.hwAccel, tc.codec)
 		}

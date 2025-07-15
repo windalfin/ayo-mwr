@@ -20,31 +20,32 @@ type QualityPreset struct {
 	Bandwidth int // For playlist metadata (bits per second)
 }
 
-// GetQualityPresets returns an array of quality presets for transcoding
-func GetQualityPresets() []QualityPreset {
-	return []QualityPreset{
-		{
+// GetQualityPresets returns an array of quality presets for transcoding based on configuration
+func GetQualityPresets(cfg config.Config) []QualityPreset {
+	// Define all available quality presets
+	allPresets := map[string]QualityPreset{
+		"1080p": {
 			Name:      "1080p",
 			Width:     1920,
 			Height:    1080,
 			Bitrate:   "5000k",
 			Bandwidth: 5000000,
 		},
-		{
+		"720p": {
 			Name:      "720p",
 			Width:     1280,
 			Height:    720,
 			Bitrate:   "2800k",
 			Bandwidth: 2800000,
 		},
-		{
+		"480p": {
 			Name:      "480p",
 			Width:     854,
 			Height:    480,
 			Bitrate:   "1400k",
 			Bandwidth: 1400000,
 		},
-		{
+		"360p": {
 			Name:      "360p",
 			Width:     640,
 			Height:    360,
@@ -52,6 +53,26 @@ func GetQualityPresets() []QualityPreset {
 			Bandwidth: 800000,
 		},
 	}
+
+	// Filter presets based on enabled qualities from config
+	var enabledPresets []QualityPreset
+	for _, qualityName := range cfg.EnabledQualities {
+		if preset, exists := allPresets[qualityName]; exists {
+			enabledPresets = append(enabledPresets, preset)
+		}
+	}
+
+	// If no valid presets found, return all presets as fallback
+	if len(enabledPresets) == 0 {
+		return []QualityPreset{
+			allPresets["1080p"],
+			allPresets["720p"],
+			allPresets["480p"],
+			allPresets["360p"],
+		}
+	}
+
+	return enabledPresets
 }
 
 // TranscodeVideo generates multi-quality HLS format from the MP4 file
@@ -81,7 +102,7 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg *config.Config) (
 // GenerateHLS creates a multi-quality HLS stream
 func GenerateHLS(inputPath, outputDir, videoID string, cfg *config.Config) error {
 	inputParams, _ := GetInputParams(cfg.HardwareAccel)
-	qualityPresets := GetQualityPresets()
+	qualityPresets := GetQualityPresets(*cfg)
 
 	// Create variant streams for each quality
 	for _, preset := range qualityPresets {
@@ -307,17 +328,22 @@ func GetOutputParams(hwAccel, codec string, preset QualityPreset) []string {
 }
 
 // SplitFFmpegParams remains for backward compatibility
-func SplitFFmpegParams(hwAccel, codec string) ([]string, []string) {
+func SplitFFmpegParams(hwAccel, codec string, cfg config.Config) ([]string, []string) {
 	inputParams, _ := GetInputParams(hwAccel)
 
 	// Use the 720p preset as default for backward compatibility
-	qualityPresets := GetQualityPresets()
+	qualityPresets := GetQualityPresets(cfg)
 	var defaultPreset QualityPreset
 	for _, preset := range qualityPresets {
 		if preset.Name == "720p" {
 			defaultPreset = preset
 			break
 		}
+	}
+
+	// If 720p is not available, use the first available preset
+	if defaultPreset.Name == "" && len(qualityPresets) > 0 {
+		defaultPreset = qualityPresets[0]
 	}
 
 	outputParams := GetOutputParams(hwAccel, codec, defaultPreset)

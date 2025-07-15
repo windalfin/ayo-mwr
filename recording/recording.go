@@ -470,7 +470,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 
 	// STEP 1: Fast concatenation with copy codec (no transcoding)
 	log.Printf("MergeAndWatermark: Step 1 - Fast concatenation with copy codec (ID: %s)", uniqueID)
-	err = fastConcatSegments(segments, tempConcatPath, outDir, uniqueID)
+	err = fastConcatSegments(segments, tempConcatPath, outDir, uniqueID, startTime, endTime)
 	if err != nil {
 		return fmt.Errorf("failed to concatenate segments: %w", err)
 	}
@@ -487,7 +487,7 @@ func MergeAndWatermark(inputPath string, startTime, endTime time.Time, outputPat
 }
 
 // fastConcatSegments performs fast concatenation using copy codec (no transcoding)
-func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID string) error {
+func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID string, startTime, endTime time.Time) error {
 	// Create concat list file with unique ID to prevent race conditions
 	concatListPath := filepath.Join(workingDir, fmt.Sprintf("segments_concat_list_%s.txt", uniqueID))
 	tmpFile, err := os.Create(concatListPath)
@@ -516,11 +516,16 @@ func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID stri
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
 
+	// Calculate duration from end_time - start_time
+	duration := endTime.Sub(startTime)
+	durationStr := fmt.Sprintf("%.3f", duration.Seconds())
+
 	ffmpegArgs := []string{
 		"-y",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
+		"-t", durationStr, // Duration limit based on end_time - start_time
 		"-c", "copy", // Copy codec - no transcoding, very fast
 		outputPath,
 	}

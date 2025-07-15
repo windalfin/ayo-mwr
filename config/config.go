@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	database "ayo-mwr/database"
 )
@@ -86,6 +87,9 @@ type Config struct {
 	BookingWorkerConcurrency     int // Max concurrent booking process workers
 	VideoRequestWorkerConcurrency int // Max concurrent video request workers
 	PendingTaskWorkerConcurrency  int // Max concurrent pending task workers
+
+	// Transcoding Quality Configuration
+	EnabledQualities []string // Enabled transcoding quality presets
 }
 
 // LoadConfig loads configuration from environment variables
@@ -153,19 +157,22 @@ func LoadConfig() Config {
 		R2BaseURL:    getEnv("R2_BASE_URL", ""),
 		R2Region:     getEnv("R2_REGION", "auto"),
 
-		// Worker Concurrency Configuration
+		// Worker Concurrency Configuration (will be overridden by database values)
 		BookingWorkerConcurrency: func() int {
 			workers, _ := strconv.Atoi(getEnv("BOOKING_WORKER_CONCURRENCY", "2"))
 			return workers
 		}(),
 		VideoRequestWorkerConcurrency: func() int {
-			workers, _ := strconv.Atoi(getEnv("VIDEO_REQUEST_WORKER_CONCURRENCY", "2"))
+			workers, _ := strconv.Atoi(getEnv("VIDEO_REQUEST_WORKER_CONCURRENCY", "3"))
 			return workers
 		}(),
 		PendingTaskWorkerConcurrency: func() int {
-			workers, _ := strconv.Atoi(getEnv("PENDING_TASK_WORKER_CONCURRENCY", "3"))
+			workers, _ := strconv.Atoi(getEnv("PENDING_TASK_WORKER_CONCURRENCY", "5"))
 			return workers
 		}(),
+
+		// Transcoding Quality Configuration (will be overridden by database values)
+		EnabledQualities: strings.Split(getEnv("ENABLED_QUALITIES", "1080p,720p,480p,360p"), ","),
 	}
 
 	// Load ClipDuration from environment variable if available
@@ -235,6 +242,12 @@ func LoadConfig() Config {
 			}
 		}
 		log.Printf("Loaded %d cameras from SQLite", len(cfg.Cameras))
+
+		// Load system configuration from database
+		sysConfigService := NewSystemConfigService(db)
+		if err := sysConfigService.LoadSystemConfigToConfig(&cfg); err != nil {
+			log.Printf("Warning: Failed to load system config from database: %v", err)
+		}
 	}
 	if db != nil {
 		db.Close()

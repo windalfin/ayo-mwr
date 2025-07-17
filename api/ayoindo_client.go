@@ -972,7 +972,7 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 	params := map[string]interface{}{
 		"token":      c.apiToken,
 		"venue_code": c.venueCode,
-		"unique_ids": uniqueIDs,
+		"unique_ids": strings.Join(uniqueIDs, ","),
 	}
 
 	// Generate signature
@@ -983,6 +983,7 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 
 	// Add signature to parameters
 	params["signature"] = signature
+	params["unique_ids"] = uniqueIDs
 
 	// Prepare the request body
 	body, err := json.Marshal(params)
@@ -1020,6 +1021,9 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	// Print full response for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Response: %s\n", string(respBody))
+	fmt.Printf("[DEBUG] API Response Status Code: %d\n", resp.StatusCode)
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(respBody))

@@ -241,6 +241,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 	log.Printf("📋 VIDEO-REQUEST-CRON-%d: Found %d video requests", currentCronID, len(data))
 	videoRequestIDs := []string{}
+	videoRequestIDsIncomplete := []string{}
 
 	// Use a mutex to protect videoRequestIDs during concurrent access
 	var mutex sync.Mutex
@@ -425,7 +426,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 					if videoDuration < planDuration {
 						log.Printf("❌ VIDEO-REQUEST-CRON-%d: Actual duration %.2fs is less than plan duration %.2fs for %s", cronID, videoDuration, planDuration, videoPath)
 						mutex.Lock()
-						videoRequestIDs = append(videoRequestIDs, videoRequestID)
+						videoRequestIDsIncomplete = append(videoRequestIDsIncomplete, videoRequestID)
 						mutex.Unlock()
 						return
 					}
@@ -675,11 +676,30 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			}
 
 			batch := videoRequestIDs[i:end]
-			result, err := ayoClient.MarkVideoRequestsInvalid(batch)
+			result, err := ayoClient.MarkVideoRequestsInvalid(batch, false)
 			if err != nil {
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error marking video requests as invalid: %v", currentCronID, err)
 			} else {
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Successfully marked batch of video requests as invalid: %v", currentCronID, result)
+			}
+		}
+	}
+	if len(videoRequestIDsIncomplete) > 0 {
+		log.Printf("📝 VIDEO-REQUEST-CRON-%d: Marking %d video requests as incomplete: %v", currentCronID, len(videoRequestIDsIncomplete), videoRequestIDsIncomplete)
+
+		// Process in batches of 10 if needed (API limit)
+		for i := 0; i < len(videoRequestIDsIncomplete); i += 10 {
+			end := i + 10
+			if end > len(videoRequestIDsIncomplete) {
+				end = len(videoRequestIDsIncomplete)
+			}
+
+			batch := videoRequestIDsIncomplete[i:end]
+			result, err := ayoClient.MarkVideoRequestsInvalid(batch, true)
+			if err != nil {
+				log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error marking video requests as incomplete: %v", currentCronID, err)
+			} else {
+				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Successfully marked batch of video requests as incomplete: %v", currentCronID, result)
 			}
 		}
 	}

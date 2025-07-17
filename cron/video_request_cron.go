@@ -32,16 +32,16 @@ var (
 
 // Global variables untuk dynamic semaphore management
 var (
-	videoRequestCronMutex sync.RWMutex
+	videoRequestCronMutex            sync.RWMutex
 	currentVideoRequestMaxConcurrent int
-	currentVideoRequestSemaphore *semaphore.Weighted
+	currentVideoRequestSemaphore     *semaphore.Weighted
 )
 
 // updateVideoRequestConcurrency updates the semaphore with new concurrency value
 func updateVideoRequestConcurrency(newMaxConcurrent int) {
 	videoRequestCronMutex.Lock()
 	defer videoRequestCronMutex.Unlock()
-	
+
 	if currentVideoRequestMaxConcurrent != newMaxConcurrent {
 		log.Printf("🔄 VIDEO-REQUEST-CRON: Updating concurrency from %d to %d", currentVideoRequestMaxConcurrent, newMaxConcurrent)
 		currentVideoRequestMaxConcurrent = newMaxConcurrent
@@ -212,10 +212,10 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 		log.Printf("Warning: Failed to reload system config: %v", err)
 	}
 	updateVideoRequestConcurrency(cfg.VideoRequestWorkerConcurrency)
-	
+
 	// Get current semaphore and max concurrent settings
 	globalVideoRequestSemaphore, maxConcurrent := getVideoRequestConcurrencySettings()
-	
+
 	// Get cron run ID untuk tracking
 	videoRequestProcessingMutex.Lock()
 	videoRequestCronCounter++
@@ -260,7 +260,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			validVideoRequests++
 		}
 	}
-	
+
 	log.Printf("📊 VIDEO-REQUEST-CRON-%d: %d dari %d video requests memenuhi syarat untuk diproses", currentCronID, validVideoRequests, len(data))
 
 	// Process each video request
@@ -293,7 +293,7 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 			// Record start time untuk menghitung waktu tunggu
 			waitStartTime := time.Now()
-			
+
 			if err := globalVideoRequestSemaphore.Acquire(context.Background(), 1); err != nil {
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error acquiring global semaphore for video request %s: %v", cronID, videoRequestID, err)
 				return
@@ -399,6 +399,44 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				mutex.Unlock()
 				return
 			}
+
+			// Check if video duration validation is enabled
+			enableVideoDurationCheck := true // default to enabled
+			if config, err := sysConfigService.GetConfig(database.ConfigEnableVideoDurationCheck); err == nil {
+				if config.Value == "false" {
+					enableVideoDurationCheck = false
+				}
+			}
+
+			if enableVideoDurationCheck {
+				// Check video duration
+				videoDuration, err := transcode.GetVideoDuration(videoPath)
+				if err != nil {
+					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Failed to get video duration for %s: %v", cronID, videoPath, err)
+					mutex.Lock()
+					videoRequestIDs = append(videoRequestIDs, videoRequestID)
+					mutex.Unlock()
+					return
+				}
+				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Video duration validation passed: %.2fs for %s", cronID, videoDuration, videoPath)
+				// Check plan duration vs actual duration
+				if matchingVideo.StartTime != nil && matchingVideo.EndTime != nil {
+					planDuration := matchingVideo.EndTime.Sub(*matchingVideo.StartTime).Seconds()
+					if videoDuration < planDuration {
+						log.Printf("❌ VIDEO-REQUEST-CRON-%d: Actual duration %.2fs is less than plan duration %.2fs for %s", cronID, videoDuration, planDuration, videoPath)
+						mutex.Lock()
+						videoRequestIDs = append(videoRequestIDs, videoRequestID)
+						mutex.Unlock()
+						return
+					}
+					log.Printf("✅ VIDEO-REQUEST-CRON-%d: Plan duration validation passed: actual %.2fs >= plan %.2fs for %s", cronID, videoDuration, planDuration, videoPath)
+				} else {
+					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: StartTime or EndTime is nil, skipping plan duration check for %s", cronID, videoPath)
+				}
+			} else {
+				log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Video duration validation is disabled, skipping duration checks for %s", cronID, videoPath)
+			}
+
 			db.UpdateVideoRequestID(uniqueID, videoRequestID, false)
 			cameraName := matchingVideo.CameraName
 			BaseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
@@ -479,26 +517,26 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 				if transcode.IsTSFile(matchingVideo.LocalPath) {
 					log.Printf("📹 TS file detected: %s, converting to MP4...", matchingVideo.LocalPath)
-					
+
 					// Create temporary MP4 file path for conversion
 					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
-					
+
 					// Convert TS to MP4 without changing quality
 					if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
 						log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
 						db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 						return
 					}
-					
+
 					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)
 					uploadPath = convertedMP4Path
 					shouldDeleteConverted = true
-					
+
 				} else if transcode.IsMP4File(matchingVideo.LocalPath) {
 					log.Printf("📹 MP4 file detected: %s, uploading directly...", matchingVideo.LocalPath)
 					uploadPath = matchingVideo.LocalPath
 					shouldDeleteConverted = false
-					
+
 				} else {
 					log.Printf("⚠️ WARNING: Unknown file format: %s", matchingVideo.LocalPath)
 					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
@@ -508,12 +546,12 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				// Upload the file (either original MP4 or converted MP4) to R2
 				mp4Path := fmt.Sprintf("mp4/%s.mp4", uniqueID)
 				_, err = r2Client.UploadFile(uploadPath, mp4Path)
-				
+
 				if err != nil {
 					log.Printf("❌ ERROR: Failed to upload video to R2: %v", err)
 					// Use existing R2 URL if upload fails
 					r2MP4URL = matchingVideo.R2MP4URL
-					
+
 					// Clean up converted file if it was created
 					if shouldDeleteConverted && convertedMP4Path != "" {
 						if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
@@ -522,14 +560,14 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 							log.Printf("🧹 Cleaned up converted file: %s", convertedMP4Path)
 						}
 					}
-					
+
 					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 					return
 				} else {
 					// Generate URL using custom domain
 					r2MP4URL = fmt.Sprintf("%s/%s", r2Client.GetBaseURL(), mp4Path)
 					log.Printf("✅ Video uploaded to custom URL: %s", r2MP4URL)
-					
+
 					// Clean up converted file if it was created and upload was successful
 					if shouldDeleteConverted && convertedMP4Path != "" {
 						if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
@@ -559,20 +597,20 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			log.Printf("🔍 VIDEO-REQUEST-CRON-%d: VALIDATION: Checking R2 MP4 URL integrity for %s", cronID, uniqueID)
 			if err := validateR2MP4URL(r2MP4URL); err != nil {
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: R2 MP4 URL validation failed for %s: %v", cronID, uniqueID, err)
-				
+
 				// Set database status to failed
-				err = db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed, 
+				err = db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
 					fmt.Sprintf("R2 MP4 URL validation failed: %v", err))
 				if err != nil {
 					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, err)
 				}
-				
+
 				// Mark video request as invalid and return
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return
 			}
 			log.Printf("✅ VIDEO-REQUEST-CRON-%d: VALIDATION: R2 MP4 URL validation passed for %s", cronID, uniqueID)
-			
+
 			// Send video data to AYO API
 			result, err := ayoClient.SaveVideo(
 				videoRequestID,
@@ -586,14 +624,14 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 			if err != nil {
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: Failed to send video data to AYO API for %s: %v", cronID, uniqueID, err)
-				
+
 				// Set database status to failed when API call fails
-				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed, 
+				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
 					fmt.Sprintf("AYO API call failed: %v", err))
 				if updateErr != nil {
 					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
 				}
-				
+
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return
 			}
@@ -606,14 +644,14 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: SUCCESS: Successfully sent video to API for request %s: %s", cronID, videoRequestID, message)
 			} else {
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: API returned error for video request %s (status: %.0f): %s", cronID, videoRequestID, statusCode, message)
-				
+
 				// Set database status to failed when API returns error
-				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed, 
+				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
 					fmt.Sprintf("AYO API error (status: %.0f): %s", statusCode, message))
 				if updateErr != nil {
 					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
 				}
-				
+
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return
 			}
@@ -650,38 +688,38 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 // validateR2MP4URL validates that the R2 MP4 URL is accessible and not corrupted
 func validateR2MP4URL(url string) error {
 	log.Printf("🔍 VALIDATION: Checking R2 MP4 URL: %s", url)
-	
+
 	// Create HTTP client with timeout
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
-	
+
 	// Perform HEAD request to check if file exists and is accessible
 	req, err := http.NewRequest("HEAD", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %v", err)
 	}
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Check HTTP status code
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
-	
+
 	// Check Content-Type header for video/mp4
 	contentType := resp.Header.Get("Content-Type")
-	if contentType != "" && !strings.Contains(contentType, "video/mp4") && 
-	   !strings.Contains(contentType, "video/mpeg") && 
-	   !strings.Contains(contentType, "application/octet-stream") {
+	if contentType != "" && !strings.Contains(contentType, "video/mp4") &&
+		!strings.Contains(contentType, "video/mpeg") &&
+		!strings.Contains(contentType, "application/octet-stream") {
 		log.Printf("⚠️ WARNING: Unexpected content type for MP4 file: %s", contentType)
 		// Don't fail on content type as some CDNs may return generic types
 	}
-	
+
 	// Check Content-Length header to ensure file is not empty
 	contentLengthStr := resp.Header.Get("Content-Length")
 	if contentLengthStr != "" {
@@ -700,14 +738,14 @@ func validateR2MP4URL(url string) error {
 	} else {
 		log.Printf("⚠️ WARNING: No Content-Length header found")
 	}
-	
+
 	// Optional: Perform a partial download to check file header (first 32 bytes)
 	// This can help detect completely corrupted files
 	err = validateMP4Header(url, client)
 	if err != nil {
 		return fmt.Errorf("MP4 header validation failed: %v", err)
 	}
-	
+
 	log.Printf("✅ VALIDATION: R2 MP4 URL validation completed successfully")
 	return nil
 }
@@ -715,35 +753,35 @@ func validateR2MP4URL(url string) error {
 // validateMP4Header performs a partial download to check MP4 file header
 func validateMP4Header(url string, client *http.Client) error {
 	log.Printf("🔍 VALIDATION: Checking MP4 file header...")
-	
+
 	// Create request for first 32 bytes
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create header check request: %v", err)
 	}
-	
+
 	// Set Range header to download only first 32 bytes
 	req.Header.Set("Range", "bytes=0-31")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("header check request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Accept both 206 (Partial Content) and 200 (OK) responses
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
 		log.Printf("⚠️ WARNING: Range request not supported (HTTP %d), skipping header validation", resp.StatusCode)
 		return nil // Don't fail if range requests are not supported
 	}
-	
+
 	// Read the header bytes
 	header := make([]byte, 32)
 	n, err := resp.Body.Read(header)
 	if err != nil && n == 0 {
 		return fmt.Errorf("failed to read file header: %v", err)
 	}
-	
+
 	// Basic MP4 validation - check for common MP4 box types
 	// MP4 files typically start with 'ftyp' box
 	headerStr := string(header[4:8]) // bytes 4-7 should contain box type
@@ -751,13 +789,13 @@ func validateMP4Header(url string, client *http.Client) error {
 		log.Printf("✅ VALIDATION: Valid MP4 header detected (%s)", headerStr)
 		return nil
 	}
-	
+
 	// Check for other valid patterns that might indicate a valid file
 	if n >= 4 {
 		// Some files might have different structures, be less strict
 		log.Printf("⚠️ WARNING: MP4 header not immediately recognizable, but file appears accessible")
 		return nil
 	}
-	
+
 	return fmt.Errorf("invalid or corrupted MP4 header (read %d bytes)", n)
 }

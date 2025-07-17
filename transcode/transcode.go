@@ -395,3 +395,37 @@ func IsMP4File(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	return ext == ".mp4"
 }
+
+// GetVideoDuration returns the duration of a video file in seconds using ffprobe
+func GetVideoDuration(filePath string) (float64, error) {
+	// Check if input file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return 0, fmt.Errorf("video file does not exist: %s", filePath)
+	}
+
+	// Use ffprobe to get video duration
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		filePath)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get video duration using ffprobe: %v", err)
+	}
+
+	// Parse duration from output
+	durationStr := strings.TrimSpace(string(output))
+	if durationStr == "" {
+		return 0, fmt.Errorf("empty duration output from ffprobe")
+	}
+
+	// Convert string to float64
+	var duration float64
+	if _, err := fmt.Sscanf(durationStr, "%f", &duration); err != nil {
+		return 0, fmt.Errorf("failed to parse duration '%s': %v", durationStr, err)
+	}
+
+	return duration, nil
+}

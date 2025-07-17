@@ -1238,7 +1238,7 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 			r2_hls_path, r2_mp4_path, r2_hls_url, r2_mp4_url, 
 			r2_preview_mp4_path, r2_preview_mp4_url, r2_preview_png_path, r2_preview_png_url,
 			unique_id, order_detail_id, booking_id, raw_json, status, error, created_at, finished_at, uploaded_at,
-			size, duration, resolution, has_request, last_check_file, video_type, request_id
+			size, duration, resolution, has_request, last_check_file, video_type, request_id, start_time, end_time
 		FROM videos 
 		WHERE unique_id = ?
 	`, uniqueID).Scan(
@@ -1248,7 +1248,7 @@ func (s *SQLiteDB) GetVideoByUniqueID(uniqueID string) (*VideoMetadata, error) {
 		&video.UniqueID, &orderDetailID, &video.BookingID, &video.RawJSON, &status, &video.ErrorMessage,
 		&createdAt, &finishedAt, &uploadedAt,
 		&video.Size, &video.Duration, &resolution, &hasRequest, &lastCheckFile, &videoType,
-		&requestID,
+		&requestID, &video.StartTime, &video.EndTime,
 	)
 
 	if err != nil {

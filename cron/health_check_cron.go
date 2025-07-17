@@ -86,7 +86,7 @@ func (h *HealthCheckCron) runHealthCheck() {
 	}
 
 	// Check for error in response
-	if errorValue, ok := result["error"]; ok {
+	if errorValue, ok := result["is_error"]; ok {
 		if errorValue == false {
 			log.Printf("Health check successful (took %v)", duration)
 			

@@ -680,6 +680,15 @@
           <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">Select which quality presets should be available for transcoding</small>
         </div>
         
+        <h4 style="color: #273c75; margin-top: 2rem;">Video Processing Configuration</h4>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="enable-video-duration-check">
+            Enable Video Duration Check
+          </label>
+          <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">When enabled, videos with insufficient duration will be rejected and marked as unavailable. Default: disabled</small>
+        </div>
+        
         <h4 style="color: #273c75; margin-top: 2rem;">Disk Manager Configuration</h4>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
           <div class="form-group">
@@ -1459,6 +1468,10 @@ async function loadSystemConfig() {
       checkbox.checked = enabledQualities.includes(checkbox.value);
     });
     
+    // Update video duration check checkbox
+    const enableVideoDurationCheck = systemConfig['enable_video_duration_check'] === 'true';
+    document.getElementById('enable-video-duration-check').checked = enableVideoDurationCheck;
+    
     // Load disk manager configuration
     await loadDiskManagerConfig();
     
@@ -1521,6 +1534,9 @@ async function saveSystemConfig() {
       enabledQualities.push(checkbox.value);
     });
     configData['enabled_qualities'] = enabledQualities.join(',');
+    
+    // Get video duration check setting
+    configData['enable_video_duration_check'] = document.getElementById('enable-video-duration-check').checked.toString();
     
     // Validate data
     if (configData['booking_worker_concurrency'] < 1 || configData['booking_worker_concurrency'] > 10 ||

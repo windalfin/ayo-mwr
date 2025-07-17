@@ -59,7 +59,6 @@ func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
 	return cameras, nil
 }
 
-
 // NewSQLiteDB creates a new SQLite database instance
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 	db, err := sql.Open("sqlite3", dbPath)
@@ -111,18 +110,18 @@ func initTables(db *sql.DB) error {
 	}
 
 	// Create arduino_config table (single-row table, id always 1)
-    _, err = db.Exec(`
+	_, err = db.Exec(`
         CREATE TABLE IF NOT EXISTS arduino_config (
             id INTEGER PRIMARY KEY CHECK(id = 1),
             port TEXT,
             baud_rate INTEGER
         )
     `)
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    // Create storage_disks table
+	// Create storage_disks table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS storage_disks (
 			id TEXT PRIMARY KEY,
@@ -435,6 +434,8 @@ func initTables(db *sql.DB) error {
 		{"video_request_worker_concurrency", "3", "int"},
 		{"pending_task_worker_concurrency", "5", "int"},
 		{"enabled_qualities", "1080p,720p,480p,360p", "string"},
+		// Video Duration Check Configuration
+		{"enable_video_duration_check", "false", "boolean"},
 		// Disk Manager Configuration
 		{"minimum_free_space_gb", "100", "int"},
 		{"priority_external", "1", "int"},
@@ -497,7 +498,7 @@ func (s *SQLiteDB) SetSystemConfig(config SystemConfig) error {
 		return fmt.Errorf("error setting system config: %v", err)
 	}
 
-	log.Printf("⚙️ CONFIG: Updated system config '%s' = '%s' (type: %s) by %s", 
+	log.Printf("⚙️ CONFIG: Updated system config '%s' = '%s' (type: %s) by %s",
 		config.Key, config.Value, config.Type, config.UpdatedBy)
 	return nil
 }
@@ -1367,7 +1368,7 @@ func (s *SQLiteDB) CreateStorageDisk(disk StorageDisk) error {
 		INSERT INTO storage_disks (
 			id, path, total_space_gb, available_space_gb, is_active, priority_order, last_scan, created_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		disk.ID, disk.Path, disk.TotalSpaceGB, disk.AvailableSpaceGB, 
+		disk.ID, disk.Path, disk.TotalSpaceGB, disk.AvailableSpaceGB,
 		disk.IsActive, disk.PriorityOrder, disk.LastScan, disk.CreatedAt,
 	)
 	return err
@@ -1438,10 +1439,10 @@ func (s *SQLiteDB) UpdateDiskSpace(id string, totalGB, availableGB int64) error 
 
 // UpdateDiskPriority updates the priority_order for a storage disk
 func (s *SQLiteDB) UpdateDiskPriority(id string, priority int) error {
-    _, err := s.db.Exec(`
+	_, err := s.db.Exec(`
         UPDATE storage_disks SET priority_order = ?, last_scan = ? WHERE id = ?
     `, priority, time.Now(), id)
-    return err
+	return err
 }
 
 // SetActiveDisk sets a disk as active and deactivates all others
@@ -1764,11 +1765,11 @@ func (s *SQLiteDB) CreateOrUpdateBooking(booking BookingData) error {
 			booking.LastSyncAt,
 			booking.BookingID,
 		)
-		
+
 		if err != nil {
 			return fmt.Errorf("error updating booking: %v", err)
 		}
-		
+
 		log.Printf("📅 BOOKING: Updated booking %s (status: %s)", booking.BookingID, booking.Status)
 	} else {
 		// Create new booking
@@ -1793,11 +1794,11 @@ func (s *SQLiteDB) CreateOrUpdateBooking(booking BookingData) error {
 			booking.RawJSON,
 			booking.LastSyncAt,
 		)
-		
+
 		if err != nil {
 			return fmt.Errorf("error creating booking: %v", err)
 		}
-		
+
 		log.Printf("📅 BOOKING: Created new booking %s (status: %s)", booking.BookingID, booking.Status)
 	}
 
@@ -1912,7 +1913,7 @@ func (s *SQLiteDB) GetBookingsByStatus(status string) ([]BookingData, error) {
 // UpdateBookingStatus updates only the status of a booking
 func (s *SQLiteDB) UpdateBookingStatus(bookingID string, status string) error {
 	now := time.Now()
-	
+
 	result, err := s.db.Exec(`
 		UPDATE bookings SET 
 			status = ?, 
@@ -1920,7 +1921,7 @@ func (s *SQLiteDB) UpdateBookingStatus(bookingID string, status string) error {
 			last_sync_at = ?
 		WHERE booking_id = ?`,
 		status, now, now, bookingID)
-	
+
 	if err != nil {
 		return fmt.Errorf("error updating booking status: %v", err)
 	}
@@ -1944,7 +1945,7 @@ func (s *SQLiteDB) DeleteOldBookings(olderThan time.Time) error {
 		DELETE FROM bookings 
 		WHERE created_at < ?`,
 		olderThan)
-	
+
 	if err != nil {
 		return fmt.Errorf("error deleting old bookings: %v", err)
 	}
@@ -2044,12 +2045,12 @@ func (s *SQLiteDB) UpdateCameraConfig(cameraName string, resolution string, fram
 			height = ?
 		WHERE name = ?`,
 		resolution, frameRate, autoDelete, width, height, cameraName)
-	
+
 	if err != nil {
 		return fmt.Errorf("error updating camera config: %v", err)
 	}
-	
-	log.Printf("📹 CAMERA: Updated config for %s - Resolution: %s (%dx%d), FrameRate: %d, AutoDelete: %d", 
+
+	log.Printf("📹 CAMERA: Updated config for %s - Resolution: %s (%dx%d), FrameRate: %d, AutoDelete: %d",
 		cameraName, resolution, width, height, frameRate, autoDelete)
 	return nil
 }
@@ -2059,25 +2060,25 @@ func (s *SQLiteDB) UpdateCameraConfig(cameraName string, resolution string, fram
 func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
 	startTime := time.Now()
 	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup of stuck videos and request_ids...")
-	
+
 	// Part 1: Change stuck videos to failed status using direct SQL
 	// Part 2: Clear request_ids for Ready videos using direct SQL
-	
+
 	var totalStuckVideos int
-	
+
 	// === PART 1: Process stuck videos (change status to failed) ===
 	log.Println("🧹 STARTUP CLEANUP: Part 1 - Processing stuck videos...")
-	
+
 	// Use direct SQL for efficiency - update all stuck videos to failed status
 	result, err := s.db.Exec(`
 		UPDATE videos 
 		SET status = ?, 
 		    error = ?
 		WHERE status IN (?, ?, ?, ?, ?)
-	`, StatusFailed, 
+	`, StatusFailed,
 		"Video stuck during service restart - marked as failed",
 		StatusPending, StatusProcessing, StatusRecording, StatusInitial, StatusUploading)
-	
+
 	if err != nil {
 		log.Printf("❌ STARTUP CLEANUP: Error updating stuck videos: %v", err)
 	} else {
@@ -2089,19 +2090,19 @@ func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
 			log.Printf("✅ STARTUP CLEANUP: No stuck videos found")
 		}
 	}
-	
+
 	// === PART 2: Process stuck request_ids (for Ready videos) ===
 	log.Println("🧹 STARTUP CLEANUP: Part 2 - Processing stuck request_ids...")
-	
+
 	var stuckRequestCount int
-	
+
 	// Use direct SQL for efficiency - clear all request_ids for Ready videos
 	result, err = s.db.Exec(`
 		UPDATE videos 
 		SET request_id = '' 
 		WHERE status = ? AND request_id != '' AND request_id IS NOT NULL
 	`, StatusReady)
-	
+
 	if err != nil {
 		log.Printf("❌ STARTUP CLEANUP: Error clearing stuck request_ids: %v", err)
 	} else {
@@ -2113,11 +2114,11 @@ func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
 			log.Printf("✅ STARTUP CLEANUP: No stuck request_ids found for Ready videos")
 		}
 	}
-	
+
 	duration := time.Since(startTime)
-	
+
 	if totalStuckVideos > 0 || stuckRequestCount > 0 {
-		log.Printf("✅ STARTUP CLEANUP: COMPLETED! Found %d stuck videos, %d stuck request_ids in %v", 
+		log.Printf("✅ STARTUP CLEANUP: COMPLETED! Found %d stuck videos, %d stuck request_ids in %v",
 			totalStuckVideos, stuckRequestCount, duration)
 		log.Printf("🧹 STARTUP CLEANUP: Part 1 - %d stuck videos marked as failed", totalStuckVideos)
 		log.Printf("🧹 STARTUP CLEANUP: Part 2 - %d stuck request_ids cleared", stuckRequestCount)
@@ -2125,8 +2126,6 @@ func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
 	} else {
 		log.Printf("✅ STARTUP CLEANUP: No stuck videos or request_ids found - system is clean! (completed in %v)", duration)
 	}
-	
+
 	return nil
 }
-
-

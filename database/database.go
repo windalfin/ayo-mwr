@@ -183,7 +183,7 @@ const (
 	ConfigPendingTaskWorkerConcurrency  = "pending_task_worker_concurrency"
 	ConfigEnabledQualities              = "enabled_qualities"
 	// Video Processing Configuration
-	ConfigEnableVideoDurationCheck      = "enable_video_duration_check"
+	ConfigEnableVideoDurationCheck = "enable_video_duration_check"
 	// Disk Manager Configuration
 	ConfigMinimumFreeSpaceGB     = "minimum_free_space_gb"
 	ConfigPriorityExternal       = "priority_external"
@@ -218,7 +218,7 @@ type Database interface {
 	// Camera configuration operations
 	GetCameras() ([]CameraConfig, error)
 	InsertCameras(cameras []CameraConfig) error
-	UpdateCameraConfig(cameraName string, resolution string, frameRate int, autoDelete int, width int, height int) error
+	UpdateCameraConfig(cameraName string, frameRate int, autoDelete int) error
 
 	// Storage disk operations
 	CreateStorageDisk(disk StorageDisk) error

@@ -119,6 +119,10 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 			// System configuration endpoints
 			admin.GET("/system-config", s.getSystemConfig)
 			admin.PUT("/system-config", s.updateSystemConfig)
+			
+			// Disk manager configuration endpoints
+			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
+			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
 		}
 	}
 }

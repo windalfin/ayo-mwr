@@ -342,7 +342,7 @@ func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error)
 }
 
 // SaveVideoAvailable notifies AYO API that a video is available
-func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, imagePath, uniqueID string, startTime, endTime time.Time) (map[string]interface{}, error) {
+func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, imagePath, uniqueID string, startTime, endTime time.Time, duration int) (map[string]interface{}, error) {
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":           c.apiToken,
@@ -354,6 +354,7 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 		"unique_id":       uniqueID,
 		"start_timestamp": startTime.UTC().Format(time.RFC3339),
 		"end_timestamp":   endTime.UTC().Format(time.RFC3339),
+		"duration":        duration,
 	}
 
 	// Generate signature
@@ -881,7 +882,7 @@ func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) 
 }
 
 // MarkVideoRequestsInvalid marks multiple video requests as invalid
-func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[string]interface{}, error) {
+func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string, incomplete bool) (map[string]interface{}, error) {
 	// Validate input
 	if len(videoRequestIDs) == 0 {
 		return nil, fmt.Errorf("at least one video request ID must be provided")
@@ -915,7 +916,12 @@ func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string) (map[
 	}
 
 	// Build the URL
-	endpoint := fmt.Sprintf("%s/api/v1/video-request-invalid", c.baseURL)
+	var endpoint string
+	if incomplete {
+		endpoint = fmt.Sprintf("%s/api/v1/video-request-incompleted", c.baseURL)
+	} else {
+		endpoint = fmt.Sprintf("%s/api/v1/video-request-invalid", c.baseURL)
+	}
 
 	// Print full URL for debugging/Postman testing
 	fmt.Printf("[DEBUG] API Request URL (POST): %s\n", endpoint)
@@ -972,7 +978,7 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 	params := map[string]interface{}{
 		"token":      c.apiToken,
 		"venue_code": c.venueCode,
-		"unique_ids": uniqueIDs,
+		"unique_ids": strings.Join(uniqueIDs, ","),
 	}
 
 	// Generate signature
@@ -983,6 +989,7 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 
 	// Add signature to parameters
 	params["signature"] = signature
+	params["unique_ids"] = uniqueIDs
 
 	// Prepare the request body
 	body, err := json.Marshal(params)
@@ -1020,6 +1027,9 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	// Print full response for debugging/Postman testing
+	fmt.Printf("[DEBUG] API Response: %s\n", string(respBody))
+	fmt.Printf("[DEBUG] API Response Status Code: %d\n", resp.StatusCode)
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned error %d: %s", resp.StatusCode, string(respBody))

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"github.com/google/uuid"
 )
@@ -41,13 +42,15 @@ const (
 // DiskManager handles storage disk management and selection
 // It also supports automatic discovery of new storage disks (Linux only).
 type DiskManager struct {
-	db database.Database
+	db            database.Database
+	configService *config.SystemConfigService
 }
 
 // NewDiskManager creates a new disk manager instance
 func NewDiskManager(db database.Database) *DiskManager {
 	return &DiskManager{
-		db: db,
+		db:            db,
+		configService: config.NewSystemConfigService(db),
 	}
 }
 
@@ -99,6 +102,13 @@ func (dm *DiskManager) ScanAndUpdateDiskSpace() error {
 func (dm *DiskManager) SelectActiveDisk() error {
 	log.Println("Selecting active disk for recording...")
 
+	// Get minimum free space from configuration
+	minimumFreeSpaceGB, _, _, _, _, _, err := dm.configService.GetDiskManagerConfig()
+	if err != nil {
+		log.Printf("Warning: Failed to get disk manager config, using default minimum free space: %v", err)
+		minimumFreeSpaceGB = MinimumFreeSpaceGB // Fallback to constant
+	}
+
 	disks, err := dm.db.GetStorageDisks()
 	if err != nil {
 		return fmt.Errorf("failed to get storage disks: %v", err)
@@ -107,14 +117,14 @@ func (dm *DiskManager) SelectActiveDisk() error {
 	// Find the first disk with sufficient free space (sorted by priority)
 	var selectedDisk *database.StorageDisk
 	for _, disk := range disks {
-		if disk.AvailableSpaceGB >= MinimumFreeSpaceGB {
+		if disk.AvailableSpaceGB >= int64(minimumFreeSpaceGB) {
 			selectedDisk = &disk
 			break
 		}
 	}
 
 	if selectedDisk == nil {
-		return fmt.Errorf("no disk has sufficient free space (minimum %dGB required)", MinimumFreeSpaceGB)
+		return fmt.Errorf("no disk has sufficient free space (minimum %dGB required)", minimumFreeSpaceGB)
 	}
 
 	// Set the selected disk as active
@@ -217,6 +227,13 @@ func (dm *DiskManager) GetRecordingPath(cameraName string) (string, string, erro
 
 // CheckDiskHealth verifies all disks are accessible and reports issues
 func (dm *DiskManager) CheckDiskHealth() error {
+	// Get minimum free space from configuration
+	minimumFreeSpaceGB, _, _, _, _, _, err := dm.configService.GetDiskManagerConfig()
+	if err != nil {
+		log.Printf("Warning: Failed to get disk manager config, using default minimum free space: %v", err)
+		minimumFreeSpaceGB = MinimumFreeSpaceGB // Fallback to constant
+	}
+
 	disks, err := dm.db.GetStorageDisks()
 	if err != nil {
 		return fmt.Errorf("failed to get storage disks: %v", err)
@@ -232,9 +249,9 @@ func (dm *DiskManager) CheckDiskHealth() error {
 		}
 
 		// Check if disk is nearly full
-		if disk.AvailableSpaceGB < MinimumFreeSpaceGB {
+		if disk.AvailableSpaceGB < int64(minimumFreeSpaceGB) {
 			issues = append(issues, fmt.Sprintf("Disk %s is nearly full: %dGB available (minimum %dGB)",
-				disk.ID, disk.AvailableSpaceGB, MinimumFreeSpaceGB))
+				disk.ID, disk.AvailableSpaceGB, minimumFreeSpaceGB))
 		}
 
 		// Check if disk hasn't been scanned recently
@@ -561,21 +578,33 @@ func (dm *DiskManager) isRootFilesystem(mountPath string) bool {
 
 // getAutoPriority returns the automatic priority for a given disk type with size-based adjustment
 func (dm *DiskManager) getAutoPriority(diskType DiskType, sizeGB int64) int {
+	// Get priority configuration from database
+	_, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem, err := dm.configService.GetDiskManagerConfig()
+	if err != nil {
+		log.Printf("Warning: Failed to get disk manager config, using default priorities: %v", err)
+		// Fallback to constants
+		priorityExternal = PriorityExternal
+		priorityMountedStorage = PriorityMountedStorage
+		priorityInternalNVMe = PriorityInternalNVMe
+		priorityInternalSATA = PriorityInternalSATA
+		priorityRootFilesystem = PriorityRootFilesystem
+	}
+
 	basePriority := 0
 	
 	switch diskType {
 	case DiskTypeExternal:
-		basePriority = PriorityExternal
+		basePriority = priorityExternal
 	case DiskTypeMountedStorage:
-		basePriority = PriorityMountedStorage
+		basePriority = priorityMountedStorage
 	case DiskTypeInternalNVMe:
-		basePriority = PriorityInternalNVMe
+		basePriority = priorityInternalNVMe
 	case DiskTypeInternalSATA:
-		basePriority = PriorityInternalSATA
+		basePriority = priorityInternalSATA
 	case DiskTypeRootFilesystem:
-		basePriority = PriorityRootFilesystem
+		basePriority = priorityRootFilesystem
 	default:
-		basePriority = PriorityInternalSATA // Default to SATA priority for unknown types
+		basePriority = priorityInternalSATA // Default to SATA priority for unknown types
 	}
 
 	// Apply size-based adjustment within the same type range
@@ -591,22 +620,36 @@ func (dm *DiskManager) getAutoPriority(diskType DiskType, sizeGB int64) int {
 
 	finalPriority := basePriority + sizeAdjustment
 	
-	// Ensure we don't cross type boundaries
+	// Ensure we don't cross type boundaries - use configured priorities as boundaries
+	// Allow some flexibility around the base priority (±20)
 	switch diskType {
 	case DiskTypeExternal:
-		if finalPriority > 100 { finalPriority = 100 }
-		if finalPriority < 1 { finalPriority = 1 }
+		minBound := priorityExternal - 20
+		maxBound := priorityExternal + 20
+		if minBound < 1 { minBound = 1 }
+		if finalPriority > maxBound { finalPriority = maxBound }
+		if finalPriority < minBound { finalPriority = minBound }
 	case DiskTypeMountedStorage:
-		if finalPriority > 99 { finalPriority = 99 }
-		if finalPriority < 50 { finalPriority = 50 }
+		minBound := priorityMountedStorage - 20
+		maxBound := priorityMountedStorage + 20
+		if minBound < 1 { minBound = 1 }
+		if finalPriority > maxBound { finalPriority = maxBound }
+		if finalPriority < minBound { finalPriority = minBound }
 	case DiskTypeInternalNVMe:
-		if finalPriority > 200 { finalPriority = 200 }
-		if finalPriority < 101 { finalPriority = 101 }
+		minBound := priorityInternalNVMe - 20
+		maxBound := priorityInternalNVMe + 20
+		if minBound < 1 { minBound = 1 }
+		if finalPriority > maxBound { finalPriority = maxBound }
+		if finalPriority < minBound { finalPriority = minBound }
 	case DiskTypeInternalSATA:
-		if finalPriority > 300 { finalPriority = 300 }
-		if finalPriority < 201 { finalPriority = 201 }
+		minBound := priorityInternalSATA - 20
+		maxBound := priorityInternalSATA + 20
+		if minBound < 1 { minBound = 1 }
+		if finalPriority > maxBound { finalPriority = maxBound }
+		if finalPriority < minBound { finalPriority = minBound }
 	case DiskTypeRootFilesystem:
-		if finalPriority < 500 { finalPriority = 500 }
+		minBound := priorityRootFilesystem
+		if finalPriority < minBound { finalPriority = minBound }
 	}
 
 	return finalPriority

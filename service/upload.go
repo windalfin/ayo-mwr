@@ -43,7 +43,7 @@ func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *c
 	if ayoClient == nil {
 		log.Printf("⚠️ WARNING: UploadService initialized without AYO API client - API notifications will be disabled")
 	}
-	
+
 	return &UploadService{
 		db:           db,
 		r2Storage:    r2Storage,
@@ -215,10 +215,10 @@ func (s *UploadService) StartUploadWorker() {
 			if err != nil {
 				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
 			}
-			
+
 			// Verifikasi dan pastikan field-field penting tidak kosong
-			if video.CameraName == "" || video.LocalPath == "" || video.UniqueID == "" || 
-			   video.OrderDetailID == "" || video.BookingID == "" {
+			if video.CameraName == "" || video.LocalPath == "" || video.UniqueID == "" ||
+				video.OrderDetailID == "" || video.BookingID == "" {
 				// Ambil data lengkap dari database
 				fullVideo, err := s.db.GetVideo(video.ID)
 				if err != nil {
@@ -226,7 +226,7 @@ func (s *UploadService) StartUploadWorker() {
 				} else if fullVideo != nil {
 					// Update field yang kosong
 					updateNeeded := false
-					
+
 					if video.CameraName == "" && fullVideo.CameraName != "" {
 						video.CameraName = fullVideo.CameraName
 						updateNeeded = true
@@ -247,7 +247,7 @@ func (s *UploadService) StartUploadWorker() {
 						video.BookingID = fullVideo.BookingID
 						updateNeeded = true
 					}
-					
+
 					// Update jika ada field yang perlu diperbarui
 					if updateNeeded {
 						// Gunakan dereferensi pointer (*video) untuk mengakses nilai
@@ -263,12 +263,12 @@ func (s *UploadService) StartUploadWorker() {
 
 			// Persiapkan data untuk update status
 			now := time.Now()
-			
+
 			// Ambil data video lengkap
 			fullVideoData, err := s.db.GetVideo(video.ID)
 			if err != nil {
 				log.Printf("Error getting complete video data: %v", err)
-				
+
 				// Fallback ke UpdateVideoStatus standar jika gagal mendapatkan data lengkap
 				err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
 				if err != nil {
@@ -279,12 +279,12 @@ func (s *UploadService) StartUploadWorker() {
 				fullVideoData.Status = database.StatusReady
 				fullVideoData.ErrorMessage = ""
 				fullVideoData.FinishedAt = &now
-				
+
 				// Pastikan UploadedAt juga diset
 				if fullVideoData.UploadedAt == nil {
 					fullVideoData.UploadedAt = &now
 				}
-				
+
 				// Update video dengan semua data
 				err = s.db.UpdateVideo(*fullVideoData)
 				if err != nil {
@@ -293,7 +293,7 @@ func (s *UploadService) StartUploadWorker() {
 					log.Printf("Successfully updated video %s to ready status with complete data", video.ID)
 				}
 			}
-			
+
 			log.Printf("Video %s successfully uploaded to R2 storage at %s", video.ID, now.Format(time.RFC3339))
 			s.removeFromQueue(video.ID)
 		}
@@ -419,12 +419,12 @@ func (s *UploadService) ProcessVideoFile(filePath string) error {
 
 	// Create metadata
 	metadata := database.VideoMetadata{
-		ID:        videoID,
-		CreatedAt: time.Now(),
-		Status:    database.StatusProcessing,
-		Size:      fileInfo.Size(),
-		LocalPath: filePath,
-		CameraName:  "camera_A", // Could be parameterized
+		ID:         videoID,
+		CreatedAt:  time.Now(),
+		Status:     database.StatusProcessing,
+		Size:       fileInfo.Size(),
+		LocalPath:  filePath,
+		CameraName: "camera_A", // Could be parameterized
 	}
 
 	// Add to database
@@ -472,25 +472,25 @@ func (s *UploadService) checkInternetConnectivity() bool {
 // This method retrieves video data from database and calls the real AYO API
 func (s *UploadService) NotifyAyoAPI(uniqueID, mp4URL, previewURL, thumbnailURL string, duration float64) error {
 	log.Printf("📡 AYO API: Starting notification for video %s", uniqueID)
-	
+
 	// Get video data from database to retrieve booking information
 	video, err := s.db.GetVideo(uniqueID)
 	if err != nil {
 		return fmt.Errorf("failed to get video data from database: %v", err)
 	}
-	
+
 	if video == nil {
 		return fmt.Errorf("video not found in database: %s", uniqueID)
 	}
-	
+
 	// Check if we have required booking information
 	if video.BookingID == "" {
 		return fmt.Errorf("no booking ID found for video: %s", uniqueID)
 	}
-	
+
 	// Use actual start and end times from the clip booking (stored in database)
 	var startTime, endTime time.Time
-	
+
 	if video.StartTime != nil && video.EndTime != nil {
 		// Use actual booking clip times
 		startTime = *video.StartTime
@@ -501,19 +501,19 @@ func (s *UploadService) NotifyAyoAPI(uniqueID, mp4URL, previewURL, thumbnailURL 
 		startTime = video.CreatedAt
 		endTime = startTime.Add(time.Duration(duration) * time.Second)
 		log.Printf("📡 AYO API: ⚠️ Using fallback calculated times (no clip times in database)")
-		
+
 		// If we have finished time, use that for more accurate end time
 		if video.FinishedAt != nil {
 			endTime = *video.FinishedAt
 		}
 	}
-	
+
 	// Determine video type (default to "clip" if not specified)
 	videoType := video.VideoType
 	if videoType == "" {
 		videoType = "clip"
 	}
-	
+
 	log.Printf("📡 AYO API: Calling SaveVideoAvailable...")
 	log.Printf("📡 AYO API: - Booking ID: %s", video.BookingID)
 	log.Printf("📡 AYO API: - Video Type: %s", videoType)
@@ -522,27 +522,28 @@ func (s *UploadService) NotifyAyoAPI(uniqueID, mp4URL, previewURL, thumbnailURL 
 	log.Printf("📡 AYO API: - Unique ID: %s", uniqueID)
 	log.Printf("📡 AYO API: - Start Time: %s", startTime.Format(time.RFC3339))
 	log.Printf("📡 AYO API: - End Time: %s", endTime.Format(time.RFC3339))
-	
+
 	// Check if AYO client is available
 	if s.ayoClient == nil {
 		return fmt.Errorf("AYO API client not initialized")
 	}
-	
+
 	// Call the actual AYO API
 	_, err = s.ayoClient.SaveVideoAvailable(
 		video.BookingID, // bookingID
 		videoType,       // videoType
-		previewURL,      // previewPath  
+		previewURL,      // previewPath
 		thumbnailURL,    // imagePath
 		uniqueID,        // uniqueID
 		startTime,       // startTime
 		endTime,         // endTime
+		int(duration),   // duration
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("AYO API call failed: %v", err)
 	}
-	
+
 	log.Printf("📡 AYO API: ✅ Successfully notified AYO API for video %s", uniqueID)
 	return nil
 }

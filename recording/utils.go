@@ -14,6 +14,8 @@ import (
 
 // FindSegmentsInRange returns a sorted list of video files (.mp4, .ts, .mkv, etc.) in inputPath whose timestamps fall within [startTime, endTime].
 func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]string, error) {
+	// endtime kasih toleransi 1 menit
+	endTime = endTime.Add(1 * time.Minute)
 	var matches []struct {
 		path string
 		ts   time.Time
@@ -29,14 +31,14 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		if entry.IsDir() {
 			continue
 		}
-		
+
 		base := entry.Name()
 		baseLower := strings.ToLower(base)
-		
+
 		// Single pass extension detection - optimized for performance
 		var fileExt string
 		var isVideo bool
-		
+
 		// Optimized extension checking - check most common first
 		switch {
 		case strings.HasSuffix(baseLower, ".mp4"):
@@ -64,23 +66,23 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 			fileExt = ".m4v"
 			isVideo = true
 		}
-		
+
 		if !isVideo {
 			continue
 		}
-		
+
 		var ts time.Time
-		
+
 		if fileExt == ".ts" {
 			// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
 			if !strings.HasPrefix(base, "segment_") {
 				continue // skip non-segment files
 			}
-			
+
 			// Remove prefix and suffix
 			timeStr := strings.TrimPrefix(base, "segment_")
 			timeStr = strings.TrimSuffix(timeStr, fileExt)
-			
+
 			// Parse timestamp
 			ts, err = time.ParseInLocation("20060102_150405", timeStr, time.Local)
 			if err != nil {
@@ -182,10 +184,10 @@ func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Tim
 // parseTimestampFromFilename extracts timestamp from video filename (any extension)
 func parseTimestampFromFilename(filename string) (time.Time, error) {
 	filenameLower := strings.ToLower(filename)
-	
+
 	// Single pass extension detection - optimized for performance
 	var fileExt string
-	
+
 	// Optimized extension checking - check most common first
 	switch {
 	case strings.HasSuffix(filenameLower, ".mp4"):
@@ -207,17 +209,17 @@ func parseTimestampFromFilename(filename string) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unsupported file extension: %s", filename)
 	}
-	
+
 	if fileExt == ".ts" {
 		// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
 		if !strings.HasPrefix(filename, "segment_") {
 			return time.Time{}, fmt.Errorf("invalid .ts filename format: %s", filename)
 		}
-		
+
 		// Remove prefix and suffix
 		timeStr := strings.TrimPrefix(filename, "segment_")
 		timeStr = strings.TrimSuffix(timeStr, fileExt)
-		
+
 		return time.ParseInLocation("20060102_150405", timeStr, time.Local)
 	} else {
 		// Parse MP4/other formats: camera_name_YYYYMMDD_HHMMSS.ext
@@ -283,13 +285,13 @@ func ValidateSegmentPaths(cameraName string, storagePaths []string) error {
 				nameLower := strings.ToLower(entry.Name())
 				switch {
 				case strings.HasSuffix(nameLower, ".mp4"),
-					 strings.HasSuffix(nameLower, ".ts"),
-					 strings.HasSuffix(nameLower, ".mkv"),
-					 strings.HasSuffix(nameLower, ".avi"),
-					 strings.HasSuffix(nameLower, ".mov"),
-					 strings.HasSuffix(nameLower, ".wmv"),
-					 strings.HasSuffix(nameLower, ".webm"),
-					 strings.HasSuffix(nameLower, ".m4v"):
+					strings.HasSuffix(nameLower, ".ts"),
+					strings.HasSuffix(nameLower, ".mkv"),
+					strings.HasSuffix(nameLower, ".avi"),
+					strings.HasSuffix(nameLower, ".mov"),
+					strings.HasSuffix(nameLower, ".wmv"),
+					strings.HasSuffix(nameLower, ".webm"),
+					strings.HasSuffix(nameLower, ".m4v"):
 					totalSegments++
 				}
 			}

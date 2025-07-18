@@ -113,16 +113,16 @@ func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName
 
 // Global variables untuk dynamic semaphore management
 var (
-	bookingCronMutex sync.RWMutex
+	bookingCronMutex            sync.RWMutex
 	currentBookingMaxConcurrent int
-	currentBookingSemaphore *semaphore.Weighted
+	currentBookingSemaphore     *semaphore.Weighted
 )
 
 // updateBookingConcurrency updates the semaphore with new concurrency value
 func updateBookingConcurrency(newMaxConcurrent int) {
 	bookingCronMutex.Lock()
 	defer bookingCronMutex.Unlock()
-	
+
 	if currentBookingMaxConcurrent != newMaxConcurrent {
 		log.Printf("🔄 BOOKING-CRON: Updating concurrency from %d to %d", currentBookingMaxConcurrent, newMaxConcurrent)
 		currentBookingMaxConcurrent = newMaxConcurrent
@@ -229,10 +229,10 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 		log.Printf("Warning: Failed to reload system config: %v", err)
 	}
 	updateBookingConcurrency(cfg.BookingWorkerConcurrency)
-	
+
 	// Get current semaphore and max concurrent settings
-	globalSemaphore , maxConcurrent := getBookingConcurrencySettings()
-	
+	globalSemaphore, maxConcurrent := getBookingConcurrencySettings()
+
 	// Get cron run ID untuk tracking
 	processingMutex.Lock()
 	cronCounter++
@@ -262,7 +262,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 	// Process bookings menggunakan global semaphore
 	var wg sync.WaitGroup
-	
+
 	// Count valid bookings yang akan diproses
 	validBookings := 0
 	for _, bookingItem := range bookingsData {
@@ -271,7 +271,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			validBookings++
 		}
 	}
-	
+
 	log.Printf("📊 CRON-RUN-%d: %d dari %d bookings memenuhi syarat untuk diproses", currentCronID, validBookings, len(bookingsData))
 
 	// Process each booking from database
@@ -419,7 +419,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 			// Record start time untuk menghitung waktu tunggu
 			waitStartTime := time.Now()
-			
+
 			if err := globalSemaphore.Acquire(context.Background(), 1); err != nil {
 				log.Printf("❌ CRON-RUN-%d: Error acquiring global semaphore for booking %s: %v", cronID, bookingID, err)
 				return

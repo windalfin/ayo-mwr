@@ -354,7 +354,7 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 		"unique_id":       uniqueID,
 		"start_timestamp": startTime.UTC().Format(time.RFC3339),
 		"end_timestamp":   endTime.UTC().Format(time.RFC3339),
-		"duration":        duration,
+		"duration":        fmt.Sprintf("%d", duration),
 	}
 
 	// Generate signature

@@ -377,43 +377,43 @@ func (s *Server) updateCamerasConfig(c *gin.Context) {
 // ---------- Arduino handlers ----------
 // GET /api/arduino-status
 func (s *Server) getArduinoStatus(c *gin.Context) {
-    status := signaling.GetArduinoStatus()
-    c.JSON(200, status)
+	status := signaling.GetArduinoStatus()
+	c.JSON(200, status)
 }
 
 // PUT /api/admin/arduino-config
 type arduinoConfigRequest struct {
-    Port     string `json:"port"`
-    BaudRate int    `json:"baud_rate"`
+	Port     string `json:"port"`
+	BaudRate int    `json:"baud_rate"`
 }
 
 func (s *Server) updateArduinoConfig(c *gin.Context) {
-    var req arduinoConfigRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        c.JSON(400, gin.H{"error": "invalid json"})
-        return
-    }
-    if req.Port == "" || req.BaudRate == 0 {
-        c.JSON(400, gin.H{"error": "port and baud_rate required"})
-        return
-    }
-    // persist to DB if possible
-    if sqlDB, ok := s.db.(*dbmod.SQLiteDB); ok {
-        if err := sqlDB.UpsertArduinoConfig(req.Port, req.BaudRate); err != nil {
-            c.JSON(500, gin.H{"error": err.Error()})
-            return
-        }
-    }
-    // update in-memory config
-    s.config.ArduinoCOMPort = req.Port
-    s.config.ArduinoBaudRate = req.BaudRate
-    // reload arduino (may fail if device not present)
-    if err := signaling.ReloadArduino(s.config); err != nil {
-        log.Printf("[WARN] Arduino reload failed: %v", err)
-        c.JSON(200, gin.H{"status": "saved", "connected": false, "message": "Config saved but device not connected", "error": err.Error()})
-        return
-    }
-    c.JSON(200, gin.H{"status": "updated and reloaded", "connected": true})
+	var req arduinoConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid json"})
+		return
+	}
+	if req.Port == "" || req.BaudRate == 0 {
+		c.JSON(400, gin.H{"error": "port and baud_rate required"})
+		return
+	}
+	// persist to DB if possible
+	if sqlDB, ok := s.db.(*dbmod.SQLiteDB); ok {
+		if err := sqlDB.UpsertArduinoConfig(req.Port, req.BaudRate); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	// update in-memory config
+	s.config.ArduinoCOMPort = req.Port
+	s.config.ArduinoBaudRate = req.BaudRate
+	// reload arduino (may fail if device not present)
+	if err := signaling.ReloadArduino(s.config); err != nil {
+		log.Printf("[WARN] Arduino reload failed: %v", err)
+		c.JSON(200, gin.H{"status": "saved", "connected": false, "message": "Config saved but device not connected", "error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "updated and reloaded", "connected": true})
 }
 
 func (s *Server) reloadCameras(c *gin.Context) {
@@ -454,19 +454,19 @@ func (s *Server) reloadCameras(c *gin.Context) {
 	}
 
 	// Build desired set and start any new workers
-current := make(map[string]struct{})
-for i, cam := range newCams {
-    current[cam.Name] = struct{}{}
-    recording.StartCamera(s.config, cam, i)
-}
-// Stop workers that are no longer present
-for _, name := range recording.ListRunningWorkers() {
-    if _, ok := current[name]; !ok {
-        recording.StopCamera(name)
-    }
-}
+	current := make(map[string]struct{})
+	for i, cam := range newCams {
+		current[cam.Name] = struct{}{}
+		recording.StartCamera(s.config, cam, i)
+	}
+	// Stop workers that are no longer present
+	for _, name := range recording.ListRunningWorkers() {
+		if _, ok := current[name]; !ok {
+			recording.StopCamera(name)
+		}
+	}
 
-s.config.Cameras = newCams
+	s.config.Cameras = newCams
 
 	// Rebuild camera lookup map with new button numbers
 	s.config.BuildCameraLookup()
@@ -485,7 +485,7 @@ func (s *Server) getSystemConfig(c *gin.Context) {
 	configs, err := s.db.GetAllSystemConfigs()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to get system configuration",
+			"error":   "Failed to get system configuration",
 			"details": err.Error(),
 		})
 		return
@@ -510,7 +510,7 @@ func (s *Server) getSystemConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": configMap,
+		"data":    configMap,
 	})
 }
 
@@ -521,7 +521,7 @@ func (s *Server) getDiskManagerConfig(c *gin.Context) {
 	minimumFreeSpaceGB, priorityExternal, priorityMountedStorage, priorityInternalNVMe, priorityInternalSATA, priorityRootFilesystem, err := sysConfigService.GetDiskManagerConfig()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to get disk manager configuration",
+			"error":   "Failed to get disk manager configuration",
 			"details": err.Error(),
 		})
 		return
@@ -530,11 +530,11 @@ func (s *Server) getDiskManagerConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"minimum_free_space_gb": minimumFreeSpaceGB,
-			"priority_external": priorityExternal,
+			"minimum_free_space_gb":    minimumFreeSpaceGB,
+			"priority_external":        priorityExternal,
 			"priority_mounted_storage": priorityMountedStorage,
-			"priority_internal_nvme": priorityInternalNVMe,
-			"priority_internal_sata": priorityInternalSATA,
+			"priority_internal_nvme":   priorityInternalNVMe,
+			"priority_internal_sata":   priorityInternalSATA,
 			"priority_root_filesystem": priorityRootFilesystem,
 		},
 	})
@@ -554,7 +554,7 @@ func (s *Server) updateDiskManagerConfig(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body",
+			"error":   "Invalid request body",
 			"details": err.Error(),
 		})
 		return
@@ -570,7 +570,7 @@ func (s *Server) updateDiskManagerConfig(c *gin.Context) {
 		request.PriorityRootFilesystem,
 	); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid disk manager configuration",
+			"error":   "Invalid disk manager configuration",
 			"details": err.Error(),
 		})
 		return
@@ -588,7 +588,7 @@ func (s *Server) updateDiskManagerConfig(c *gin.Context) {
 		"admin",
 	); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to update disk manager configuration",
+			"error":   "Failed to update disk manager configuration",
 			"details": err.Error(),
 		})
 		return
@@ -604,11 +604,11 @@ func (s *Server) updateDiskManagerConfig(c *gin.Context) {
 		"success": true,
 		"message": "Disk manager configuration updated successfully - changes are active immediately",
 		"data": gin.H{
-			"minimum_free_space_gb": request.MinimumFreeSpaceGB,
-			"priority_external": request.PriorityExternal,
+			"minimum_free_space_gb":    request.MinimumFreeSpaceGB,
+			"priority_external":        request.PriorityExternal,
 			"priority_mounted_storage": request.PriorityMountedStorage,
-			"priority_internal_nvme": request.PriorityInternalNVMe,
-			"priority_internal_sata": request.PriorityInternalSATA,
+			"priority_internal_nvme":   request.PriorityInternalNVMe,
+			"priority_internal_sata":   request.PriorityInternalSATA,
 			"priority_root_filesystem": request.PriorityRootFilesystem,
 		},
 	})
@@ -620,7 +620,7 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 	var request map[string]interface{}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body",
+			"error":   "Invalid request body",
 			"details": err.Error(),
 		})
 		return
@@ -692,6 +692,45 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 				})
 				return
 			}
+		case dbmod.ConfigEnableVideoDurationCheck:
+			// This should be a boolean (true/false)
+			if boolVal, ok := value.(bool); ok {
+				strValue = fmt.Sprintf("%t", boolVal)
+				configType = "boolean"
+			} else if strVal, ok := value.(string); ok {
+				// Handle string representation of boolean
+				strVal = strings.ToLower(strVal)
+				if strVal == "true" || strVal == "false" {
+					strValue = strVal
+					configType = "boolean"
+				} else {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Invalid value for %s: expected boolean, got %s", key, strVal),
+					})
+					return
+				}
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected boolean", key),
+				})
+				return
+			}
+		case dbmod.ConfigMinimumFreeSpaceGB,
+			dbmod.ConfigPriorityExternal,
+			dbmod.ConfigPriorityMountedStorage,
+			dbmod.ConfigPriorityInternalNVMe,
+			dbmod.ConfigPriorityInternalSATA,
+			dbmod.ConfigPriorityRootFilesystem:
+			// These should be integers
+			if intVal, ok := value.(float64); ok {
+				strValue = strconv.Itoa(int(intVal))
+				configType = "int"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected integer", key),
+				})
+				return
+			}
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Unknown configuration key: %s", key),
@@ -708,7 +747,7 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 		}
 		if err := s.db.SetSystemConfig(config); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("Failed to update %s", key),
+				"error":   fmt.Sprintf("Failed to update %s", key),
 				"details": err.Error(),
 			})
 			return
@@ -723,12 +762,12 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 
 	// Log hot reload notification
 	log.Printf("🔄 HOT RELOAD: System configuration updated - all workers will use new settings on next run")
-	log.Printf("📊 CURRENT CONFIG: BookingWorker=%d, VideoRequestWorker=%d, PendingTaskWorker=%d", 
+	log.Printf("📊 CURRENT CONFIG: BookingWorker=%d, VideoRequestWorker=%d, PendingTaskWorker=%d",
 		s.config.BookingWorkerConcurrency, s.config.VideoRequestWorkerConcurrency, s.config.PendingTaskWorkerConcurrency)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "System configuration updated successfully - hot reload active",
-		"note": "Changes will take effect on next cron run (within 2 minutes)",
+		"note":    "Changes will take effect on next cron run (within 2 minutes)",
 	})
 }

@@ -3,6 +3,7 @@ package transcode
 import (
 	"ayo-mwr/config"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -38,6 +39,11 @@ func TestSplitFFmpegParams(t *testing.T) {
 }
 
 func TestTranscodeVideoValidation(t *testing.T) {
+	// Skip this test if ffmpeg is not available
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not found, skipping transcoding test")
+	}
+
 	// Skip actual transcoding, just test the validation logic
 	tempDir, err := os.MkdirTemp("", "transcode-test")
 	if err != nil {
@@ -51,24 +57,10 @@ func TestTranscodeVideoValidation(t *testing.T) {
 		BaseURL:     "http://localhost:8080",
 	}
 
-	// Create a dummy input file
-	inputPath := filepath.Join(tempDir, "test.mp4")
-	f, err := os.Create(inputPath)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	f.Close()
-
-	// Test that directories are created
-	videoID := "test123"
-	hlsPath := filepath.Join(tempDir, "hls", videoID)
-
-	// This will fail because we're not actually transcoding, but we can check if directories were created
-	_, _, err = TranscodeVideo(inputPath, videoID, "hls", &cfg)
-	
-	// The transcoding will fail, but the directories should be created
-	if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
-		t.Errorf("HLS directory was not created")
+	// Test with non-existent input file
+	_, _, err = TranscodeVideo("/nonexistent/path.mp4", "test-video", "test-camera", &cfg)
+	if err == nil {
+		t.Error("Expected error for non-existent input file, but got nil")
 	}
 }
 
@@ -139,12 +131,33 @@ func TestConvertTSToMP4_CreateOutputDirectory(t *testing.T) {
 	// Test that the function creates output directory
 	outputPath := filepath.Join(tempDir, "subdir", "output.mp4")
 	
-	// This should fail because input file doesn't exist, but it should create the output directory
-	_ = ConvertTSToMP4("nonexistent.ts", outputPath)
-	
-	// Check if output directory was created
-	if _, err := os.Stat(filepath.Dir(outputPath)); os.IsNotExist(err) {
-		// The directory creation happens before the file existence check, so this should pass
-		t.Error("Expected output directory to be created, but it doesn't exist")
+	// This should fail because input file doesn't exist
+	// but it should still create the output directory
+	err := ConvertTSToMP4("nonexistent.ts", outputPath)
+	if err == nil {
+		t.Error("Expected error for non-existent input file")
 	}
+	
+	// Check that output directory was created
+	outputDir := filepath.Dir(outputPath)
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		t.Errorf("Output directory was not created: %s", outputDir)
+	}
+}
+
+func TestGetVideoDuration(t *testing.T) {
+	// Test with non-existent file
+	_, err := GetVideoDuration("nonexistent.mp4")
+	if err == nil {
+		t.Error("Expected error for non-existent file, but got nil")
+	}
+	
+	// Test with empty file path
+	_, err = GetVideoDuration("")
+	if err == nil {
+		t.Error("Expected error for empty file path, but got nil")
+	}
+	
+	// Note: Testing with actual video files would require ffprobe to be installed
+	// and test video files to be available, which is not practical for unit tests
 }

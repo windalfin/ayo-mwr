@@ -23,7 +23,7 @@ import (
 // AyoAPIClient adalah interface untuk berinteraksi dengan AYO API
 type AyoAPIClient interface {
 	GetBookings(date string) (map[string]interface{}, error)
-	SaveVideoAvailable(bookingID, videoType, previewURL, thumbnailURL, uniqueID string, startTime, endTime time.Time) (map[string]interface{}, error)
+	SaveVideoAvailable(bookingID, videoType, previewURL, thumbnailURL, uniqueID string, startTime, endTime time.Time, duration int) (map[string]interface{}, error)
 	GetWatermark(resolution string) (string, error)
 }
 
@@ -121,8 +121,8 @@ func (s *BookingVideoService) ProcessVideoSegments(
 		BookingID:     bookingID,
 		RawJSON:       rawJSON,
 		Resolution:    camera.Resolution,
-		HasRequest:    false,     // Explicitly set default to false
-		VideoType:     videoType, // Set from the parameter
+		HasRequest:    false,      // Explicitly set default to false
+		VideoType:     videoType,  // Set from the parameter
 		StartTime:     &startTime, // Store actual clip start time
 		EndTime:       &endTime,   // Store actual clip end time
 	}
@@ -172,14 +172,14 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	videoPathForNextStep := watermarkedVideoPath
 	log.Printf("ProcessVideoSegments : videoPathForNextStep %s", videoPathForNextStep)
 	log.Printf("ProcessVideoSegments : camera.Resolution %s", camera.Resolution)
-	
+
 	// Determine storage disk ID and full path for the processed video
 	storageDiskID, mp4FullPath, err := s.determineStorageInfo(videoPathForNextStep)
 	if err != nil {
 		log.Printf("ProcessVideoSegments : Warning: Could not determine storage disk info: %v", err)
 		// Continue without storage info rather than failing
 	}
-	
+
 	// Step 3: update video metadata
 	videoMeta := database.VideoMetadata{
 		ID:            uniqueID,
@@ -433,6 +433,7 @@ func (s *BookingVideoService) NotifyAyoAPI(
 	startTime time.Time,
 	endTime time.Time,
 	videoType string,
+	duration int,
 ) error {
 	_, err := s.ayoClient.SaveVideoAvailable(
 		bookingID,
@@ -442,6 +443,7 @@ func (s *BookingVideoService) NotifyAyoAPI(
 		uniqueID,     // uniqueID
 		startTime,    // startTime
 		endTime,      // endTime
+		duration,
 	)
 	return err
 }
@@ -524,9 +526,9 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 		ffmpegArgs := []string{"-y",
 			"-i", inputPath,
 			"-ss", interval.start, // Start time
-			"-to", interval.end,   // End time
+			"-to", interval.end, // End time
 		}
-		
+
 		// Add software encoder
 		ffmpegArgs = append(ffmpegArgs,
 			"-c:v", "libx264",
@@ -535,7 +537,7 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 			"-c:a", "aac", // Use consistent audio codec
 			clipPath,
 		)
-		
+
 		cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 		out, err := cmd.CombinedOutput()
@@ -552,25 +554,25 @@ func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) e
 
 	// Concatenate all clips into the final preview video with software encoding
 	ffmpegArgs := []string{"-y"}
-	
+
 	ffmpegArgs = append(ffmpegArgs,
 		"-f", "concat",
 		"-safe", "0",
 		"-i", clipListPath,
 	)
-	
+
 	// Add software encoder
 	ffmpegArgs = append(ffmpegArgs,
 		"-c:v", "libx264",
 		"-crf", "22", // Good quality
 		"-preset", "ultrafast",
 	)
-	
+
 	ffmpegArgs = append(ffmpegArgs,
 		"-c:a", "aac",
 		outputPath,
 	)
-	
+
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
@@ -743,16 +745,16 @@ func determineIntervals(durationSeconds int) []timeInterval {
 // CreateThumbnail extracts a frame from the middle of the video as a thumbnail
 func (s *BookingVideoService) CreateThumbnail(inputPath, outputPath string) error {
 	// Use ffmpeg to extract a thumbnail from the middle of the video with software encoding
-	
+
 	// Build FFmpeg arguments for thumbnail generation with software encoding
 	ffmpegArgs := []string{"-y",
 		"-i", inputPath,
 		"-ss", "00:00:05", // Take frame at 5 seconds
-		"-vframes", "1",   // Extract just one frame
+		"-vframes", "1", // Extract just one frame
 		"-vf", "scale=480:-2", // 480p width thumbnail, maintain aspect ratio
 		outputPath,
 	}
-	
+
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	out, err := cmd.CombinedOutput()
@@ -782,7 +784,7 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 
 	// Buat playlist HLS dengan ffmpeg dengan software encoding
 	ffmpegArgs := []string{"-i", videoPath}
-	
+
 	// Add software encoder
 	ffmpegArgs = append(ffmpegArgs,
 		"-c:v", "libx264",
@@ -795,7 +797,7 @@ func (s *BookingVideoService) CreateHLSStream(videoPath string, outputDir string
 		"-hls_segment_filename", filepath.Join(outputDir, "%03d.ts"),
 		filepath.Join(outputDir, "playlist.m3u8"),
 	)
-	
+
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
 
 	stdout, err := cmd.StdoutPipe()
@@ -923,13 +925,13 @@ func (s *BookingVideoService) determineStorageInfo(filePath string) (string, str
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get absolute path: %v", err)
 	}
-	
+
 	// Get all storage disks from database
 	disks, err := s.db.GetStorageDisks()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get storage disks: %v", err)
 	}
-	
+
 	// Find which disk contains this file
 	for _, disk := range disks {
 		// Check if the file path starts with the disk path
@@ -939,7 +941,7 @@ func (s *BookingVideoService) determineStorageInfo(filePath string) (string, str
 			return disk.ID, absPath, nil
 		}
 	}
-	
+
 	// If no disk found, try to determine from current storage path
 	// This handles cases where the file is in the primary storage path
 	if strings.Contains(absPath, s.config.StoragePath) {
@@ -951,7 +953,7 @@ func (s *BookingVideoService) determineStorageInfo(filePath string) (string, str
 			}
 		}
 	}
-	
+
 	log.Printf("determineStorageInfo: Could not determine storage disk for file: %s", absPath)
 	return "", absPath, fmt.Errorf("could not determine storage disk for file: %s", absPath)
 }

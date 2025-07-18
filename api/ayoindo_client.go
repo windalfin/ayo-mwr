@@ -344,6 +344,7 @@ func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error)
 // SaveVideoAvailable notifies AYO API that a video is available
 func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, imagePath, uniqueID string, startTime, endTime time.Time, duration int) (map[string]interface{}, error) {
 	// Prepare the parameters
+
 	params := map[string]interface{}{
 		"token":           c.apiToken,
 		"venue_code":      c.venueCode,
@@ -364,6 +365,7 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 	}
 
 	// Add signature to parameters
+
 	params["signature"] = signature
 
 	// Convert parameters to JSON

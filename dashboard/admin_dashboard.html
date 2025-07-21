@@ -26,6 +26,23 @@
       font-size: 1.5rem;
       letter-spacing: 1px;
       font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logout-btn {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .logout-btn:hover {
+      background: #c0392b;
     }
     nav {
       display: flex;
@@ -449,7 +466,10 @@
   </style>
 </head>
 <body>
-  <header>AYO Middleware Admin Dashboard</header>
+  <header>
+    <span>AYO Middleware Admin Dashboard</span>
+    <a href="/logout" class="logout-btn">Logout</a>
+  </header>
   <nav>
     <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
     <a href="#videos" data-tab="videos">Videos/Clips</a>
@@ -804,15 +824,37 @@
     let cameras = null;
     let videos = null;
 
+    // Utility function to handle authentication errors in fetch responses
+    async function handleAuthenticatedFetch(url, options = {}) {
+      try {
+        // Ensure credentials are included by default
+        options.credentials = options.credentials || 'include';
+        
+        const response = await fetch(url, options);
+        
+        // Check for 401 Unauthorized
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return null;
+        }
+        
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    }
+
     // Fetch cameras from backend
     async function fetchCameras() {
-      const res = await fetch('/api/cameras');
+      const res = await handleAuthenticatedFetch('/api/cameras');
+      if (!res) return; // Redirected to login
       if (!res.ok) throw new Error('Failed to fetch cameras');
       cameras = await res.json();
     }
     // Fetch videos from backend
     async function fetchVideos() {
-      const res = await fetch('/api/videos');
+      const res = await handleAuthenticatedFetch('/api/videos');
+      if (!res) return; // Redirected to login
       if (!res.ok) throw new Error('Failed to fetch videos');
       videos = await res.json();
     }
@@ -904,8 +946,11 @@
     }
 
     // Update system health
-    function updateSystemHealth() {
-      fetch('/api/system_health').then(res => res.json()).then(data => {
+    async function updateSystemHealth() {
+      try {
+        const res = await handleAuthenticatedFetch('/api/system_health');
+        if (!res) return; // Redirected to login
+        const data = await res.json();
         document.getElementById('sys-cpu').textContent = (data.cpu !== undefined) ? Math.round(data.cpu) + '%' : '-';
         document.getElementById('sys-mem').textContent = (data.memory_used !== undefined && data.memory_total !== undefined)
           ? Math.round(data.memory_used) + 'MB / ' + Math.round(data.memory_total) + 'MB'
@@ -914,20 +959,27 @@
         // Uptime and Storage Used: backend must provide these in the API for live data
         document.getElementById('sys-uptime').textContent = data.uptime || '-';
         document.getElementById('sys-storage').textContent = data.storage || '-';
-      });
+      } catch (error) {
+        console.error('Error updating system health:', error);
+      }
     }
     setInterval(updateSystemHealth, 5000);
     updateSystemHealth();
 
     // Update logs
-    function updateLogs() {
-      fetch('/api/logs').then(res => res.text()).then(data => {
+    async function updateLogs() {
+      try {
+        const res = await handleAuthenticatedFetch('/api/logs');
+        if (!res) return; // Redirected to login
+        const data = await res.text();
         const logList = document.getElementById('log-list');
         logList.innerHTML = data
           .replace(/\n/g, '<br>')
           .replace(/\033\[[0-9;]*m/g, ''); // strip ANSI colors if any
         logList.scrollTop = logList.scrollHeight; // auto-scroll to bottom
-      });
+      } catch (error) {
+        console.error('Error updating logs:', error);
+      }
     }
     setInterval(updateLogs, 5000);
     updateLogs();
@@ -1263,7 +1315,8 @@
     // Fetch camera config from API
     async function fetchCameraConfig() {
       try {
-        const response = await fetch('/api/admin/cameras-config');
+        const response = await handleAuthenticatedFetch('/api/admin/cameras-config');
+        if (!response) return; // Redirected to login
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -1303,7 +1356,7 @@
           auto_delete: camera.auto_delete || 7
         }));
 
-        const response = await fetch('/api/admin/cameras-config', {
+        const response = await handleAuthenticatedFetch('/api/admin/cameras-config', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1311,6 +1364,7 @@
           body: JSON.stringify({ cameras: camerasToSave })
         });
         
+        if (!response) return false; // Redirected to login
         if (!response.ok) {
           const error = await response.json().catch(() => ({}));
           throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1320,16 +1374,16 @@
         
         // Automatically reload cameras after saving to apply new configuration
         try {
-          const reloadResponse = await fetch('/api/admin/reload-cameras', {
+          const reloadResponse = await handleAuthenticatedFetch('/api/admin/reload-cameras', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             }
           });
           
-          if (reloadResponse.ok) {
+          if (reloadResponse && reloadResponse.ok) {
             showNotification('Camera configuration saved and reloaded successfully', 'success');
-          } else {
+          } else if (reloadResponse) {
             showNotification('Camera configuration saved, but reload failed. Please manually reload.', 'warning');
           }
         } catch (reloadError) {
@@ -1447,7 +1501,8 @@ let systemConfig = {};
 // Load system configuration from backend
 async function loadSystemConfig() {
   try {
-    const response = await fetch('/api/admin/system-config');
+    const response = await handleAuthenticatedFetch('/api/admin/system-config');
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -1485,7 +1540,8 @@ async function loadSystemConfig() {
 // Load disk manager configuration from backend
 async function loadDiskManagerConfig() {
   try {
-    const response = await fetch('/api/admin/disk-manager-config');
+    const response = await handleAuthenticatedFetch('/api/admin/disk-manager-config');
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -1550,7 +1606,7 @@ async function saveSystemConfig() {
     }
     
     // Send system config to backend
-    const response = await fetch('/api/admin/system-config', {
+    const response = await handleAuthenticatedFetch('/api/admin/system-config', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -1558,6 +1614,7 @@ async function saveSystemConfig() {
       body: JSON.stringify(configData)
     });
     
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1610,7 +1667,7 @@ async function saveDiskManagerConfig() {
     }
     
     // Send disk manager config to backend
-    const response = await fetch('/api/admin/disk-manager-config', {
+    const response = await handleAuthenticatedFetch('/api/admin/disk-manager-config', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -1618,6 +1675,7 @@ async function saveDiskManagerConfig() {
       body: JSON.stringify(diskManagerData)
     });
     
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1647,7 +1705,8 @@ function initSystemConfig() {
 // ---------- Arduino status ----------
 async function fetchArduinoStatus() {
   try {
-    const res = await fetch('/api/arduino-status');
+    const res = await handleAuthenticatedFetch('/api/arduino-status');
+    if (!res) return; // Redirected to login
     const data = await res.json();
     const card = document.getElementById('arduino-status-card');
     const txt = document.getElementById('arduino-status-text');
@@ -1679,7 +1738,8 @@ closeArduinoModal.onclick = cancelArduinoBtn.onclick = () => {
 
 async function loadArduinoConfig(){
   try{
-    const res = await fetch('/api/arduino-status');
+    const res = await handleAuthenticatedFetch('/api/arduino-status');
+    if (!res) return; // Redirected to login
     const d = await res.json();
     document.getElementById('arduino-port').value = d.port || '';
     document.getElementById('arduino-baud').value = d.baud_rate || '';
@@ -1691,11 +1751,12 @@ document.getElementById('save-arduino-btn').addEventListener('click', async ()=>
   const baud = parseInt(document.getElementById('arduino-baud').value,10);
   if(!port || !baud){showNotification('Port and baud required','warning');return;}
   try{
-    const res = await fetch('/api/admin/arduino-config',{
+    const res = await handleAuthenticatedFetch('/api/admin/arduino-config',{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({port:port, baud_rate: baud})
     });
+    if (!res) return; // Redirected to login
     const txt = await res.text();
     if(res.ok){
       showNotification('Arduino config saved','success');

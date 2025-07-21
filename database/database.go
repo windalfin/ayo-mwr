@@ -176,6 +176,15 @@ type SystemConfig struct {
 	UpdatedBy string    `json:"updatedBy"` // Who updated the configuration
 }
 
+// User represents a user in the authentication system
+type User struct {
+	ID           int       `json:"id"`           // Auto-increment primary key
+	Username     string    `json:"username"`     // Unique username
+	PasswordHash string    `json:"-"`            // Hashed password (not exposed in JSON)
+	CreatedAt    time.Time `json:"createdAt"`    // When user was created
+	UpdatedAt    time.Time `json:"updatedAt"`    // When user was last updated
+}
+
 // System configuration keys
 const (
 	ConfigBookingWorkerConcurrency      = "booking_worker_concurrency"
@@ -261,6 +270,11 @@ type Database interface {
 	SetSystemConfig(config SystemConfig) error
 	GetAllSystemConfigs() ([]SystemConfig, error)
 	DeleteSystemConfig(key string) error
+
+	// User authentication operations
+	CreateUser(username, passwordHash string) error
+	GetUserByUsername(username string) (*User, error)
+	HasUsers() (bool, error)
 
 	// Helper operations
 	Close() error

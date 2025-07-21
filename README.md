@@ -36,6 +36,101 @@ This application captures video from RTSP cameras, saves the content in segments
    - **macOS**: `brew install ffmpeg`
    - **Ubuntu/Debian**: `sudo apt install ffmpeg`
 
+## Hardware Setup
+
+### 1. Modem Configuration
+
+Configure your modem for optimal performance with the AYO Sport Camera system:
+
+#### Initial modem setup
+- Default Gateway: 192.168.100.1 (common for most modems)
+- Username: admin
+- Password: admin 
+
+
+### 2. Router Configuration
+
+#### Basic Router Configuration
+
+1. Access Router Interface:
+- Default Gateway: 192.168.0.1
+- Username: admin
+- Password: admin (change immediately)
+
+#### WAN Settings:
+
+- Connection Type: DHCP (if modem in bridge mode)
+
+
+
+
+#### LAN Settings:
+- Router IP: 192.168.0.1
+- Subnet Mask: 255.255.255.0
+- DHCP Range: 192.168.1.100-192.168.1.200
+- Lease Time: 24 hours
+
+#### DHCP Configuration
+Make sure to configure the reserve DHCP IP for each camera
+
+```
+# Camera Reserved IPs
+Camera 1: 192.168.1.101 (MAC: xx:xx:xx:xx:xx:01)
+Camera 2: 192.168.1.102 (MAC: xx:xx:xx:xx:xx:02)
+Camera 3: 192.168.1.103 (MAC: xx:xx:xx:xx:xx:03)
+Camera 4: 192.168.1.104 (MAC: xx:xx:xx:xx:xx:04)
+
+```
+
+#### WiFi Configuration
+Setup the Wifi Password which we will later setup in the Mini-PC
+
+```
+Primary Network (Management):
+SSID: AYO-MGMT-[VenueCode]
+Security: WPA3/WPA2
+Password: [Strong Password]
+Channel: Auto or 1,6,11 (2.4GHz) / 36,40,44,48 (5GHz)
+```
+
+### 3. Camera Configuration
+
+Configure IP cameras for RTSP streaming and integration with the middleware:
+
+#### Activating the Camera
+Store purchased Hikvision camera are usually not activated, we will need to activate it for it to be detected in the network. One way to do it is to use SADP in windows machine
+
+- Connect Camera to Network via cable
+- Open SADP 
+- Activate camera and set the master password
+- Note the Camera IP and reserve the Camera IP in DHCP Config
+- Make sure the camera config is configured in .env or in Middleware Dashboard
+- Test the camera by accessing it via RTSP URL (VLC) or from live-view in Middleware dashboard
+
+### 4. VenueCode and FieldId Configuration
+
+Configure venue-specific identifiers for AYO platform integration:
+
+- Venue code registration
+- Field ID mapping
+- Camera to field association
+- Booking system integration
+- Multi-venue setup
+- Configuration validation
+
+### 5. Button Setup
+
+*[Details to be added later]*
+
+Configure manual trigger buttons for highlight capture:
+
+- Hardware button installation
+- GPIO pin mapping
+- Button debouncing
+- Multiple button support
+- Wireless button configuration
+- Button testing procedures
+
 ## Configuration
 
 Create a `.env` file in the project root with the following options:
@@ -66,6 +161,7 @@ R2_REGION=auto
 R2_TOKEN_VALUE=your_token_value
 
 # Worker Concurrency Configuration
+# These settings provide the initial values. They can be updated live via the admin dashboard.
 BOOKING_WORKER_CONCURRENCY=2      # Max concurrent booking process workers
 VIDEO_REQUEST_WORKER_CONCURRENCY=2 # Max concurrent video request workers
 PENDING_TASK_WORKER_CONCURRENCY=3  # Max concurrent pending task workers
@@ -102,7 +198,7 @@ videos/
 
 1. Start the application:
    ```bash
-   go run main.go
+   ./autorun.sh
    ```
 
 2. The application will:
@@ -111,25 +207,81 @@ videos/
    - Convert segments to HLS and DASH formats
    - Serve streams through the web server
 
-## API Endpoints
+## Middleware Dashboard
 
-### List Streams
-```http
-GET /api/streams
+### Dashboard URL & Guides
 ```
-
-Lists all available video streams with their status and URLs.
-
-### Get Stream Details
-```http
-GET /api/streams/:id
+http://localhost:3000/dashboard/admin_dashboard.html
 ```
+### Dashboard Features and Usages
 
-Get details for a specific video stream.
+The admin dashboard provides a comprehensive interface for monitoring and managing the middleware.
+
+#### Summary Cards
+At a glance, you can see:
+- **Arduino Status**: Shows if the hardware controller is connected and its configuration. Click to configure.
+- **Camera Configuration**: Total number of configured and active cameras.
+- **System Config**: Configuration for video quality, disk management and some other specific behaviour of the middleware
+- **System Resources**: Real-time CPU and Memory usage.
+
+#### Tabs
+
+- **Cameras**:
+  - View a list of all configured cameras with their status (online/offline), IP address, and other details.
+  - Search and filter cameras by name or status.
+  - Open a live video stream for any camera directly in the dashboard.
+
+- **Videos/Clips**:
+  - Browse all processed videos and their current status (e.g., ready, uploading, processing, failed).
+  - Filter videos by status, camera, or date, and search by ID.
+  - Retry failed processing jobs or view completed videos.
+
+- **Camera Config**:
+  - Add, edit, or delete camera configurations.
+  - Modify details such as name, RTSP stream credentials, and hardware button associations.
+  - Save changes and hot-reload the camera configurations without restarting the application.
+
+- **System Config**:
+  - **Worker Concurrency**: Adjust the number of concurrent workers for video processing, booking sync, and other background tasks to balance performance and resource usage.
+  - **Quality Presets**: Enable or disable specific video quality presets (e.g., 1080p, 720p) to control storage and transcoding overhead.
+  - **Disk Management**: Configure the disk manager, including setting the minimum required free space and defining priorities for different storage types (e.g., External, NVMe, SATA).
+  - All changes are applied via hot-reload.
+
+- **System Health**:
+  - Monitor detailed real-time system metrics, including CPU usage, memory consumption, active goroutines, and system uptime.
+
+- **Logs**:
+  - View a live feed of recent application logs and errors.
+  - Download the full log file for offline analysis.
+
+### API Endpoints
+
+#### Public Endpoints
+
+- `GET /api/cameras`: Lists all configured cameras and their status.
+- `GET /api/videos`: Lists all processed videos.
+- `GET /api/streams`: Lists all available video streams.
+- `GET /api/streams/:id`: Gets detailed information about a specific video stream.
+- `POST /api/upload`: Uploads a video for processing. This was previously `/api/transcode`.
+  - **Body**: `{"timestamp": "...", "cameraName": "..."}`
+- `GET /api/system_health`: Returns system health metrics (CPU, memory, etc.).
+- `GET /api/logs`: Returns recent application logs.
+- `GET /api/arduino-status`: Returns the status of the Arduino controller.
+
+#### Admin Endpoints
+
+- `GET /api/admin/cameras-config`: Retrieves the current camera configuration.
+- `PUT /api/admin/cameras-config`: Updates the camera configuration.
+- `POST /api/admin/reload-cameras`: Hot-reloads the camera configuration.
+- `GET /api/admin/system-config`: Retrieves the current system configuration.
+- `PUT /api/admin/system-config`: Updates the system configuration. This was previously `/api/config/update`.
+- `GET /api/admin/disk-manager-config`: Retrieves the disk manager configuration.
+- `PUT /api/admin/disk-manager-config`: Updates the disk manager configuration.
+- `PUT /api/admin/arduino-config`: Updates the Arduino controller configuration.
 
 ### Transcode Video
 ```http
-POST /api/transcode
+POST /api/upload
 Content-Type: application/json
 
 {
@@ -221,19 +373,10 @@ The application uses multiple background workers for different tasks. You can co
    - Default: 3 concurrent workers
    - Handles R2 uploads and API notifications when offline
 
-### Configuration Examples
+### Configuration
 
-```bash
-# High-performance setup (more workers)
-export BOOKING_WORKER_CONCURRENCY=4
-export VIDEO_REQUEST_WORKER_CONCURRENCY=3
-export PENDING_TASK_WORKER_CONCURRENCY=5
+The recommended way to configure worker concurrency is through the **Admin Dashboard**, which allows for real-time updates without restarting the application. The environment variables below set the initial values on first startup.
 
-# Low-resource setup (fewer workers)
-export BOOKING_WORKER_CONCURRENCY=1
-export VIDEO_REQUEST_WORKER_CONCURRENCY=1
-export PENDING_TASK_WORKER_CONCURRENCY=2
-```
 
 ### Monitoring Worker Status
 
@@ -422,6 +565,12 @@ Monitor disk manager activity through application logs:
 - **Playback Issues**: Try different players (VLC, web browsers with HLS.js)
 - **Missing Files**: Check the logs for any file creation or permission errors
 
+### Hardware Setup Troubleshooting
+
+- **Network Connectivity**: Check modem and router configurations
+- **Camera Connection**: Verify IP addresses and network settings
+- **Button Response**: Test GPIO connections and button functionality
+- **Venue Configuration**: Validate venue codes and field ID mappings
+
 ## License
 This app belong to Ayo Indonesia
-sip ok

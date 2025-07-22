@@ -23,10 +23,10 @@ type Server struct {
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
 	dashboardFS         embed.FS
-	
+
 	// Mutex untuk prevent concurrent uploads
-	uploadMutex     sync.Mutex
-	activeUploads   map[string]bool // key: cameraName, value: isUploading
+	uploadMutex   sync.Mutex
+	activeUploads map[string]bool // key: cameraName, value: isUploading
 }
 
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
@@ -92,7 +92,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	api := r.Group("/api")
 	{
 		api.GET("/streams", s.listStreams)
-        api.GET("/arduino-status", s.getArduinoStatus)
+		api.GET("/arduino-status", s.getArduinoStatus)
 		api.GET("/streams/:id", s.getStream)
 		api.POST("/upload", s.handleUpload)
 		api.GET("/cameras", s.listCameras)
@@ -101,25 +101,32 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		api.GET("/logs", s.getLogs)
 		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 		api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
-		
+
 		// Booking management endpoints
 		api.GET("/bookings", s.getBookings)
 		api.GET("/bookings/:booking_id", s.getBookingByID)
 		api.GET("/bookings/status/:status", s.getBookingsByStatus)
 		api.GET("/bookings/date/:date", s.getBookingsByDate)
-		
+
+		// Onboarding endpoints
+		api.GET("/onboarding-status", s.getOnboardingStatus)
+		api.POST("/onboarding/venue-config", s.saveVenueConfig)
+		api.GET("/onboarding/camera-defaults", s.getCameraDefaults)
+		api.POST("/onboarding/first-camera", s.saveFirstCamera)
+
 		// Admin endpoints for camera configuration
 		admin := api.Group("/admin")
 		{
 			admin.GET("/cameras-config", s.getCamerasConfig)
-            admin.PUT("/arduino-config", s.updateArduinoConfig)
+			admin.PUT("/arduino-config", s.updateArduinoConfig)
 			admin.PUT("/cameras-config", s.updateCamerasConfig)
+			admin.POST("/cameras-config", s.updateCamerasConfig) // Add POST support for camera config
 			admin.POST("/reload-cameras", s.reloadCameras)
-			
+
 			// System configuration endpoints
 			admin.GET("/system-config", s.getSystemConfig)
 			admin.PUT("/system-config", s.updateSystemConfig)
-			
+
 			// Disk manager configuration endpoints
 			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
 			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)

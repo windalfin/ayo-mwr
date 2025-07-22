@@ -446,6 +446,98 @@
     .video-controls button:hover {
       background: #353b48;
     }
+    
+    /* Onboarding Styles */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+    }
+    
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #ddd;
+      color: #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      transition: all 0.3s ease;
+    }
+    
+    .step.active .step-number {
+      background: #273c75;
+      color: white;
+    }
+    
+    .step.completed .step-number {
+      background: #27ae60;
+      color: white;
+    }
+    
+    .step-label {
+      font-size: 0.9rem;
+      color: #666;
+      text-align: center;
+      min-width: 80px;
+    }
+    
+    .step.active .step-label {
+      color: #273c75;
+      font-weight: 600;
+    }
+    
+    .step.completed .step-label {
+      color: #27ae60;
+      font-weight: 600;
+    }
+    
+    .step-line {
+      width: 60px;
+      height: 2px;
+      background: #ddd;
+      margin: 0 10px;
+      margin-top: -20px;
+    }
+    
+    .step.completed + .step-line {
+      background: #27ae60;
+    }
+    
+    .onboarding-step {
+      min-height: 300px;
+    }
+    
+    .password-input-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 5px;
+      font-size: 1.2rem;
+    }
+    
+    .toggle-password:hover {
+      opacity: 0.7;
+    }
   </style>
 </head>
 <body>
@@ -1045,6 +1137,148 @@
     </section>
   </div>
   
+  <!-- Onboarding Modal -->
+  <div id="onboarding-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h4>🎉 Selamat Datang di AYO Middleware!</h4>
+      </div>
+      <div style="padding: 1rem 0;">
+        <p style="margin-bottom: 1.5rem; color: #666; font-size: 1.1rem;">Mari kita setup sistem Anda dalam beberapa langkah mudah:</p>
+        
+        <!-- Step Indicator -->
+        <div style="display: flex; justify-content: center; margin-bottom: 2rem;">
+          <div class="step-indicator">
+            <div class="step active" data-step="1">
+              <div class="step-number">1</div>
+              <div class="step-label">Venue Info</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="2">
+              <div class="step-number">2</div>
+              <div class="step-label">Camera Setup</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="3">
+              <div class="step-number">3</div>
+              <div class="step-label">Selesai</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Step 1: Venue Configuration -->
+        <div id="onboarding-step-1" class="onboarding-step">
+          <h5 style="color: #273c75; margin-bottom: 1rem;">📍 Informasi Venue</h5>
+          <p style="color: #666; margin-bottom: 1.5rem;">Masukkan kode venue dan secret key yang telah diberikan oleh tim AYO:</p>
+          
+          <div class="form-group">
+            <label for="onboarding-venue-code">Venue Code</label>
+            <input type="text" id="onboarding-venue-code" placeholder="Masukkan kode venue (10 karakter)" maxlength="10" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px; font-size: 1rem;">
+            <small style="color: #666;">Kode unik venue Anda yang terdiri dari 10 karakter</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="onboarding-venue-secret">Venue Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="onboarding-venue-secret" class="password-input" placeholder="Masukkan secret key venue" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px; font-size: 1rem;">
+              <button type="button" class="toggle-password" onclick="toggleOnboardingPassword()">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666;">Secret key untuk autentikasi dengan sistem AYO</small>
+          </div>
+        </div>
+        
+        <!-- Step 2: Camera Setup -->
+        <div id="onboarding-step-2" class="onboarding-step" style="display: none;">
+          <h5 style="color: #273c75; margin-bottom: 1rem;">📹 Setup Camera Pertama</h5>
+          <p style="color: #666; margin-bottom: 1.5rem;">Tambahkan camera pertama untuk mulai merekam:</p>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+              <label for="onboarding-camera-name">Nama Camera</label>
+              <input type="text" id="onboarding-camera-name" placeholder="Camera Utama" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-ip">IP Address</label>
+              <input type="text" id="onboarding-camera-ip" placeholder="192.168.1.100" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-port">Port</label>
+              <input type="text" id="onboarding-camera-port" placeholder="554" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-path">Path</label>
+              <input type="text" id="onboarding-camera-path" placeholder="/streaming/channels/101/" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-username">Username</label>
+              <input type="text" id="onboarding-camera-username" placeholder="admin" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-password">Password</label>
+              <input type="password" id="onboarding-camera-password" placeholder="password" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-field">Field ID</label>
+              <input type="text" id="onboarding-camera-field" placeholder="field_1" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-button">Button Number</label>
+              <input type="text" id="onboarding-camera-button" placeholder="1" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+          </div>
+          
+          <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+            <p style="margin: 0; color: #666; font-size: 0.9rem;">💡 <strong>Tips:</strong> Anda bisa menambahkan camera lainnya nanti melalui menu "Camera Config"</p>
+          </div>
+        </div>
+        
+        <!-- Step 3: Completion -->
+        <div id="onboarding-step-3" class="onboarding-step" style="display: none;">
+          <div style="text-align: center; padding: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">🎉</div>
+            <h5 style="color: #273c75; margin-bottom: 1rem;">Setup Berhasil!</h5>
+            <p style="color: #666; margin-bottom: 2rem;">Sistem AYO Middleware telah berhasil dikonfigurasi dan siap digunakan.</p>
+            
+            <div style="background: #e8f5e8; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+              <h6 style="color: #27ae60; margin-bottom: 0.5rem;">✅ Yang telah dikonfigurasi:</h6>
+              <ul style="text-align: left; color: #666; margin: 0; padding-left: 1.5rem;">
+                <li>Venue code dan secret key</li>
+                <li>Camera pertama</li>
+                <li>Koneksi ke sistem AYO</li>
+              </ul>
+            </div>
+            
+            <div style="background: #fff3cd; padding: 1.5rem; border-radius: 8px;">
+              <h6 style="color: #856404; margin-bottom: 0.5rem;">📋 Langkah selanjutnya:</h6>
+              <ul style="text-align: left; color: #666; margin: 0; padding-left: 1.5rem;">
+                <li>Periksa status camera di tab "Cameras"</li>
+                <li>Tambahkan camera lain jika diperlukan</li>
+                <li>Sesuaikan pengaturan sistem di "System Config"</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Navigation Buttons -->
+        <div style="display: flex; justify-content: space-between; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #eee;">
+          <button id="onboarding-prev-btn" class="btn btn-secondary" style="display: none;">← Sebelumnya</button>
+          <div style="flex: 1;"></div>
+          <button id="onboarding-next-btn" class="btn btn-primary">Selanjutnya →</button>
+          <button id="onboarding-finish-btn" class="btn btn-success" style="display: none;">Selesai 🎉</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
   <!-- Video Modal -->
   <div id="video-modal" class="modal">
     <div class="modal-content">
@@ -1080,17 +1314,26 @@
       videos = await res.json();
     }
 
-    // Tab navigation
-    document.querySelectorAll('nav a').forEach(tab => {
-      tab.addEventListener('click', function(e) {
-        e.preventDefault();
-        document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        const tabName = this.getAttribute('data-tab');
-        document.querySelectorAll('.tab-section').forEach(sec => sec.style.display = 'none');
-        document.getElementById('tab-' + tabName).style.display = '';
+    // Tab navigation function
+    function initTabs() {
+      document.querySelectorAll('nav a').forEach(tab => {
+        tab.addEventListener('click', function(e) {
+          e.preventDefault();
+          document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
+          this.classList.add('active');
+          const tabName = this.getAttribute('data-tab');
+          document.querySelectorAll('.tab-section').forEach(sec => sec.style.display = 'none');
+          document.getElementById('tab-' + tabName).style.display = 'block';
+        });
       });
-    });
+      
+      // Set default active tab
+      const defaultTab = document.querySelector('nav a[data-tab="cameras"]');
+      if (defaultTab) {
+        defaultTab.classList.add('active');
+        document.getElementById('tab-cameras').style.display = 'block';
+      }
+    }
 
     // Populate Cameras Table
     function renderCameras() {
@@ -1195,6 +1438,29 @@
     setInterval(updateLogs, 5000);
     updateLogs();
 
+    // Load cameras and update UI
+    async function loadCameras() {
+      try {
+        await fetchCameras();
+        renderCameras();
+        populateVideoCameraFilter();
+        updateSummaryCards();
+      } catch (e) {
+        console.error('Failed to load cameras:', e.message);
+      }
+    }
+    
+    // Load videos and update UI
+    async function loadVideos() {
+      try {
+        await fetchVideos();
+        renderVideos();
+        updateSummaryCards();
+      } catch (e) {
+        console.error('Failed to load videos:', e.message);
+      }
+    }
+    
     // Initial load: fetch data and render tables
     async function initDashboard() {
       try {
@@ -1345,6 +1611,20 @@
       cameras: []
     };
     
+    // Initialize camera configuration
+    function initCameraConfig() {
+      // Camera config is already initialized above with event listeners
+      // This function can be used for any additional setup if needed
+      console.log('Camera configuration initialized');
+    }
+    
+    // Initialize system configuration
+    function initSystemConfig() {
+      // System config initialization
+      // This function can be used for any system config setup if needed
+      console.log('System configuration initialized');
+    }
+    
     // DOM Elements
     const cameraConfigTab = document.getElementById('tab-camera-config');
     const cameraTableBody = document.getElementById('camera-config-tbody');
@@ -1410,7 +1690,7 @@
         width: 1920, // Default values, can be made configurable
         height: 1080,
         frame_rate: 30,
-        resolution: '1080p',
+        resolution: '1080',
         auto_delete: 7 // Default 7 days
       };
       
@@ -2092,6 +2372,289 @@ document.getElementById('save-arduino-btn').addEventListener('click', async ()=>
     }
   }catch(e){showNotification('Request failed','error');}
 });
+
+// ---------- Onboarding Flow ----------
+let currentOnboardingStep = 1;
+const totalOnboardingSteps = 3;
+
+// Check if onboarding is needed
+async function checkOnboardingStatus() {
+  try {
+    const response = await fetch('/api/onboarding-status');
+    if (response.ok) {
+      const status = await response.json();
+      if (status.success && !status.is_completed) {
+        showOnboardingModal();
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error('Error checking onboarding status:', error);
+    return false;
+  }
+}
+
+function showOnboardingModal() {
+  document.getElementById('onboarding-modal').style.display = 'block';
+  updateOnboardingStep(1);
+}
+
+function hideOnboardingModal() {
+  document.getElementById('onboarding-modal').style.display = 'none';
+}
+
+function updateOnboardingStep(step) {
+  currentOnboardingStep = step;
+  
+  // Hide all steps
+  for (let i = 1; i <= totalOnboardingSteps; i++) {
+    document.getElementById(`onboarding-step-${i}`).style.display = 'none';
+    const stepElement = document.querySelector(`[data-step="${i}"]`);
+    stepElement.classList.remove('active', 'completed');
+  }
+  
+  // Show current step
+  document.getElementById(`onboarding-step-${step}`).style.display = 'block';
+  
+  // Update step indicators
+  for (let i = 1; i < step; i++) {
+    document.querySelector(`[data-step="${i}"]`).classList.add('completed');
+  }
+  document.querySelector(`[data-step="${step}"]`).classList.add('active');
+  
+  // Update navigation buttons
+  const prevBtn = document.getElementById('onboarding-prev-btn');
+  const nextBtn = document.getElementById('onboarding-next-btn');
+  const finishBtn = document.getElementById('onboarding-finish-btn');
+  
+  prevBtn.style.display = step > 1 ? 'block' : 'none';
+  nextBtn.style.display = step < totalOnboardingSteps ? 'block' : 'none';
+  finishBtn.style.display = step === totalOnboardingSteps ? 'block' : 'none';
+}
+
+function validateOnboardingStep(step) {
+  if (step === 1) {
+    const venueCode = document.getElementById('onboarding-venue-code').value.trim();
+    const venueSecret = document.getElementById('onboarding-venue-secret').value.trim();
+    
+    if (!venueCode || venueCode.length !== 10) {
+      showNotification('Venue code harus 10 karakter', 'error');
+      return false;
+    }
+    
+    if (!venueSecret) {
+      showNotification('Venue secret key tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    return true;
+  }
+  
+  if (step === 2) {
+    const cameraName = document.getElementById('onboarding-camera-name').value.trim();
+    const cameraIp = document.getElementById('onboarding-camera-ip').value.trim();
+    const cameraPort = document.getElementById('onboarding-camera-port').value.trim();
+    const cameraPath = document.getElementById('onboarding-camera-path').value.trim();
+    const cameraUsername = document.getElementById('onboarding-camera-username').value.trim();
+    const cameraPassword = document.getElementById('onboarding-camera-password').value.trim();
+    const fieldId = document.getElementById('onboarding-camera-field').value.trim();
+    const buttonNumber = document.getElementById('onboarding-camera-button').value.trim();
+    
+    if (!cameraName) {
+      showNotification('Nama camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraIp) {
+      showNotification('IP Address camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPort) {
+      showNotification('Port camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPath) {
+      showNotification('Path camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraUsername) {
+      showNotification('Username camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPassword) {
+      showNotification('Password camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!fieldId) {
+      showNotification('Field ID tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!buttonNumber) {
+      showNotification('Button Number tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    return true;
+  }
+  
+  return true;
+}
+
+async function saveOnboardingStep(step) {
+  try {
+    if (step === 1) {
+      // Save venue configuration
+      const venueCode = document.getElementById('onboarding-venue-code').value.trim();
+      const venueSecret = document.getElementById('onboarding-venue-secret').value.trim();
+      
+      const configData = {
+        venue_code: venueCode,
+        venue_secret_key: venueSecret
+      };
+      
+      const response = await fetch('/api/admin/system-config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(configData)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      showNotification('Konfigurasi venue berhasil disimpan', 'success');
+      return true;
+    }
+    
+    if (step === 2) {
+      // Get default values from database first
+      let defaultPort = 554;
+      let defaultPath = '/stream';
+      
+      try {
+        const defaultsResponse = await fetch('/api/onboarding/camera-defaults');
+        if (defaultsResponse.ok) {
+          const defaultsData = await defaultsResponse.json();
+          if (defaultsData.success && defaultsData.data) {
+            defaultPort = parseInt(defaultsData.data.port) || 554;
+            defaultPath = defaultsData.data.path || '/stream';
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to get camera defaults, using fallback values:', error);
+      }
+      
+      // Save camera configuration
+      const cameraData = {
+        name: document.getElementById('onboarding-camera-name').value.trim(),
+        ip: document.getElementById('onboarding-camera-ip').value.trim(),
+        port: parseInt(document.getElementById('onboarding-camera-port').value.trim()) || defaultPort,
+        path: document.getElementById('onboarding-camera-path').value.trim() || defaultPath,
+        username: document.getElementById('onboarding-camera-username').value.trim(),
+        password: document.getElementById('onboarding-camera-password').value.trim(),
+        field_id: document.getElementById('onboarding-camera-field').value.trim(),
+        button_number: document.getElementById('onboarding-camera-button').value.trim()
+      };
+      
+      const response = await fetch('/api/onboarding/first-camera', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(cameraData)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      showNotification('Konfigurasi camera berhasil disimpan', 'success');
+      return true;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error saving onboarding step:', error);
+    showNotification(`Error: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+function toggleOnboardingPassword() {
+  const passwordInput = document.getElementById('onboarding-venue-secret');
+  const eyeIcon = document.querySelector('.toggle-password .eye-icon');
+  
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    eyeIcon.textContent = '👁️';
+  } else {
+    passwordInput.type = 'password';
+    eyeIcon.textContent = '🙈';
+  }
+}
+
+// Initialize onboarding event listeners
+function initOnboarding() {
+  document.getElementById('onboarding-next-btn').addEventListener('click', async () => {
+    if (validateOnboardingStep(currentOnboardingStep)) {
+      const saved = await saveOnboardingStep(currentOnboardingStep);
+      if (saved && currentOnboardingStep < totalOnboardingSteps) {
+        updateOnboardingStep(currentOnboardingStep + 1);
+      }
+    }
+  });
+  
+  document.getElementById('onboarding-prev-btn').addEventListener('click', () => {
+    if (currentOnboardingStep > 1) {
+      updateOnboardingStep(currentOnboardingStep - 1);
+    }
+  });
+  
+  document.getElementById('onboarding-finish-btn').addEventListener('click', () => {
+    hideOnboardingModal();
+    showNotification('Setup berhasil! Selamat datang di AYO Middleware 🎉', 'success');
+    // Reload the page to refresh all data
+    setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+  });
+}
+
+// Initialize everything when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+  initTabs();
+  initCameraConfig();
+  initSystemConfig();
+  initOnboarding();
+  loadCameras();
+  loadVideos();
+  updateSummaryCards();
+  updateSystemHealth();
+  updateLogs();
+  
+  // Check if onboarding is needed
+  setTimeout(() => {
+    checkOnboardingStatus();
+  }, 1000);
+  
+  // Set up periodic updates
+  setInterval(updateSystemHealth, 30000);
+  setInterval(updateLogs, 10000);
+  setInterval(loadCameras, 60000);
+  setInterval(loadVideos, 60000);
+});
+
 </script>
 </body>
 </html>

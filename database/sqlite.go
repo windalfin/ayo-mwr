@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -429,6 +430,20 @@ func initTables(db *sql.DB) error {
 			type TEXT NOT NULL DEFAULT 'string',
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_by TEXT DEFAULT 'system'
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create users table for authentication
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
@@ -2202,4 +2217,68 @@ func (s *SQLiteDB) CleanupStuckVideosOnStartup() error {
 	}
 
 	return nil
+}
+
+// User authentication methods
+
+// CreateUser creates a new user with hashed password
+func (s *SQLiteDB) CreateUser(username, password string) error {
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("error hashing password: %v", err)
+	}
+
+	// Insert user into database
+	_, err = s.db.Exec(`
+		INSERT INTO users (username, password_hash, created_at, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, username, string(hashedPassword))
+
+	if err != nil {
+		return fmt.Errorf("error creating user: %v", err)
+	}
+
+	log.Printf("👤 AUTH: Created user '%s'", username)
+	return nil
+}
+
+// GetUserByUsername retrieves a user by username
+func (s *SQLiteDB) GetUserByUsername(username string) (*User, error) {
+	var user User
+	var createdAt, updatedAt time.Time
+
+	err := s.db.QueryRow(`
+		SELECT id, username, password_hash, created_at, updated_at
+		FROM users
+		WHERE username = ?
+	`, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil // User not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error getting user: %v", err)
+	}
+
+	user.CreatedAt = createdAt
+	user.UpdatedAt = updatedAt
+
+	return &user, nil
+}
+
+// HasUsers checks if there are any users in the system
+func (s *SQLiteDB) HasUsers() (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("error counting users: %v", err)
+	}
+	return count > 0, nil
+}
+
+// ValidatePassword checks if the provided password matches the user's hashed password
+func ValidatePassword(hashedPassword, password string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	return err == nil
 }

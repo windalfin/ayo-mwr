@@ -689,6 +689,269 @@
           <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">When enabled, videos with insufficient duration will be rejected and marked as unavailable. Default: disabled</small>
         </div>
         
+        <!-- Venue Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Venue Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="venue-code">Venue Code</label>
+            <input type="text" id="venue-code" placeholder="Enter venue code">
+            <small style="color: #666; font-size: 0.9em;">Unique identifier for this venue (no default value)</small>
+          </div>
+          <div class="form-group">
+            <label for="venue-secret-key">Venue Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="venue-secret-key" class="password-input" placeholder="Enter secret key">
+              <button type="button" class="toggle-password" onclick="togglePassword('venue-secret-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Secret key for venue authentication (no default value)</small>
+          </div>
+        </div>
+        
+        <!-- Arduino Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Arduino Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="arduino-com-port">COM Port</label>
+            <input type="text" id="arduino-com-port" placeholder="/dev/ttyUSB0">
+            <small style="color: #666; font-size: 0.9em;">Serial port for Arduino communication</small>
+          </div>
+          <div class="form-group">
+            <label for="arduino-baud-rate">Baud Rate</label>
+            <input type="number" id="arduino-baud-rate" min="9600" max="115200" value="9600">
+            <small style="color: #666; font-size: 0.9em;">Serial communication speed</small>
+          </div>
+        </div>
+        
+        <!-- RTSP Configuration (Legacy) -->
+        <h4 style="color: #273c75; margin-top: 2rem;">RTSP Configuration (Legacy Single Camera)</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="rtsp-username">RTSP Username</label>
+            <input type="text" id="rtsp-username" placeholder="admin">
+            <small style="color: #666; font-size: 0.9em;">Username for RTSP authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-password">RTSP Password</label>
+            <div class="password-input-container">
+              <input type="password" id="rtsp-password" class="password-input" placeholder="admin123">
+              <button type="button" class="toggle-password" onclick="togglePassword('rtsp-password')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Password for RTSP authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-ip">RTSP IP Address</label>
+            <input type="text" id="rtsp-ip" placeholder="192.168.1.100">
+            <small style="color: #666; font-size: 0.9em;">IP address of the RTSP camera</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-port">RTSP Port</label>
+            <input type="number" id="rtsp-port" min="1" max="65535" value="554">
+            <small style="color: #666; font-size: 0.9em;">Port number for RTSP connection</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-path">RTSP Path</label>
+            <input type="text" id="rtsp-path" placeholder="/stream1">
+            <small style="color: #666; font-size: 0.9em;">RTSP stream path</small>
+          </div>
+        </div>
+        
+        <!-- Recording Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Recording Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="segment-duration">Segment Duration (seconds)</label>
+            <input type="number" id="segment-duration" min="1" max="60" value="10">
+            <small style="color: #666; font-size: 0.9em;">Duration of each video segment</small>
+          </div>
+          <div class="form-group">
+            <label for="clip-duration">Clip Duration (seconds)</label>
+            <input type="number" id="clip-duration" min="10" max="300" value="30">
+            <small style="color: #666; font-size: 0.9em;">Duration of video clips</small>
+          </div>
+          <div class="form-group">
+            <label for="width">Video Width</label>
+            <input type="number" id="width" min="320" max="3840" value="1920">
+            <small style="color: #666; font-size: 0.9em;">Video width in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="height">Video Height</label>
+            <input type="number" id="height" min="240" max="2160" value="1080">
+            <small style="color: #666; font-size: 0.9em;">Video height in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="frame-rate">Frame Rate (fps)</label>
+            <input type="number" id="frame-rate" min="1" max="60" value="30">
+            <small style="color: #666; font-size: 0.9em;">Frames per second</small>
+          </div>
+          <div class="form-group">
+            <label for="resolution">Resolution</label>
+            <input type="text" id="resolution" placeholder="1920x1080">
+            <small style="color: #666; font-size: 0.9em;">Video resolution format</small>
+          </div>
+          <div class="form-group">
+            <label for="auto-delete">Auto Delete (Days)</label>
+            <input type="number" id="auto-delete" min="1" max="365" value="30">
+            <small style="color: #666; font-size: 0.9em;">Automatically delete video files after specified days (1-365)</small>
+          </div>
+        </div>
+        
+        <!-- Storage Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Storage Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="storage-path">Storage Path</label>
+            <input type="text" id="storage-path" placeholder="./storage">
+            <small style="color: #666; font-size: 0.9em;">Local storage directory path</small>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" id="hardware-accel">
+              Hardware Acceleration
+            </label>
+            <small style="color: #666; font-size: 0.9em;">Enable hardware acceleration for video processing</small>
+          </div>
+          <div class="form-group">
+            <label for="codec">Video Codec</label>
+            <input type="text" id="codec" placeholder="h264">
+            <small style="color: #666; font-size: 0.9em;">Video encoding codec (e.g., h264, h265, vp8, vp9)</small>
+          </div>
+        </div>
+        
+        <!-- Server Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Server Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="server-port">Server Port</label>
+            <input type="number" id="server-port" min="1" max="65535" value="8080">
+            <small style="color: #666; font-size: 0.9em;">HTTP server port</small>
+          </div>
+          <div class="form-group">
+            <label for="base-url">Base URL</label>
+            <input type="text" id="base-url" placeholder="http://localhost:8080">
+            <small style="color: #666; font-size: 0.9em;">Base URL for the application</small>
+          </div>
+
+        </div>
+        
+        <!-- R2 Storage Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">R2 Storage Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" id="r2-enabled">
+              Enable R2 Storage
+            </label>
+            <small style="color: #666; font-size: 0.9em;">Enable Cloudflare R2 storage integration</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-access-key">R2 Access Key</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-access-key" class="password-input" placeholder="Enter access key">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-access-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 access key for authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-secret-key">R2 Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-secret-key" class="password-input" placeholder="Enter secret key">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-secret-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 secret key for authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-account-id">R2 Account ID</label>
+            <input type="text" id="r2-account-id" placeholder="Enter account ID">
+            <small style="color: #666; font-size: 0.9em;">Cloudflare account ID</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-bucket">R2 Bucket Name</label>
+            <input type="text" id="r2-bucket" placeholder="ayo-mwr">
+            <small style="color: #666; font-size: 0.9em;">R2 bucket name for storage</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-region">R2 Region</label>
+            <input type="text" id="r2-region" placeholder="auto">
+            <small style="color: #666; font-size: 0.9em;">R2 storage region</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-endpoint">R2 Endpoint</label>
+            <input type="text" id="r2-endpoint" placeholder="Enter endpoint URL">
+            <small style="color: #666; font-size: 0.9em;">R2 API endpoint URL</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-base-url">R2 Base URL</label>
+            <input type="text" id="r2-base-url" placeholder="Enter base URL">
+            <small style="color: #666; font-size: 0.9em;">R2 public base URL</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-token-value">R2 Token Value</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-token-value" class="password-input" placeholder="Enter token">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-token-value')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 authentication token</small>
+          </div>
+        </div>
+        
+        <!-- Watermark Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Watermark Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="watermark-position">Watermark Position</label>
+            <select id="watermark-position">
+               <option value="top_left">Top Left</option>
+               <option value="top_right">Top Right</option>
+               <option value="bottom_left">Bottom Left</option>
+               <option value="bottom_right" selected>Bottom Right</option>
+               <option value="center">Center</option>
+             </select>
+            <small style="color: #666; font-size: 0.9em;">Position of watermark on video</small>
+          </div>
+          <div class="form-group">
+            <label for="watermark-margin">Watermark Margin (px)</label>
+            <input type="number" id="watermark-margin" min="0" max="100" value="20">
+            <small style="color: #666; font-size: 0.9em;">Margin from edge in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="watermark-opacity">Watermark Opacity</label>
+            <input type="number" id="watermark-opacity" min="0" max="1" step="0.1" value="0.8">
+            <small style="color: #666; font-size: 0.9em;">Opacity level (0.0 - 1.0)</small>
+          </div>
+        </div>
+        
+        <!-- AYO API Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">AYO API Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="ayoindo-api-base-endpoint">API Base Endpoint</label>
+            <input type="text" id="ayoindo-api-base-endpoint" placeholder="https://api.ayoindo.com">
+            <small style="color: #666; font-size: 0.9em;">Base URL for AYO API</small>
+          </div>
+          <div class="form-group">
+            <label for="ayoindo-api-token">API Token</label>
+            <div class="password-input-container">
+              <input type="password" id="ayoindo-api-token" class="password-input" placeholder="Enter API token">
+              <button type="button" class="toggle-password" onclick="togglePassword('ayoindo-api-token')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Authentication token for AYO API</small>
+          </div>
+        </div>
+        
+
+        
         <h4 style="color: #273c75; margin-top: 2rem;">Disk Manager Configuration</h4>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
           <div class="form-group">
@@ -1454,26 +1717,87 @@ async function loadSystemConfig() {
     const result = await response.json();
     systemConfig = result.data || {};
     
-    // Update form fields with loaded values
+    // Worker Concurrency Settings
     document.getElementById('booking-worker-concurrency').value = 
       systemConfig['booking_worker_concurrency'] || 2;
     document.getElementById('video-request-worker-concurrency').value = 
       systemConfig['video_request_worker_concurrency'] || 3;
     document.getElementById('pending-task-worker-concurrency').value = 
-      systemConfig['pending_task_worker_concurrency'] || 2;
+      systemConfig['pending_task_worker_concurrency'] || 5;
     
-    // Update quality checkboxes
-    const enabledQualities = (systemConfig['enabled_qualities'] || '1080p,720p').split(',');
+    // Quality Settings
+    const enabledQualities = (systemConfig['enabled_qualities'] || '1080p,720p,480p,360p').split(',');
     document.querySelectorAll('.quality-checkbox').forEach(checkbox => {
       checkbox.checked = enabledQualities.includes(checkbox.value);
     });
     
-    // Update video duration check checkbox
-    const enableVideoDurationCheck = systemConfig['enable_video_duration_check'] === 'true';
-    document.getElementById('enable-video-duration-check').checked = enableVideoDurationCheck;
+    // Video Processing Settings
+    document.getElementById('enable-video-duration-check').checked = 
+      systemConfig['enable_video_duration_check'] === 'true';
     
-    // Load disk manager configuration
-    await loadDiskManagerConfig();
+    // Venue Configuration (no defaults)
+    document.getElementById('venue-code').value = systemConfig['venue_code'] || '';
+    document.getElementById('venue-secret-key').value = systemConfig['venue_secret_key'] || '';
+    
+    // Arduino Configuration
+    document.getElementById('arduino-com-port').value = systemConfig['arduino_com_port'] || '/dev/ttyUSB0';
+    document.getElementById('arduino-baud-rate').value = systemConfig['arduino_baud_rate'] || 9600;
+    
+    // RTSP Configuration
+    document.getElementById('rtsp-username').value = systemConfig['rtsp_username'] || 'admin';
+    document.getElementById('rtsp-password').value = systemConfig['rtsp_password'] || 'admin123';
+    document.getElementById('rtsp-ip').value = systemConfig['rtsp_ip'] || '192.168.1.100';
+    document.getElementById('rtsp-port').value = systemConfig['rtsp_port'] || 554;
+    document.getElementById('rtsp-path').value = systemConfig['rtsp_path'] || '/stream1';
+    
+    // Recording Configuration
+    document.getElementById('segment-duration').value = systemConfig['segment_duration'] || 10;
+    document.getElementById('clip-duration').value = systemConfig['clip_duration'] || 30;
+    document.getElementById('width').value = systemConfig['width'] || 1920;
+    document.getElementById('height').value = systemConfig['height'] || 1080;
+    document.getElementById('frame-rate').value = systemConfig['frame_rate'] || 30;
+    document.getElementById('resolution').value = systemConfig['resolution'] || '1920x1080';
+    document.getElementById('auto-delete').value = systemConfig['auto_delete'] || 30;
+    
+    // Storage Configuration
+    document.getElementById('storage-path').value = systemConfig['storage_path'] || './storage';
+    document.getElementById('hardware-accel').checked = systemConfig['hardware_accel'] === 'true';
+    document.getElementById('codec').value = systemConfig['codec'] || 'h264';
+    
+    // Server Configuration
+    document.getElementById('server-port').value = systemConfig['server_port'] || 8080;
+    document.getElementById('base-url').value = systemConfig['base_url'] || 'http://localhost:8080';
+
+    
+    // R2 Storage Configuration
+    document.getElementById('r2-enabled').checked = systemConfig['r2_enabled'] === 'true';
+    document.getElementById('r2-access-key').value = systemConfig['r2_access_key'] || '';
+    document.getElementById('r2-secret-key').value = systemConfig['r2_secret_key'] || '';
+    document.getElementById('r2-account-id').value = systemConfig['r2_account_id'] || '';
+    document.getElementById('r2-bucket').value = systemConfig['r2_bucket'] || 'ayo-mwr';
+    document.getElementById('r2-region').value = systemConfig['r2_region'] || 'auto';
+    document.getElementById('r2-endpoint').value = systemConfig['r2_endpoint'] || '';
+    document.getElementById('r2-base-url').value = systemConfig['r2_base_url'] || '';
+    document.getElementById('r2-token-value').value = systemConfig['r2_token_value'] || '';
+    
+    // Watermark Configuration
+    document.getElementById('watermark-position').value = systemConfig['watermark_position'] || 'bottom_right';
+    document.getElementById('watermark-margin').value = systemConfig['watermark_margin'] || 20;
+    document.getElementById('watermark-opacity').value = systemConfig['watermark_opacity'] || 0.8;
+    
+    // AYO API Configuration
+    document.getElementById('ayoindo-api-base-endpoint').value = systemConfig['ayoindo_api_base_endpoint'] || 'https://api.ayoindo.com';
+    document.getElementById('ayoindo-api-token').value = systemConfig['ayoindo_api_token'] || '';
+    
+
+    
+    // Disk Manager Configuration
+    document.getElementById('minimum-free-space-gb').value = systemConfig['minimum_free_space_gb'] || 100;
+    document.getElementById('priority-external').value = systemConfig['priority_external'] || 1;
+    document.getElementById('priority-mounted-storage').value = systemConfig['priority_mounted_storage'] || 50;
+    document.getElementById('priority-internal-nvme').value = systemConfig['priority_internal_nvme'] || 101;
+    document.getElementById('priority-internal-sata').value = systemConfig['priority_internal_sata'] || 201;
+    document.getElementById('priority-root-filesystem').value = systemConfig['priority_root_filesystem'] || 500;
     
     showNotification('System configuration loaded successfully', 'success');
   } catch (error) {
@@ -1521,24 +1845,89 @@ async function loadDiskManagerConfig() {
 // Save system configuration to backend
 async function saveSystemConfig() {
   try {
-    // Collect form data
-    const configData = {
-      'booking_worker_concurrency': parseInt(document.getElementById('booking-worker-concurrency').value),
-      'video_request_worker_concurrency': parseInt(document.getElementById('video-request-worker-concurrency').value),
-      'pending_task_worker_concurrency': parseInt(document.getElementById('pending-task-worker-concurrency').value)
-    };
-    
     // Collect enabled qualities
     const enabledQualities = [];
     document.querySelectorAll('.quality-checkbox:checked').forEach(checkbox => {
       enabledQualities.push(checkbox.value);
     });
-    configData['enabled_qualities'] = enabledQualities.join(',');
     
-    // Get video duration check setting
-    configData['enable_video_duration_check'] = document.getElementById('enable-video-duration-check').checked.toString();
+    const configData = {
+      // Worker Concurrency Settings
+      'booking_worker_concurrency': parseInt(document.getElementById('booking-worker-concurrency').value),
+      'video_request_worker_concurrency': parseInt(document.getElementById('video-request-worker-concurrency').value),
+      'pending_task_worker_concurrency': parseInt(document.getElementById('pending-task-worker-concurrency').value),
+      
+      // Quality Settings
+      'enabled_qualities': enabledQualities.join(','),
+      
+      // Video Processing Settings
+      'enable_video_duration_check': document.getElementById('enable-video-duration-check').checked.toString(),
+      
+      // Venue Configuration
+      'venue_code': document.getElementById('venue-code').value,
+      'venue_secret_key': document.getElementById('venue-secret-key').value,
+      
+      // Arduino Configuration
+      'arduino_com_port': document.getElementById('arduino-com-port').value,
+      'arduino_baud_rate': parseInt(document.getElementById('arduino-baud-rate').value),
+      
+      // RTSP Configuration
+      'rtsp_username': document.getElementById('rtsp-username').value,
+      'rtsp_password': document.getElementById('rtsp-password').value,
+      'rtsp_ip': document.getElementById('rtsp-ip').value,
+      'rtsp_port': parseInt(document.getElementById('rtsp-port').value),
+      'rtsp_path': document.getElementById('rtsp-path').value,
+      
+      // Recording Configuration
+      'segment_duration': parseInt(document.getElementById('segment-duration').value),
+      'clip_duration': parseInt(document.getElementById('clip-duration').value),
+      'width': parseInt(document.getElementById('width').value),
+      'height': parseInt(document.getElementById('height').value),
+      'frame_rate': parseInt(document.getElementById('frame-rate').value),
+      'resolution': document.getElementById('resolution').value,
+      'auto_delete': parseInt(document.getElementById('auto-delete').value),
+      
+      // Storage Configuration
+      'storage_path': document.getElementById('storage-path').value,
+      'hardware_accel': document.getElementById('hardware-accel').checked.toString(),
+      'codec': document.getElementById('codec').value,
+      
+      // Server Configuration
+      'server_port': parseInt(document.getElementById('server-port').value),
+      'base_url': document.getElementById('base-url').value,
+      
+      // R2 Storage Configuration
+      'r2_enabled': document.getElementById('r2-enabled').checked.toString(),
+      'r2_access_key': document.getElementById('r2-access-key').value,
+      'r2_secret_key': document.getElementById('r2-secret-key').value,
+      'r2_account_id': document.getElementById('r2-account-id').value,
+      'r2_bucket': document.getElementById('r2-bucket').value,
+      'r2_region': document.getElementById('r2-region').value,
+      'r2_endpoint': document.getElementById('r2-endpoint').value,
+      'r2_base_url': document.getElementById('r2-base-url').value,
+      'r2_token_value': document.getElementById('r2-token-value').value,
+      
+      // Watermark Configuration
+      'watermark_position': document.getElementById('watermark-position').value,
+      'watermark_margin': parseInt(document.getElementById('watermark-margin').value),
+      'watermark_opacity': parseFloat(document.getElementById('watermark-opacity').value),
+      
+      // AYO API Configuration
+      'ayoindo_api_base_endpoint': document.getElementById('ayoindo-api-base-endpoint').value,
+      'ayoindo_api_token': document.getElementById('ayoindo-api-token').value,
+      
+
+      
+      // Disk Manager Configuration
+      'minimum_free_space_gb': parseInt(document.getElementById('minimum-free-space-gb').value),
+      'priority_external': parseInt(document.getElementById('priority-external').value),
+      'priority_mounted_storage': parseInt(document.getElementById('priority-mounted-storage').value),
+      'priority_internal_nvme': parseInt(document.getElementById('priority-internal-nvme').value),
+      'priority_internal_sata': parseInt(document.getElementById('priority-internal-sata').value),
+      'priority_root_filesystem': parseInt(document.getElementById('priority-root-filesystem').value)
+    };
     
-    // Validate data
+    // Validate worker concurrency data
     if (configData['booking_worker_concurrency'] < 1 || configData['booking_worker_concurrency'] > 10 ||
         configData['video_request_worker_concurrency'] < 1 || configData['video_request_worker_concurrency'] > 10 ||
         configData['pending_task_worker_concurrency'] < 1 || configData['pending_task_worker_concurrency'] > 10) {
@@ -1565,9 +1954,6 @@ async function saveSystemConfig() {
     
     const result = await response.json();
     systemConfig = { ...systemConfig, ...configData };
-    
-    // Save disk manager configuration
-    await saveDiskManagerConfig();
     
     showNotification('System configuration saved successfully', 'success');
     

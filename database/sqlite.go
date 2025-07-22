@@ -4,11 +4,20 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// getEnvOrDefault returns environment variable value or default if not set
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 
 // SQLiteDB implements the Database interface using SQLite
 type SQLiteDB struct {
@@ -430,12 +439,15 @@ func initTables(db *sql.DB) error {
 	defaultConfigs := []struct {
 		key, value, configType string
 	}{
-		{"booking_worker_concurrency", "2", "int"},
-		{"video_request_worker_concurrency", "3", "int"},
-		{"pending_task_worker_concurrency", "5", "int"},
-		{"enabled_qualities", "1080p,720p,480p,360p", "string"},
+		// Worker Concurrency Configuration
+		{"booking_worker_concurrency", getEnvOrDefault("BOOKING_WORKER_CONCURRENCY", "2"), "int"},
+		{"video_request_worker_concurrency", getEnvOrDefault("VIDEO_REQUEST_WORKER_CONCURRENCY", "3"), "int"},
+		{"pending_task_worker_concurrency", getEnvOrDefault("PENDING_TASK_WORKER_CONCURRENCY", "5"), "int"},
+		{"enabled_qualities", getEnvOrDefault("ENABLED_QUALITIES", "1080p,720p,480p,360p"), "string"},
+		
 		// Video Duration Check Configuration
 		{"enable_video_duration_check", "false", "boolean"},
+		
 		// Disk Manager Configuration
 		{"minimum_free_space_gb", "100", "int"},
 		{"priority_external", "1", "int"},
@@ -443,6 +455,69 @@ func initTables(db *sql.DB) error {
 		{"priority_internal_nvme", "101", "int"},
 		{"priority_internal_sata", "201", "int"},
 		{"priority_root_filesystem", "500", "int"},
+		
+		// Arduino Configuration
+		{"arduino_com_port", getEnvOrDefault("ARDUINO_COM_PORT", "COM4"), "string"},
+		{"arduino_baud_rate", getEnvOrDefault("ARDUINO_BAUD_RATE", "9600"), "int"},
+		
+		// RTSP Configuration (Legacy single camera)
+		{"rtsp_username", getEnvOrDefault("RTSP_USERNAME", "admin"), "string"},
+		{"rtsp_password", getEnvOrDefault("RTSP_PASSWORD", "password"), "string"},
+		{"rtsp_ip", getEnvOrDefault("RTSP_IP", "192.168.1.100"), "string"},
+		{"rtsp_port", getEnvOrDefault("RTSP_PORT", "554"), "int"},
+		{"rtsp_path", getEnvOrDefault("RTSP_PATH", "/streaming/channels/101/"), "string"},
+		
+		// Recording Configuration
+		{"segment_duration", getEnvOrDefault("SEGMENT_DURATION", "30"), "int"},
+		{"clip_duration", getEnvOrDefault("CLIP_DURATION", "60"), "int"},
+		{"width", getEnvOrDefault("WIDTH", "800"), "int"},
+		{"height", getEnvOrDefault("HEIGHT", "600"), "int"},
+		{"frame_rate", getEnvOrDefault("FRAME_RATE", "30"), "int"},
+		{"resolution", getEnvOrDefault("RESOLUTION", "800x600"), "string"},
+		{"auto_delete", "30", "int"},
+		
+		// Storage Configuration
+		{"storage_path", getEnvOrDefault("STORAGE_PATH", "./videos"), "string"},
+		{"hardware_accel", getEnvOrDefault("HW_ACCEL", ""), "string"},
+		{"codec", getEnvOrDefault("CODEC", "avc"), "string"},
+		
+		// Server Configuration
+		{"server_port", getEnvOrDefault("PORT", "3000"), "int"},
+		{"base_url", getEnvOrDefault("BASE_URL", "http://localhost:3000"), "string"},
+		
+
+		
+		// R2 Storage Configuration
+		{"r2_access_key", getEnvOrDefault("R2_ACCESS_KEY", "your-r2-access-key"), "string"},
+		{"r2_secret_key", getEnvOrDefault("R2_SECRET_KEY", "your-r2-secret-key"), "string"},
+		{"r2_account_id", getEnvOrDefault("R2_ACCOUNT_ID", "your-r2-account-id"), "string"},
+		{"r2_bucket", getEnvOrDefault("R2_BUCKET", "your-bucket-name"), "string"},
+		{"r2_region", getEnvOrDefault("R2_REGION", "auto"), "string"},
+		{"r2_endpoint", getEnvOrDefault("R2_ENDPOINT", "https://your-r2-endpoint.com"), "string"},
+		{"r2_base_url", getEnvOrDefault("R2_BASE_URL", "https://your-media-domain.com"), "string"},
+		{"r2_enabled", getEnvOrDefault("R2_ENABLED", "false"), "boolean"},
+		{"r2_token_value", getEnvOrDefault("R2_TOKEN_VALUE", "your-r2-token"), "string"},
+		
+		// Watermark Configuration
+		{"watermark_position", getEnvOrDefault("WATERMARK_POSITION", "top_right"), "string"},
+		{"watermark_margin", getEnvOrDefault("WATERMARK_MARGIN", "10"), "int"},
+		{"watermark_opacity", getEnvOrDefault("WATERMARK_OPACITY", "0.6"), "float"},
+		
+		// AYO API Configuration
+		{"ayoindo_api_base_endpoint", getEnvOrDefault("AYOINDO_API_BASE_ENDPOINT", "https://api.example.com/v1"), "string"},
+		{"ayoindo_api_token", getEnvOrDefault("AYOINDO_API_TOKEN", "your-api-token"), "string"},
+		
+		// Venue Configuration (no default values - database only)
+		{"venue_code", "", "string"},
+		{"venue_secret_key", "", "string"},
+		
+		// Worker Configuration
+		{"worker_concurrency", "2", "int"},
+		
+		// Transcoding Configuration
+		{"enable_480p", "true", "boolean"},
+		{"enable_720p", "true", "boolean"},
+		{"enable_1080p", "false", "boolean"},
 	}
 
 	for _, config := range defaultConfigs {

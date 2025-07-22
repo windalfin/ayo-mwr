@@ -244,15 +244,52 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		return
 	}
 
-	// Initialize R2 storage client
+	// Initialize R2 storage client with database configuration
 	r2Config := storage.R2Config{
-		AccessKey: os.Getenv("R2_ACCESS_KEY"),
-		SecretKey: os.Getenv("R2_SECRET_KEY"),
-		AccountID: os.Getenv("R2_ACCOUNT_ID"),
-		Bucket:    os.Getenv("R2_BUCKET"),
-		Endpoint:  os.Getenv("R2_ENDPOINT"),
-		Region:    os.Getenv("R2_REGION"),
-		BaseURL:   os.Getenv("R2_BASE_URL"),
+		AccessKey: h.config.R2AccessKey,
+		SecretKey: h.config.R2SecretKey,
+		AccountID: h.config.R2AccountID,
+		Bucket:    h.config.R2Bucket,
+		Endpoint:  h.config.R2Endpoint,
+		Region:    h.config.R2Region,
+		BaseURL:   h.config.R2BaseURL,
+	}
+
+	// Fallback to database if config values are empty
+	if r2Config.AccessKey == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2AccessKey); err == nil {
+			r2Config.AccessKey = config.Value
+		}
+	}
+	if r2Config.SecretKey == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2SecretKey); err == nil {
+			r2Config.SecretKey = config.Value
+		}
+	}
+	if r2Config.AccountID == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2AccountID); err == nil {
+			r2Config.AccountID = config.Value
+		}
+	}
+	if r2Config.Bucket == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2Bucket); err == nil {
+			r2Config.Bucket = config.Value
+		}
+	}
+	if r2Config.Endpoint == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2Endpoint); err == nil {
+			r2Config.Endpoint = config.Value
+		}
+	}
+	if r2Config.Region == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2Region); err == nil {
+			r2Config.Region = config.Value
+		}
+	}
+	if r2Config.BaseURL == "" {
+		if config, err := h.db.GetSystemConfig(database.ConfigR2BaseURL); err == nil {
+			r2Config.BaseURL = config.Value
+		}
 	}
 
 	r2Client, err := storage.NewR2Storage(r2Config)

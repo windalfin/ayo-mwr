@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"ayo-mwr/database"
 )
 
 // get Watermark for that video from AyoIndonesia API
@@ -19,13 +21,37 @@ import (
 // We will store the watermark image in ./watermark/{venue_code} folder
 // The API will return 3 watermark with 3 different size for different video quality
 func GetWatermark(venueCode string) (string, error) {
-	ayoindoAPIBase := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
+	// Load configuration from database
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("Failed to connect to database, using fallback values: %v", err)
+	}
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
+
+	ayoindoAPIBase := "http://iot-api.ayodev.xyz:6060/api/v1"
+	ayoindoAPIToken := ""
+	storagePath := "./videos"
+
+	if db != nil {
+		if baseURL, err := db.GetSystemConfig(database.ConfigAyoindoAPIBaseEndpoint); err == nil && baseURL.Value != "" {
+			ayoindoAPIBase = baseURL.Value
+		}
+		if token, err := db.GetSystemConfig(database.ConfigAyoindoAPIToken); err == nil && token.Value != "" {
+			ayoindoAPIToken = token.Value
+		}
+		if path, err := db.GetSystemConfig(database.ConfigStoragePath); err == nil && path.Value != "" {
+			storagePath = path.Value
+		}
+	}
+
+	// Use default values if database values are empty
 	if ayoindoAPIBase == "" {
 		ayoindoAPIBase = "http://iot-api.ayodev.xyz:6060/api/v1"
 	}
-	ayoindoAPIToken := os.Getenv("AYOINDO_API_TOKEN")
-	// Use storage path from environment (updated by active disk selection)
-	storagePath := os.Getenv("STORAGE_PATH")
 	if storagePath == "" {
 		storagePath = "./videos"
 	}
@@ -151,21 +177,42 @@ func ParseWatermarkPosition(env string) WatermarkPosition {
 	}
 }
 
-// GetWatermarkSettings fetches watermark position, margin, and opacity from env
+// GetWatermarkSettings fetches watermark position, margin, and opacity from database
 func GetWatermarkSettings() (WatermarkPosition, int, float64) {
-	pos := ParseWatermarkPosition(os.Getenv("WATERMARK_POSITION"))
+	// Load configuration from database
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("Failed to connect to database, using fallback values: %v", err)
+	}
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
+
+	pos := TopRight // default
 	margin := 10
-	if m := os.Getenv("WATERMARK_MARGIN"); m != "" {
-		if val, err := strconv.Atoi(m); err == nil {
-			margin = val
-		}
-	}
 	opacity := 0.6
-	if o := os.Getenv("WATERMARK_OPACITY"); o != "" {
-		if val, err := strconv.ParseFloat(o, 64); err == nil {
-			opacity = val
+
+	if db != nil {
+		if position, err := db.GetSystemConfig(database.ConfigWatermarkPosition); err == nil && position.Value != "" {
+			pos = ParseWatermarkPosition(position.Value)
+		}
+		if marginStr, err := db.GetSystemConfig(database.ConfigWatermarkMargin); err == nil && marginStr.Value != "" {
+			if val, err := strconv.Atoi(marginStr.Value); err == nil {
+				margin = val
+			}
+		}
+		if opacityStr, err := db.GetSystemConfig(database.ConfigWatermarkOpacity); err == nil && opacityStr.Value != "" {
+			if val, err := strconv.ParseFloat(opacityStr.Value, 64); err == nil {
+				opacity = val
+			}
 		}
 	}
+
+	// Use default values if database connection failed
+	// pos, margin, and opacity already have default values set above
+
 	return pos, margin, opacity
 }
 

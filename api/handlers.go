@@ -720,7 +720,22 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 			dbmod.ConfigPriorityMountedStorage,
 			dbmod.ConfigPriorityInternalNVMe,
 			dbmod.ConfigPriorityInternalSATA,
-			dbmod.ConfigPriorityRootFilesystem:
+			dbmod.ConfigPriorityRootFilesystem,
+			// Recording Configuration
+			dbmod.ConfigSegmentDuration,
+			dbmod.ConfigClipDuration,
+			dbmod.ConfigWidth,
+			dbmod.ConfigHeight,
+			dbmod.ConfigFrameRate,
+			dbmod.ConfigAutoDelete,
+			// Arduino Configuration
+			dbmod.ConfigArduinoBaudRate,
+			// RTSP Configuration
+			dbmod.ConfigRTSPPort,
+			// Server Configuration
+			dbmod.ConfigServerPort,
+			// Watermark Configuration
+			dbmod.ConfigWatermarkMargin:
 			// These should be integers
 			if intVal, ok := value.(float64); ok {
 				strValue = strconv.Itoa(int(intVal))
@@ -728,6 +743,80 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 			} else {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Invalid value for %s: expected integer", key),
+				})
+				return
+			}
+		case dbmod.ConfigWatermarkOpacity:
+			// This should be a float
+			if floatVal, ok := value.(float64); ok {
+				strValue = fmt.Sprintf("%.2f", floatVal)
+				configType = "float"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected float", key),
+				})
+				return
+			}
+		case dbmod.ConfigR2Enabled:
+			// This should be a boolean
+			if boolVal, ok := value.(bool); ok {
+				strValue = fmt.Sprintf("%t", boolVal)
+				configType = "boolean"
+			} else if strVal, ok := value.(string); ok {
+				strVal = strings.ToLower(strVal)
+				if strVal == "true" || strVal == "false" {
+					strValue = strVal
+					configType = "boolean"
+				} else {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Invalid value for %s: expected boolean, got %s", key, strVal),
+					})
+					return
+				}
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected boolean", key),
+				})
+				return
+			}
+		case dbmod.ConfigVenueCode,
+			dbmod.ConfigVenueSecretKey,
+			// Arduino Configuration
+			dbmod.ConfigArduinoCOMPort,
+			// RTSP Configuration
+			dbmod.ConfigRTSPUsername,
+			dbmod.ConfigRTSPPassword,
+			dbmod.ConfigRTSPIP,
+			dbmod.ConfigRTSPPath,
+			// Recording Configuration
+			dbmod.ConfigResolution,
+			// Storage Configuration
+			dbmod.ConfigStoragePath,
+			dbmod.ConfigHardwareAccel,
+			dbmod.ConfigCodec,
+			// Server Configuration
+			dbmod.ConfigBaseURL,
+			// R2 Storage Configuration
+			dbmod.ConfigR2AccessKey,
+			dbmod.ConfigR2SecretKey,
+			dbmod.ConfigR2AccountID,
+			dbmod.ConfigR2Bucket,
+			dbmod.ConfigR2Region,
+			dbmod.ConfigR2Endpoint,
+			dbmod.ConfigR2BaseURL,
+			dbmod.ConfigR2TokenValue,
+			// Watermark Configuration
+			dbmod.ConfigWatermarkPosition,
+			// AYO API Configuration
+			dbmod.ConfigAyoindoAPIBaseEndpoint,
+			dbmod.ConfigAyoindoAPIToken:
+			// These should be strings
+			if strVal, ok := value.(string); ok {
+				strValue = strVal
+				configType = "string"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected string", key),
 				})
 				return
 			}

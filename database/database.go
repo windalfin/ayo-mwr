@@ -187,12 +187,15 @@ type User struct {
 
 // System configuration keys
 const (
+	// Worker Concurrency Configuration
 	ConfigBookingWorkerConcurrency      = "booking_worker_concurrency"
 	ConfigVideoRequestWorkerConcurrency = "video_request_worker_concurrency"
 	ConfigPendingTaskWorkerConcurrency  = "pending_task_worker_concurrency"
 	ConfigEnabledQualities              = "enabled_qualities"
+	
 	// Video Processing Configuration
 	ConfigEnableVideoDurationCheck = "enable_video_duration_check"
+	
 	// Disk Manager Configuration
 	ConfigMinimumFreeSpaceGB     = "minimum_free_space_gb"
 	ConfigPriorityExternal       = "priority_external"
@@ -200,6 +203,63 @@ const (
 	ConfigPriorityInternalNVMe   = "priority_internal_nvme"
 	ConfigPriorityInternalSATA   = "priority_internal_sata"
 	ConfigPriorityRootFilesystem = "priority_root_filesystem"
+	
+	// Venue Configuration (no default values)
+	ConfigVenueCode      = "venue_code"
+	ConfigVenueSecretKey = "venue_secret_key"
+	
+	// Arduino Configuration
+	ConfigArduinoCOMPort  = "arduino_com_port"
+	ConfigArduinoBaudRate = "arduino_baud_rate"
+	
+	// RTSP Configuration (Legacy single camera)
+	ConfigRTSPUsername = "rtsp_username"
+	ConfigRTSPPassword = "rtsp_password"
+	ConfigRTSPIP       = "rtsp_ip"
+	ConfigRTSPPort     = "rtsp_port"
+	ConfigRTSPPath     = "rtsp_path"
+	
+	// Recording Configuration
+	ConfigSegmentDuration = "segment_duration"
+	ConfigClipDuration    = "clip_duration"
+	ConfigWidth           = "width"
+	ConfigHeight          = "height"
+	ConfigFrameRate       = "frame_rate"
+	ConfigResolution      = "resolution"
+	ConfigAutoDelete      = "auto_delete"
+	
+	// Storage Configuration
+	ConfigStoragePath   = "storage_path"
+	ConfigHardwareAccel = "hardware_accel"
+	ConfigCodec         = "codec"
+	
+	// Server Configuration
+	ConfigServerPort = "server_port"
+	ConfigBaseURL    = "base_url"
+	
+
+	
+	// R2 Storage Configuration
+	ConfigR2AccessKey  = "r2_access_key"
+	ConfigR2SecretKey  = "r2_secret_key"
+	ConfigR2AccountID  = "r2_account_id"
+	ConfigR2Bucket     = "r2_bucket"
+	ConfigR2Region     = "r2_region"
+	ConfigR2Endpoint   = "r2_endpoint"
+	ConfigR2BaseURL    = "r2_base_url"
+	ConfigR2Enabled    = "r2_enabled"
+	ConfigR2TokenValue = "r2_token_value"
+	
+	// Watermark Configuration
+	ConfigWatermarkPosition = "watermark_position"
+	ConfigWatermarkMargin   = "watermark_margin"
+	ConfigWatermarkOpacity  = "watermark_opacity"
+	
+	// AYO API Configuration
+	ConfigAyoindoAPIBaseEndpoint = "ayoindo_api_base_endpoint"
+	ConfigAyoindoAPIToken        = "ayoindo_api_token"
+	
+	// Note: cameras_config is stored in separate 'cameras' table, not in system_config
 )
 
 // Database defines the interface for database operations

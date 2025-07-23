@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ayo-mwr/database"
 )
 
 // AyoIndoClient handles interactions with the AYO Indonesia API
@@ -108,6 +110,7 @@ func loadEnvFile() error {
 var (
 	defaultAyoIndoClient *AyoIndoClient
 	clientInitOnce       sync.Once
+	clientMutex          sync.RWMutex
 )
 
 // NewAyoIndoClient returns a singleton AyoIndoClient instance. Subsequent calls
@@ -121,6 +124,39 @@ func NewAyoIndoClient() (*AyoIndoClient, error) {
 	return defaultAyoIndoClient, err
 }
 
+// ReloadConfigFromDatabase reloads venue code and secret key from database
+// This is useful when configuration is updated via dashboard
+func (c *AyoIndoClient) ReloadConfigFromDatabase() error {
+	clientMutex.Lock()
+	defer clientMutex.Unlock()
+	
+	// Load configuration from database
+	dbPath := os.Getenv("DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = "./data/videos.db"
+	}
+
+	db, err := database.NewSQLiteDB(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Load venue code and secret key from database
+	if config, dbErr := db.GetSystemConfig(database.ConfigVenueCode); dbErr == nil {
+		c.venueCode = config.Value
+	}
+	if config, dbErr := db.GetSystemConfig(database.ConfigVenueSecretKey); dbErr == nil {
+		c.secretKey = config.Value
+	}
+
+	fmt.Printf("[DEBUG] Reloaded configuration from database:\n")
+	fmt.Printf("[DEBUG] Venue Code: %s\n", c.venueCode)
+	fmt.Printf("[DEBUG] Secret Key: %s\n", c.secretKey)
+
+	return nil
+}
+
 // newAyoIndoClientInternal performs the actual construction logic that used to
 // be in NewAyoIndoClient. It is only executed once by the sync.Once wrapper
 // above.
@@ -128,10 +164,37 @@ func newAyoIndoClientInternal() (*AyoIndoClient, error) {
 	// Try to explicitly load .env file first
 	_ = loadEnvFile()
 
-	baseURL := os.Getenv("AYOINDO_API_BASE_ENDPOINT")
-	apiToken := os.Getenv("AYOINDO_API_TOKEN")
-	venueCode := os.Getenv("VENUE_CODE")
-	secretKey := os.Getenv("VENUE_SECRET_KEY")
+	// Load configuration from database first, fallback to environment variables
+	var baseURL, apiToken, venueCode, secretKey string
+
+	// Try to load from database
+	dbPath := os.Getenv("DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = "./data/videos.db"
+	}
+
+	db, err := database.NewSQLiteDB(dbPath)
+	if err == nil {
+		// Load from database
+		if config, dbErr := db.GetSystemConfig(database.ConfigAyoindoAPIBaseEndpoint); dbErr == nil {
+			baseURL = config.Value
+		}
+		if config, dbErr := db.GetSystemConfig(database.ConfigAyoindoAPIToken); dbErr == nil {
+			apiToken = config.Value
+		}
+		if config, dbErr := db.GetSystemConfig(database.ConfigVenueCode); dbErr == nil {
+			venueCode = config.Value
+		}
+		if config, dbErr := db.GetSystemConfig(database.ConfigVenueSecretKey); dbErr == nil {
+			secretKey = config.Value
+		}
+		db.Close()
+		fmt.Printf("[DEBUG] Loading configuration from database:\n")
+	} else {
+		fmt.Printf("[DEBUG] Failed to load from database, using environment variables: %v\n", err)
+	}
+
+	// No fallback to environment variables - use only database values
 
 	// Fix baseURL format - should end without slash and point to base domain without /api prefix
 	baseURL = strings.TrimSuffix(baseURL, "/")
@@ -140,14 +203,14 @@ func newAyoIndoClientInternal() (*AyoIndoClient, error) {
 		baseURL = strings.TrimSuffix(baseURL, "/api/v1")
 	}
 
-	fmt.Printf("[DEBUG] Loading configuration from env:\n")
 	fmt.Printf("[DEBUG] Base URL: %s\n", baseURL)
 	fmt.Printf("[DEBUG] API Token: %s\n", apiToken)
 	fmt.Printf("[DEBUG] Venue Code: %s\n", venueCode)
 	fmt.Printf("[DEBUG] Secret Key: %s\n", secretKey)
 
-	if baseURL == "" || apiToken == "" || venueCode == "" || secretKey == "" {
-		return nil, fmt.Errorf("missing required environment variables for AYO API client")
+	// Allow empty venue code and secret key - they can be configured later via dashboard
+	if baseURL == "" || apiToken == "" {
+		return nil, fmt.Errorf("missing required base URL or API token for AYO API client (check database or environment variables)")
 	}
 
 	return &AyoIndoClient{
@@ -207,6 +270,11 @@ func (c *AyoIndoClient) GenerateSignature(params map[string]interface{}) (string
 
 // GetWatermarkMetadata retrieves watermark information from AYO API
 func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before accessing watermark metadata")
+	}
+
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":      c.apiToken,
@@ -272,6 +340,11 @@ func (c *AyoIndoClient) GetWatermarkMetadata() (map[string]interface{}, error) {
 
 // GetBookings retrieves booking information for a specific date
 func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before accessing bookings")
+	}
+
 	// Validate date format (YYYY-MM-DD)
 	if _, err := time.ParseInLocation("2006-01-02", date, time.Local); err != nil {
 		return nil, fmt.Errorf("invalid date format, should be YYYY-MM-DD: %w", err)
@@ -343,6 +416,11 @@ func (c *AyoIndoClient) GetBookings(date string) (map[string]interface{}, error)
 
 // SaveVideoAvailable notifies AYO API that a video is available
 func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, imagePath, uniqueID string, startTime, endTime time.Time, duration int) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before saving video availability")
+	}
+
 	// Prepare the parameters
 
 	params := map[string]interface{}{
@@ -418,6 +496,11 @@ func (c *AyoIndoClient) SaveVideoAvailable(bookingID, videoType, previewPath, im
 
 // GetVideoRequests retrieves video requests from AYO API
 func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before accessing video requests")
+	}
+
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":      c.apiToken,
@@ -491,6 +574,11 @@ func (c *AyoIndoClient) GetVideoRequests(date string) (map[string]interface{}, e
 
 // SaveVideo saves video path information to AYO API
 func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPath, downloadPath string, startTime, endTime time.Time) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before saving video")
+	}
+
 	// Prepare video object according to documentation
 
 	// value videoObj as string = "download_path:https://media.beligem.com/mp4/BK-0003-250106-0000001_camera_3_20250508114511.mp4," +
@@ -573,6 +661,15 @@ func (c *AyoIndoClient) SaveVideo(videoRequestID, bookingID, videoType, streamPa
 
 // HealthCheck performs a health check request to the AYO API
 func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return map[string]interface{}{
+			"is_error": true,
+			"message":  "Venue code and secret key must be configured in dashboard before health check can be performed",
+			"status_code": 400,
+		}, nil
+	}
+
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"venue_code": c.venueCode,
@@ -640,8 +737,25 @@ func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	// Create watermark directory if it doesn't exist
 	venueCode := c.venueCode
-	// Use storage path from environment (updated by active disk selection)
-	storagePath := os.Getenv("STORAGE_PATH")
+	// Load storage path from database
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("Failed to connect to database, using fallback values: %v", err)
+	}
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
+
+	storagePath := "./videos"
+	if db != nil {
+		if path, err := db.GetSystemConfig(database.ConfigStoragePath); err == nil && path.Value != "" {
+			storagePath = path.Value
+		}
+	}
+
+	// Use default value if database value is empty
 	if storagePath == "" {
 		storagePath = "./videos"
 	}
@@ -820,6 +934,11 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 
 // GetVideoConfiguration retrieves video configuration from AYO API
 func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before accessing video configuration")
+	}
+
 	// Prepare the parameters
 	params := map[string]interface{}{
 		"token":      c.apiToken,
@@ -885,6 +1004,11 @@ func (c *AyoIndoClient) GetVideoConfiguration() (map[string]interface{}, error) 
 
 // MarkVideoRequestsInvalid marks multiple video requests as invalid
 func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string, incomplete bool) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before marking video requests invalid")
+	}
+
 	// Validate input
 	if len(videoRequestIDs) == 0 {
 		return nil, fmt.Errorf("at least one video request ID must be provided")
@@ -968,6 +1092,11 @@ func (c *AyoIndoClient) MarkVideoRequestsInvalid(videoRequestIDs []string, incom
 
 // MarkVideosUnavailable marks multiple videos as unavailable
 func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before marking videos unavailable")
+	}
+
 	// Validate input
 	if len(uniqueIDs) == 0 {
 		return nil, fmt.Errorf("at least one unique ID must be provided")
@@ -1048,6 +1177,11 @@ func (c *AyoIndoClient) MarkVideosUnavailable(uniqueIDs []string) (map[string]in
 
 // SaveCameraStatus updates camera status to AYO API
 func (c *AyoIndoClient) SaveCameraStatus(cameraID string, isOnline bool) (map[string]interface{}, error) {
+	// Check if venue code and secret key are configured
+	if c.venueCode == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("venue code and secret key must be configured before updating camera status")
+	}
+
 	// Prepare the parameters
 	strIsonline := "INACTIVE"
 	if isOnline {

@@ -60,6 +60,12 @@ func StartBookingSyncCron(cfg *config.Config) {
 func syncBookingsFromAPI(db database.Database, ayoClient *api.AyoIndoClient) {
 	log.Println("bookingSync : Running booking synchronization task...")
 
+	// Reload configuration from database before API call
+	// This ensures we have the latest venue code and secret key
+	if err := ayoClient.ReloadConfigFromDatabase(); err != nil {
+		log.Printf("bookingSync : Warning: Failed to reload config from database: %v", err)
+	}
+
 	// Get bookings for today
 	today := time.Now().Format("2006-01-02")
 	// today := "2025-07-02" // Fixed date for testing purposes
@@ -139,4 +145,4 @@ func getBookingJSON(booking map[string]interface{}) string {
 		return ""
 	}
 	return string(jsonBytes)
-} 
+}

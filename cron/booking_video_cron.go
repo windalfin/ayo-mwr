@@ -162,15 +162,52 @@ func StartBookingVideoCron(cfg *config.Config) {
 			return
 		}
 
-		// Initialize R2 storage client
+		// Initialize R2 storage client with database configuration
 		r2Config := storage.R2Config{
-			AccessKey: os.Getenv("R2_ACCESS_KEY"),
-			SecretKey: os.Getenv("R2_SECRET_KEY"),
-			AccountID: os.Getenv("R2_ACCOUNT_ID"),
-			Bucket:    os.Getenv("R2_BUCKET"),
-			Endpoint:  os.Getenv("R2_ENDPOINT"),
-			Region:    os.Getenv("R2_REGION"),
-			BaseURL:   os.Getenv("R2_BASE_URL"),
+			AccessKey: cfg.R2AccessKey,
+			SecretKey: cfg.R2SecretKey,
+			AccountID: cfg.R2AccountID,
+			Bucket:    cfg.R2Bucket,
+			Endpoint:  cfg.R2Endpoint,
+			Region:    cfg.R2Region,
+			BaseURL:   cfg.R2BaseURL,
+		}
+
+		// Load R2 configuration from database if config values are empty
+		if r2Config.AccessKey == "" {
+			if accessKey, err := db.GetSystemConfig(database.ConfigR2AccessKey); err == nil && accessKey.Value != "" {
+				r2Config.AccessKey = accessKey.Value
+			}
+		}
+		if r2Config.SecretKey == "" {
+			if secretKey, err := db.GetSystemConfig(database.ConfigR2SecretKey); err == nil && secretKey.Value != "" {
+				r2Config.SecretKey = secretKey.Value
+			}
+		}
+		if r2Config.AccountID == "" {
+			if accountID, err := db.GetSystemConfig(database.ConfigR2AccountID); err == nil && accountID.Value != "" {
+				r2Config.AccountID = accountID.Value
+			}
+		}
+		if r2Config.Bucket == "" {
+			if bucket, err := db.GetSystemConfig(database.ConfigR2Bucket); err == nil && bucket.Value != "" {
+				r2Config.Bucket = bucket.Value
+			}
+		}
+		if r2Config.Endpoint == "" {
+			if endpoint, err := db.GetSystemConfig(database.ConfigR2Endpoint); err == nil && endpoint.Value != "" {
+				r2Config.Endpoint = endpoint.Value
+			}
+		}
+		if r2Config.Region == "" {
+			if region, err := db.GetSystemConfig(database.ConfigR2Region); err == nil && region.Value != "" {
+				r2Config.Region = region.Value
+			}
+		}
+		if r2Config.BaseURL == "" {
+			if baseURL, err := db.GetSystemConfig(database.ConfigR2BaseURL); err == nil && baseURL.Value != "" {
+				r2Config.BaseURL = baseURL.Value
+			}
 		}
 
 		r2Client, err := storage.NewR2Storage(r2Config)
@@ -223,6 +260,12 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 // processBookings handles fetching bookings from database and processing them
 func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
+	// Reload configuration from database before processing
+	// This ensures we have the latest venue code and secret key
+	if err := ayoClient.ReloadConfigFromDatabase(); err != nil {
+		log.Printf("Warning: Failed to reload config from database: %v", err)
+	}
+
 	// Load latest configuration and update semaphore if needed
 	sysConfigService := config.NewSystemConfigService(db)
 	if err := sysConfigService.LoadSystemConfigToConfig(cfg); err != nil {

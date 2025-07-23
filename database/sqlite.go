@@ -6,9 +6,15 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+)
+
+var (
+	tablesInitialized sync.Once
+	initTablesError   error
 )
 
 // getEnvOrDefault returns environment variable value or default if not set
@@ -75,11 +81,20 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 		return nil, fmt.Errorf("failed to open SQLite database: %v", err)
 	}
 
-	// Create tables if they don't exist
-	err = initTables(db)
-	if err != nil {
+	// Test connection
+	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to initialize tables: %v", err)
+		return nil, err
+	}
+
+	// Initialize tables only once
+	tablesInitialized.Do(func() {
+		initTablesError = initTables(db)
+	})
+
+	if initTablesError != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize tables: %v", initTablesError)
 	}
 
 	return &SQLiteDB{db: db}, nil

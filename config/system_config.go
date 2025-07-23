@@ -349,7 +349,9 @@ func (s *SystemConfigService) LoadSystemConfigToConfig(cfg *Config) error {
 
 		// Storage Configuration
 		case database.ConfigStoragePath:
-			cfg.StoragePath = config.Value
+			// Skip setting StoragePath from database - it will be set by diskManager.GetActiveDiskPath()
+			// This prevents conflict between system config and disk manager's active disk selection
+			// cfg.StoragePath = config.Value
 		case database.ConfigHardwareAccel:
 			cfg.HardwareAccel = config.Value
 		case database.ConfigCodec:

@@ -2,6 +2,7 @@ package api
 
 import (
 	"ayo-mwr/database"
+	"log"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,8 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := sessions.Default(c)
 		userID := session.Get("user_id")
+		
+		log.Printf("🔍 AUTH: Checking authentication for path '%s', userID: %v", c.Request.URL.Path, userID)
 		
 		if userID == nil {
 			// Check if this is an API request
@@ -43,6 +46,7 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		
+		log.Printf("✅ AUTH: User authenticated, allowing access to '%s'", c.Request.URL.Path)
 		c.Next()
 	}
 }
@@ -122,8 +126,13 @@ func (s *Server) handleRegister(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Set("user_id", user.ID)
 	session.Set("username", user.Username)
-	session.Save()
-	
+	err = session.Save()
+	if err != nil {
+		c.Header("Content-Type", "text/html")
+		c.String(http.StatusInternalServerError, s.getRegisterHTML()+"<script>alert('Session error: "+err.Error()+"');</script>")
+		return
+	}
+
 	// Redirect to dashboard
 	c.Redirect(http.StatusFound, "/")
 }
@@ -162,23 +171,42 @@ func (s *Server) handleLogin(c *gin.Context) {
 	// Get user from database
 	user, err := s.db.GetUserByUsername(username)
 	if err != nil {
+		log.Printf("❌ AUTH: Database error getting user '%s': %v", username, err)
 		c.Header("Content-Type", "text/html")
 		c.String(http.StatusInternalServerError, s.getLoginHTML()+"<script>alert('Database error');</script>")
 		return
 	}
-	
-	if user == nil || !database.ValidatePassword(user.PasswordHash, password) {
+
+	if user == nil {
+		log.Printf("❌ AUTH: User '%s' not found", username)
 		c.Header("Content-Type", "text/html")
 		c.String(http.StatusUnauthorized, s.getLoginHTML()+"<script>alert('Invalid username or password');</script>")
 		return
 	}
+
+	if !database.ValidatePassword(user.PasswordHash, password) {
+		log.Printf("❌ AUTH: Invalid password for user '%s'", username)
+		c.Header("Content-Type", "text/html")
+		c.String(http.StatusUnauthorized, s.getLoginHTML()+"<script>alert('Invalid username or password');</script>")
+		return
+	}
+
+	log.Printf("✅ AUTH: User '%s' authenticated successfully", username)
 	
 	// Create session
 	session := sessions.Default(c)
 	session.Set("user_id", user.ID)
 	session.Set("username", user.Username)
-	session.Save()
-	
+	log.Printf("🔐 AUTH: Creating session for user '%s' (ID: %d)", user.Username, user.ID)
+	err = session.Save()
+	if err != nil {
+		log.Printf("❌ AUTH: Session save error for user '%s': %v", username, err)
+		c.Header("Content-Type", "text/html")
+		c.String(http.StatusInternalServerError, s.getLoginHTML()+"<script>alert('Session error: "+err.Error()+"');</script>")
+		return
+	}
+
+	log.Printf("✅ AUTH: Session created successfully for user '%s', redirecting to dashboard", user.Username)
 	// Redirect to dashboard
 	c.Redirect(http.StatusFound, "/")
 }

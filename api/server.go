@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
@@ -70,9 +69,16 @@ func (s *Server) setupCORS(r *gin.Engine) {
 }
 
 func (s *Server) setupRoutes(r *gin.Engine) {
-	// Setup session middleware
-	sessionSecret := "ayo-mwr-session-secret-key-" + fmt.Sprintf("%d", time.Now().Unix())
+	// Setup session middleware with consistent secret key
+	sessionSecret := "ayo-mwr-session-secret-key-fixed-2024"
 	store := cookie.NewStore([]byte(sessionSecret))
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   86400 * 7, // 7 days
+		HttpOnly: true,
+		Secure:   false, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
 	r.Use(sessions.Sessions("ayo-session", store))
 
 	// Static routes - serve HLS files from the recordings directory

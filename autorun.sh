@@ -103,7 +103,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$WORK_DIR
+ReadWritePaths=$WORK_DIR /mnt
 
 [Install]
 WantedBy=multi-user.target"

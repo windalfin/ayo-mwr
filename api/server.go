@@ -25,10 +25,10 @@ type Server struct {
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
 	dashboardFS         embed.FS
-	
+
 	// Mutex untuk prevent concurrent uploads
-	uploadMutex     sync.Mutex
-	activeUploads   map[string]bool // key: cameraName, value: isUploading
+	uploadMutex   sync.Mutex
+	activeUploads map[string]bool // key: cameraName, value: isUploading
 }
 
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
@@ -125,47 +125,54 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		dashboardGroup.StaticFS("/", http.FS(dashboardHTTPFS))
 	}
 
-	// API routes
-	api := r.Group("/api")
-	{
-		// Public API endpoints (for external integrations)
-		api.POST("/upload", s.handleUpload)
-		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
-		api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
-		
-		// Protected dashboard API endpoints
-		dashboard := api.Group("", s.AuthMiddleware())
-		{
-			dashboard.GET("/streams", s.listStreams)
-			dashboard.GET("/arduino-status", s.getArduinoStatus)
-			dashboard.GET("/streams/:id", s.getStream)
-			dashboard.GET("/cameras", s.listCameras)
-			dashboard.GET("/videos", s.listVideos)
-			dashboard.GET("/system_health", s.getSystemHealth)
-			dashboard.GET("/logs", s.getLogs)
-			
-			// Booking management endpoints (protected)
-			dashboard.GET("/bookings", s.getBookings)
-			dashboard.GET("/bookings/:booking_id", s.getBookingByID)
-			dashboard.GET("/bookings/status/:status", s.getBookingsByStatus)
-			dashboard.GET("/bookings/date/:date", s.getBookingsByDate)
-		}
-		
-		// Admin endpoints for camera configuration (protected)
-		admin := api.Group("/admin", s.AuthMiddleware())
-		{
-			admin.GET("/cameras-config", s.getCamerasConfig)
-            admin.PUT("/arduino-config", s.updateArduinoConfig)
-			admin.PUT("/cameras-config", s.updateCamerasConfig)
-			admin.POST("/reload-cameras", s.reloadCameras)
-			
-			// System configuration endpoints
-			admin.GET("/system-config", s.getSystemConfig)
-			admin.PUT("/system-config", s.updateSystemConfig)
-			
-			// Disk manager configuration endpoints
-			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
-			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
-		}
-	}
+	   // API routes
+	   api := r.Group("/api")
+	   {
+			   // Public API endpoints (for external integrations and onboarding)
+			   api.POST("/upload", s.handleUpload)
+			   api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
+			   api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
+
+			   // Onboarding endpoints (public)
+			   api.GET("/onboarding-status", s.getOnboardingStatus)
+			   api.POST("/onboarding/venue-config", s.saveVenueConfig)
+			   api.GET("/onboarding/camera-defaults", s.getCameraDefaults)
+			   api.POST("/onboarding/first-camera", s.saveFirstCamera)
+
+			   // All dashboard/admin endpoints are protected
+			   dashboard := api.Group("", s.AuthMiddleware())
+			   {
+					   dashboard.GET("/streams", s.listStreams)
+					   dashboard.GET("/arduino-status", s.getArduinoStatus)
+					   dashboard.GET("/streams/:id", s.getStream)
+					   dashboard.GET("/cameras", s.listCameras)
+					   dashboard.GET("/videos", s.listVideos)
+					   dashboard.GET("/system_health", s.getSystemHealth)
+					   dashboard.GET("/logs", s.getLogs)
+
+					   // Booking management endpoints (protected)
+					   dashboard.GET("/bookings", s.getBookings)
+					   dashboard.GET("/bookings/:booking_id", s.getBookingByID)
+					   dashboard.GET("/bookings/status/:status", s.getBookingsByStatus)
+					   dashboard.GET("/bookings/date/:date", s.getBookingsByDate)
+			   }
+
+			   // Admin endpoints for camera/system/disk config (protected)
+			   admin := api.Group("/admin", s.AuthMiddleware())
+			   {
+					   admin.GET("/cameras-config", s.getCamerasConfig)
+					   admin.PUT("/arduino-config", s.updateArduinoConfig)
+					   admin.PUT("/cameras-config", s.updateCamerasConfig)
+					   admin.POST("/cameras-config", s.updateCamerasConfig) // Add POST support for camera config
+					   admin.POST("/reload-cameras", s.reloadCameras)
+
+					   // System configuration endpoints
+					   admin.GET("/system-config", s.getSystemConfig)
+					   admin.PUT("/system-config", s.updateSystemConfig)
+
+					   // Disk manager configuration endpoints
+					   admin.GET("/disk-manager-config", s.getDiskManagerConfig)
+					   admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
+			   }
+	   }
 }

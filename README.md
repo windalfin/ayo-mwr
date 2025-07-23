@@ -230,6 +230,13 @@ videos/
    ```bash
    ./autorun.sh
    ```
+
+   By default, the script will only create or update the systemd service file if it is missing or its content has changed. If you want to force an update of the systemd service file (for example, after making manual changes or troubleshooting), you can use the `--update-service` flag:
+
+   ```bash
+   ./autorun.sh --update-service
+   ```
+   This will always recreate the systemd service file, even if it is already up to date.
    
 
 2. The application will:

@@ -38,3 +38,4 @@ videos/recordings/*
 
 # environment variables
 .env
+.git

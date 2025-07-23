@@ -286,6 +286,12 @@ func markVideosUnavailableWithClient(client VideoClient, uniqueIds []string) {
 
 // markVideosUnavailable calls the API to mark videos as unavailable
 func markVideosUnavailable(client *api.AyoIndoClient, uniqueIds []string) {
+	// Reload configuration from database before API call
+	// This ensures we have the latest venue code and secret key
+	if err := client.ReloadConfigFromDatabase(); err != nil {
+		log.Printf("Warning: Failed to reload config from database: %v", err)
+	}
+	
 	markVideosUnavailableWithClient(client, uniqueIds)
 }
 

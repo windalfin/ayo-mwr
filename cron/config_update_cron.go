@@ -41,6 +41,12 @@ func StartConfigUpdateCron(cfg *config.Config, db database.Database) {
 
 // updateConfigFromAPI handles fetching configuration from API and updating the application config
 func updateConfigFromAPI(cfg *config.Config, ayoClient *api.AyoIndoClient, db database.Database) {
+	// Reload configuration from database before API call
+	// This ensures we have the latest venue code and secret key
+	if err := ayoClient.ReloadConfigFromDatabase(); err != nil {
+		log.Printf("Warning: Failed to reload config from database: %v", err)
+	}
+
 	// Create config API client wrapper
 	configClient := api.NewConfigAPIClient(ayoClient)
 	log.Println("Running configuration update task...")

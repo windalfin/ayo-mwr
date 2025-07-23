@@ -26,6 +26,23 @@
       font-size: 1.5rem;
       letter-spacing: 1px;
       font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logout-btn {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .logout-btn:hover {
+      background: #c0392b;
     }
     nav {
       display: flex;
@@ -446,10 +463,105 @@
     .video-controls button:hover {
       background: #353b48;
     }
+    
+    /* Onboarding Styles */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+    }
+    
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #ddd;
+      color: #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      transition: all 0.3s ease;
+    }
+    
+    .step.active .step-number {
+      background: #273c75;
+      color: white;
+    }
+    
+    .step.completed .step-number {
+      background: #27ae60;
+      color: white;
+    }
+    
+    .step-label {
+      font-size: 0.9rem;
+      color: #666;
+      text-align: center;
+      min-width: 80px;
+    }
+    
+    .step.active .step-label {
+      color: #273c75;
+      font-weight: 600;
+    }
+    
+    .step.completed .step-label {
+      color: #27ae60;
+      font-weight: 600;
+    }
+    
+    .step-line {
+      width: 60px;
+      height: 2px;
+      background: #ddd;
+      margin: 0 10px;
+      margin-top: -20px;
+    }
+    
+    .step.completed + .step-line {
+      background: #27ae60;
+    }
+    
+    .onboarding-step {
+      min-height: 300px;
+    }
+    
+    .password-input-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 5px;
+      font-size: 1.2rem;
+    }
+    
+    .toggle-password:hover {
+      opacity: 0.7;
+    }
   </style>
 </head>
 <body>
-  <header>AYO Middleware Admin Dashboard</header>
+  <header>
+    <span>AYO Middleware Admin Dashboard</span>
+    <a href="/logout" class="logout-btn">Logout</a>
+  </header>
   <nav>
     <a href="#cameras" class="active" data-tab="cameras">Cameras</a>
     <a href="#videos" data-tab="videos">Videos/Clips</a>
@@ -689,6 +801,269 @@
           <small style="color: #666; font-size: 0.9em; display: block; margin-top: 0.5rem;">When enabled, videos with insufficient duration will be rejected and marked as unavailable. Default: disabled</small>
         </div>
         
+        <!-- Venue Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Venue Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="venue-code">Venue Code</label>
+            <input type="text" id="venue-code" placeholder="Enter venue code">
+            <small style="color: #666; font-size: 0.9em;">Unique identifier for this venue (no default value)</small>
+          </div>
+          <div class="form-group">
+            <label for="venue-secret-key">Venue Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="venue-secret-key" class="password-input" placeholder="Enter secret key">
+              <button type="button" class="toggle-password" onclick="togglePassword('venue-secret-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Secret key for venue authentication (no default value)</small>
+          </div>
+        </div>
+        
+        <!-- Arduino Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Arduino Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="arduino-com-port">COM Port</label>
+            <input type="text" id="arduino-com-port" placeholder="/dev/ttyUSB0">
+            <small style="color: #666; font-size: 0.9em;">Serial port for Arduino communication</small>
+          </div>
+          <div class="form-group">
+            <label for="arduino-baud-rate">Baud Rate</label>
+            <input type="number" id="arduino-baud-rate" min="9600" max="115200" value="9600">
+            <small style="color: #666; font-size: 0.9em;">Serial communication speed</small>
+          </div>
+        </div>
+        
+        <!-- RTSP Configuration (Legacy) -->
+        <h4 style="color: #273c75; margin-top: 2rem;">RTSP Configuration (Legacy Single Camera)</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="rtsp-username">RTSP Username</label>
+            <input type="text" id="rtsp-username" placeholder="admin">
+            <small style="color: #666; font-size: 0.9em;">Username for RTSP authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-password">RTSP Password</label>
+            <div class="password-input-container">
+              <input type="password" id="rtsp-password" class="password-input" placeholder="admin123">
+              <button type="button" class="toggle-password" onclick="togglePassword('rtsp-password')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Password for RTSP authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-ip">RTSP IP Address</label>
+            <input type="text" id="rtsp-ip" placeholder="192.168.1.100">
+            <small style="color: #666; font-size: 0.9em;">IP address of the RTSP camera</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-port">RTSP Port</label>
+            <input type="number" id="rtsp-port" min="1" max="65535" value="554">
+            <small style="color: #666; font-size: 0.9em;">Port number for RTSP connection</small>
+          </div>
+          <div class="form-group">
+            <label for="rtsp-path">RTSP Path</label>
+            <input type="text" id="rtsp-path" placeholder="/stream1">
+            <small style="color: #666; font-size: 0.9em;">RTSP stream path</small>
+          </div>
+        </div>
+        
+        <!-- Recording Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Recording Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="segment-duration">Segment Duration (seconds)</label>
+            <input type="number" id="segment-duration" min="1" max="60" value="10">
+            <small style="color: #666; font-size: 0.9em;">Duration of each video segment</small>
+          </div>
+          <div class="form-group">
+            <label for="clip-duration">Clip Duration (seconds)</label>
+            <input type="number" id="clip-duration" min="10" max="300" value="30">
+            <small style="color: #666; font-size: 0.9em;">Duration of video clips</small>
+          </div>
+          <div class="form-group">
+            <label for="width">Video Width</label>
+            <input type="number" id="width" min="320" max="3840" value="1920">
+            <small style="color: #666; font-size: 0.9em;">Video width in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="height">Video Height</label>
+            <input type="number" id="height" min="240" max="2160" value="1080">
+            <small style="color: #666; font-size: 0.9em;">Video height in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="frame-rate">Frame Rate (fps)</label>
+            <input type="number" id="frame-rate" min="1" max="60" value="30">
+            <small style="color: #666; font-size: 0.9em;">Frames per second</small>
+          </div>
+          <div class="form-group">
+            <label for="resolution">Resolution</label>
+            <input type="text" id="resolution" placeholder="1920x1080">
+            <small style="color: #666; font-size: 0.9em;">Video resolution format</small>
+          </div>
+          <div class="form-group">
+            <label for="auto-delete">Auto Delete (Days)</label>
+            <input type="number" id="auto-delete" min="1" max="365" value="30">
+            <small style="color: #666; font-size: 0.9em;">Automatically delete video files after specified days (1-365)</small>
+          </div>
+        </div>
+        
+        <!-- Storage Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Storage Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="storage-path">Storage Path</label>
+            <input type="text" id="storage-path" placeholder="./storage">
+            <small style="color: #666; font-size: 0.9em;">Local storage directory path</small>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" id="hardware-accel">
+              Hardware Acceleration
+            </label>
+            <small style="color: #666; font-size: 0.9em;">Enable hardware acceleration for video processing</small>
+          </div>
+          <div class="form-group">
+            <label for="codec">Video Codec</label>
+            <input type="text" id="codec" placeholder="h264">
+            <small style="color: #666; font-size: 0.9em;">Video encoding codec (e.g., h264, h265, vp8, vp9)</small>
+          </div>
+        </div>
+        
+        <!-- Server Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Server Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="server-port">Server Port</label>
+            <input type="number" id="server-port" min="1" max="65535" value="8080">
+            <small style="color: #666; font-size: 0.9em;">HTTP server port</small>
+          </div>
+          <div class="form-group">
+            <label for="base-url">Base URL</label>
+            <input type="text" id="base-url" placeholder="http://localhost:8080">
+            <small style="color: #666; font-size: 0.9em;">Base URL for the application</small>
+          </div>
+
+        </div>
+        
+        <!-- R2 Storage Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">R2 Storage Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+              <input type="checkbox" id="r2-enabled">
+              Enable R2 Storage
+            </label>
+            <small style="color: #666; font-size: 0.9em;">Enable Cloudflare R2 storage integration</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-access-key">R2 Access Key</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-access-key" class="password-input" placeholder="Enter access key">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-access-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 access key for authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-secret-key">R2 Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-secret-key" class="password-input" placeholder="Enter secret key">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-secret-key')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 secret key for authentication</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-account-id">R2 Account ID</label>
+            <input type="text" id="r2-account-id" placeholder="Enter account ID">
+            <small style="color: #666; font-size: 0.9em;">Cloudflare account ID</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-bucket">R2 Bucket Name</label>
+            <input type="text" id="r2-bucket" placeholder="ayo-mwr">
+            <small style="color: #666; font-size: 0.9em;">R2 bucket name for storage</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-region">R2 Region</label>
+            <input type="text" id="r2-region" placeholder="auto">
+            <small style="color: #666; font-size: 0.9em;">R2 storage region</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-endpoint">R2 Endpoint</label>
+            <input type="text" id="r2-endpoint" placeholder="Enter endpoint URL">
+            <small style="color: #666; font-size: 0.9em;">R2 API endpoint URL</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-base-url">R2 Base URL</label>
+            <input type="text" id="r2-base-url" placeholder="Enter base URL">
+            <small style="color: #666; font-size: 0.9em;">R2 public base URL</small>
+          </div>
+          <div class="form-group">
+            <label for="r2-token-value">R2 Token Value</label>
+            <div class="password-input-container">
+              <input type="password" id="r2-token-value" class="password-input" placeholder="Enter token">
+              <button type="button" class="toggle-password" onclick="togglePassword('r2-token-value')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">R2 authentication token</small>
+          </div>
+        </div>
+        
+        <!-- Watermark Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">Watermark Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="watermark-position">Watermark Position</label>
+            <select id="watermark-position">
+               <option value="top_left">Top Left</option>
+               <option value="top_right">Top Right</option>
+               <option value="bottom_left">Bottom Left</option>
+               <option value="bottom_right" selected>Bottom Right</option>
+               <option value="center">Center</option>
+             </select>
+            <small style="color: #666; font-size: 0.9em;">Position of watermark on video</small>
+          </div>
+          <div class="form-group">
+            <label for="watermark-margin">Watermark Margin (px)</label>
+            <input type="number" id="watermark-margin" min="0" max="100" value="20">
+            <small style="color: #666; font-size: 0.9em;">Margin from edge in pixels</small>
+          </div>
+          <div class="form-group">
+            <label for="watermark-opacity">Watermark Opacity</label>
+            <input type="number" id="watermark-opacity" min="0" max="1" step="0.1" value="0.8">
+            <small style="color: #666; font-size: 0.9em;">Opacity level (0.0 - 1.0)</small>
+          </div>
+        </div>
+        
+        <!-- AYO API Configuration -->
+        <h4 style="color: #273c75; margin-top: 2rem;">AYO API Configuration</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+          <div class="form-group">
+            <label for="ayoindo-api-base-endpoint">API Base Endpoint</label>
+            <input type="text" id="ayoindo-api-base-endpoint" placeholder="https://api.ayoindo.com">
+            <small style="color: #666; font-size: 0.9em;">Base URL for AYO API</small>
+          </div>
+          <div class="form-group">
+            <label for="ayoindo-api-token">API Token</label>
+            <div class="password-input-container">
+              <input type="password" id="ayoindo-api-token" class="password-input" placeholder="Enter API token">
+              <button type="button" class="toggle-password" onclick="togglePassword('ayoindo-api-token')">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666; font-size: 0.9em;">Authentication token for AYO API</small>
+          </div>
+        </div>
+        
+
+        
         <h4 style="color: #273c75; margin-top: 2rem;">Disk Manager Configuration</h4>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
           <div class="form-group">
@@ -782,6 +1157,148 @@
     </section>
   </div>
   
+  <!-- Onboarding Modal -->
+  <div id="onboarding-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h4>🎉 Selamat Datang di AYO Middleware!</h4>
+      </div>
+      <div style="padding: 1rem 0;">
+        <p style="margin-bottom: 1.5rem; color: #666; font-size: 1.1rem;">Mari kita setup sistem Anda dalam beberapa langkah mudah:</p>
+        
+        <!-- Step Indicator -->
+        <div style="display: flex; justify-content: center; margin-bottom: 2rem;">
+          <div class="step-indicator">
+            <div class="step active" data-step="1">
+              <div class="step-number">1</div>
+              <div class="step-label">Venue Info</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="2">
+              <div class="step-number">2</div>
+              <div class="step-label">Camera Setup</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="3">
+              <div class="step-number">3</div>
+              <div class="step-label">Selesai</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Step 1: Venue Configuration -->
+        <div id="onboarding-step-1" class="onboarding-step">
+          <h5 style="color: #273c75; margin-bottom: 1rem;">📍 Informasi Venue</h5>
+          <p style="color: #666; margin-bottom: 1.5rem;">Masukkan kode venue dan secret key yang telah diberikan oleh tim AYO:</p>
+          
+          <div class="form-group">
+            <label for="onboarding-venue-code">Venue Code</label>
+            <input type="text" id="onboarding-venue-code" placeholder="Masukkan kode venue (10 karakter)" maxlength="10" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px; font-size: 1rem;">
+            <small style="color: #666;">Kode unik venue Anda yang terdiri dari 10 karakter</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="onboarding-venue-secret">Venue Secret Key</label>
+            <div class="password-input-container">
+              <input type="password" id="onboarding-venue-secret" class="password-input" placeholder="Masukkan secret key venue" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px; font-size: 1rem;">
+              <button type="button" class="toggle-password" onclick="toggleOnboardingPassword()">
+                <span class="eye-icon">🙈</span>
+              </button>
+            </div>
+            <small style="color: #666;">Secret key untuk autentikasi dengan sistem AYO</small>
+          </div>
+        </div>
+        
+        <!-- Step 2: Camera Setup -->
+        <div id="onboarding-step-2" class="onboarding-step" style="display: none;">
+          <h5 style="color: #273c75; margin-bottom: 1rem;">📹 Setup Camera Pertama</h5>
+          <p style="color: #666; margin-bottom: 1.5rem;">Tambahkan camera pertama untuk mulai merekam:</p>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+              <label for="onboarding-camera-name">Nama Camera</label>
+              <input type="text" id="onboarding-camera-name" placeholder="Camera Utama" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-ip">IP Address</label>
+              <input type="text" id="onboarding-camera-ip" placeholder="192.168.1.100" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-port">Port</label>
+              <input type="text" id="onboarding-camera-port" placeholder="554" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-path">Path</label>
+              <input type="text" id="onboarding-camera-path" placeholder="/streaming/channels/101/" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-username">Username</label>
+              <input type="text" id="onboarding-camera-username" placeholder="admin" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-password">Password</label>
+              <input type="password" id="onboarding-camera-password" placeholder="password" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-field">Field ID</label>
+              <input type="text" id="onboarding-camera-field" placeholder="field_1" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="form-group">
+              <label for="onboarding-camera-button">Button Number</label>
+              <input type="text" id="onboarding-camera-button" placeholder="1" style="width: 100%; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+          </div>
+          
+          <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+            <p style="margin: 0; color: #666; font-size: 0.9rem;">💡 <strong>Tips:</strong> Anda bisa menambahkan camera lainnya nanti melalui menu "Camera Config"</p>
+          </div>
+        </div>
+        
+        <!-- Step 3: Completion -->
+        <div id="onboarding-step-3" class="onboarding-step" style="display: none;">
+          <div style="text-align: center; padding: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">🎉</div>
+            <h5 style="color: #273c75; margin-bottom: 1rem;">Setup Berhasil!</h5>
+            <p style="color: #666; margin-bottom: 2rem;">Sistem AYO Middleware telah berhasil dikonfigurasi dan siap digunakan.</p>
+            
+            <div style="background: #e8f5e8; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+              <h6 style="color: #27ae60; margin-bottom: 0.5rem;">✅ Yang telah dikonfigurasi:</h6>
+              <ul style="text-align: left; color: #666; margin: 0; padding-left: 1.5rem;">
+                <li>Venue code dan secret key</li>
+                <li>Camera pertama</li>
+                <li>Koneksi ke sistem AYO</li>
+              </ul>
+            </div>
+            
+            <div style="background: #fff3cd; padding: 1.5rem; border-radius: 8px;">
+              <h6 style="color: #856404; margin-bottom: 0.5rem;">📋 Langkah selanjutnya:</h6>
+              <ul style="text-align: left; color: #666; margin: 0; padding-left: 1.5rem;">
+                <li>Periksa status camera di tab "Cameras"</li>
+                <li>Tambahkan camera lain jika diperlukan</li>
+                <li>Sesuaikan pengaturan sistem di "System Config"</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Navigation Buttons -->
+        <div style="display: flex; justify-content: space-between; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #eee;">
+          <button id="onboarding-prev-btn" class="btn btn-secondary" style="display: none;">← Sebelumnya</button>
+          <div style="flex: 1;"></div>
+          <button id="onboarding-next-btn" class="btn btn-primary">Selanjutnya →</button>
+          <button id="onboarding-finish-btn" class="btn btn-success" style="display: none;">Selesai 🎉</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
   <!-- Video Modal -->
   <div id="video-modal" class="modal">
     <div class="modal-content">
@@ -804,30 +1321,61 @@
     let cameras = null;
     let videos = null;
 
+    // Utility function to handle authentication errors in fetch responses
+    async function handleAuthenticatedFetch(url, options = {}) {
+      try {
+        // Ensure credentials are included by default
+        options.credentials = options.credentials || 'include';
+        
+        const response = await fetch(url, options);
+        
+        // Check for 401 Unauthorized
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return null;
+        }
+        
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    }
+
     // Fetch cameras from backend
     async function fetchCameras() {
-      const res = await fetch('/api/cameras');
+      const res = await handleAuthenticatedFetch('/api/cameras');
+      if (!res) return; // Redirected to login
       if (!res.ok) throw new Error('Failed to fetch cameras');
       cameras = await res.json();
     }
     // Fetch videos from backend
     async function fetchVideos() {
-      const res = await fetch('/api/videos');
+      const res = await handleAuthenticatedFetch('/api/videos');
+      if (!res) return; // Redirected to login
       if (!res.ok) throw new Error('Failed to fetch videos');
       videos = await res.json();
     }
 
-    // Tab navigation
-    document.querySelectorAll('nav a').forEach(tab => {
-      tab.addEventListener('click', function(e) {
-        e.preventDefault();
-        document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        const tabName = this.getAttribute('data-tab');
-        document.querySelectorAll('.tab-section').forEach(sec => sec.style.display = 'none');
-        document.getElementById('tab-' + tabName).style.display = '';
+    // Tab navigation function
+    function initTabs() {
+      document.querySelectorAll('nav a').forEach(tab => {
+        tab.addEventListener('click', function(e) {
+          e.preventDefault();
+          document.querySelectorAll('nav a').forEach(t => t.classList.remove('active'));
+          this.classList.add('active');
+          const tabName = this.getAttribute('data-tab');
+          document.querySelectorAll('.tab-section').forEach(sec => sec.style.display = 'none');
+          document.getElementById('tab-' + tabName).style.display = 'block';
+        });
       });
-    });
+      
+      // Set default active tab
+      const defaultTab = document.querySelector('nav a[data-tab="cameras"]');
+      if (defaultTab) {
+        defaultTab.classList.add('active');
+        document.getElementById('tab-cameras').style.display = 'block';
+      }
+    }
 
     // Populate Cameras Table
     function renderCameras() {
@@ -904,8 +1452,11 @@
     }
 
     // Update system health
-    function updateSystemHealth() {
-      fetch('/api/system_health').then(res => res.json()).then(data => {
+    async function updateSystemHealth() {
+      try {
+        const res = await handleAuthenticatedFetch('/api/system_health');
+        if (!res) return; // Redirected to login
+        const data = await res.json();
         document.getElementById('sys-cpu').textContent = (data.cpu !== undefined) ? Math.round(data.cpu) + '%' : '-';
         document.getElementById('sys-mem').textContent = (data.memory_used !== undefined && data.memory_total !== undefined)
           ? Math.round(data.memory_used) + 'MB / ' + Math.round(data.memory_total) + 'MB'
@@ -914,24 +1465,54 @@
         // Uptime and Storage Used: backend must provide these in the API for live data
         document.getElementById('sys-uptime').textContent = data.uptime || '-';
         document.getElementById('sys-storage').textContent = data.storage || '-';
-      });
+      } catch (error) {
+        console.error('Error updating system health:', error);
+      }
     }
     setInterval(updateSystemHealth, 5000);
     updateSystemHealth();
 
     // Update logs
-    function updateLogs() {
-      fetch('/api/logs').then(res => res.text()).then(data => {
+    async function updateLogs() {
+      try {
+        const res = await handleAuthenticatedFetch('/api/logs');
+        if (!res) return; // Redirected to login
+        const data = await res.text();
         const logList = document.getElementById('log-list');
         logList.innerHTML = data
           .replace(/\n/g, '<br>')
           .replace(/\033\[[0-9;]*m/g, ''); // strip ANSI colors if any
         logList.scrollTop = logList.scrollHeight; // auto-scroll to bottom
-      });
+      } catch (error) {
+        console.error('Error updating logs:', error);
+      }
     }
     setInterval(updateLogs, 5000);
     updateLogs();
 
+    // Load cameras and update UI
+    async function loadCameras() {
+      try {
+        await fetchCameras();
+        renderCameras();
+        populateVideoCameraFilter();
+        updateSummaryCards();
+      } catch (e) {
+        console.error('Failed to load cameras:', e.message);
+      }
+    }
+    
+    // Load videos and update UI
+    async function loadVideos() {
+      try {
+        await fetchVideos();
+        renderVideos();
+        updateSummaryCards();
+      } catch (e) {
+        console.error('Failed to load videos:', e.message);
+      }
+    }
+    
     // Initial load: fetch data and render tables
     async function initDashboard() {
       try {
@@ -1082,6 +1663,20 @@
       cameras: []
     };
     
+    // Initialize camera configuration
+    function initCameraConfig() {
+      // Camera config is already initialized above with event listeners
+      // This function can be used for any additional setup if needed
+      console.log('Camera configuration initialized');
+    }
+    
+    // Initialize system configuration
+    function initSystemConfig() {
+      // System config initialization
+      // This function can be used for any system config setup if needed
+      console.log('System configuration initialized');
+    }
+    
     // DOM Elements
     const cameraConfigTab = document.getElementById('tab-camera-config');
     const cameraTableBody = document.getElementById('camera-config-tbody');
@@ -1147,7 +1742,7 @@
         width: 1920, // Default values, can be made configurable
         height: 1080,
         frame_rate: 30,
-        resolution: '1080p',
+        resolution: '1080',
         auto_delete: 7 // Default 7 days
       };
       
@@ -1263,7 +1858,8 @@
     // Fetch camera config from API
     async function fetchCameraConfig() {
       try {
-        const response = await fetch('/api/admin/cameras-config');
+        const response = await handleAuthenticatedFetch('/api/admin/cameras-config');
+        if (!response) return; // Redirected to login
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -1303,7 +1899,7 @@
           auto_delete: camera.auto_delete || 7
         }));
 
-        const response = await fetch('/api/admin/cameras-config', {
+        const response = await handleAuthenticatedFetch('/api/admin/cameras-config', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1311,6 +1907,7 @@
           body: JSON.stringify({ cameras: camerasToSave })
         });
         
+        if (!response) return false; // Redirected to login
         if (!response.ok) {
           const error = await response.json().catch(() => ({}));
           throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1320,16 +1917,16 @@
         
         // Automatically reload cameras after saving to apply new configuration
         try {
-          const reloadResponse = await fetch('/api/admin/reload-cameras', {
+          const reloadResponse = await handleAuthenticatedFetch('/api/admin/reload-cameras', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             }
           });
           
-          if (reloadResponse.ok) {
+          if (reloadResponse && reloadResponse.ok) {
             showNotification('Camera configuration saved and reloaded successfully', 'success');
-          } else {
+          } else if (reloadResponse) {
             showNotification('Camera configuration saved, but reload failed. Please manually reload.', 'warning');
           }
         } catch (reloadError) {
@@ -1447,33 +2044,95 @@ let systemConfig = {};
 // Load system configuration from backend
 async function loadSystemConfig() {
   try {
-    const response = await fetch('/api/admin/system-config');
+    const response = await handleAuthenticatedFetch('/api/admin/system-config');
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const result = await response.json();
     systemConfig = result.data || {};
     
-    // Update form fields with loaded values
+    // Worker Concurrency Settings
     document.getElementById('booking-worker-concurrency').value = 
       systemConfig['booking_worker_concurrency'] || 2;
     document.getElementById('video-request-worker-concurrency').value = 
       systemConfig['video_request_worker_concurrency'] || 3;
     document.getElementById('pending-task-worker-concurrency').value = 
-      systemConfig['pending_task_worker_concurrency'] || 2;
+      systemConfig['pending_task_worker_concurrency'] || 5;
     
-    // Update quality checkboxes
-    const enabledQualities = (systemConfig['enabled_qualities'] || '1080p,720p').split(',');
+    // Quality Settings
+    const enabledQualities = (systemConfig['enabled_qualities'] || '1080p,720p,480p,360p').split(',');
     document.querySelectorAll('.quality-checkbox').forEach(checkbox => {
       checkbox.checked = enabledQualities.includes(checkbox.value);
     });
     
-    // Update video duration check checkbox
-    const enableVideoDurationCheck = systemConfig['enable_video_duration_check'] === 'true';
-    document.getElementById('enable-video-duration-check').checked = enableVideoDurationCheck;
+    // Video Processing Settings
+    document.getElementById('enable-video-duration-check').checked = 
+      systemConfig['enable_video_duration_check'] === 'true';
     
-    // Load disk manager configuration
-    await loadDiskManagerConfig();
+    // Venue Configuration (no defaults)
+    document.getElementById('venue-code').value = systemConfig['venue_code'] || '';
+    document.getElementById('venue-secret-key').value = systemConfig['venue_secret_key'] || '';
+    
+    // Arduino Configuration
+    document.getElementById('arduino-com-port').value = systemConfig['arduino_com_port'] || '/dev/ttyUSB0';
+    document.getElementById('arduino-baud-rate').value = systemConfig['arduino_baud_rate'] || 9600;
+    
+    // RTSP Configuration
+    document.getElementById('rtsp-username').value = systemConfig['rtsp_username'] || 'admin';
+    document.getElementById('rtsp-password').value = systemConfig['rtsp_password'] || 'admin123';
+    document.getElementById('rtsp-ip').value = systemConfig['rtsp_ip'] || '192.168.1.100';
+    document.getElementById('rtsp-port').value = systemConfig['rtsp_port'] || 554;
+    document.getElementById('rtsp-path').value = systemConfig['rtsp_path'] || '/stream1';
+    
+    // Recording Configuration
+    document.getElementById('segment-duration').value = systemConfig['segment_duration'] || 10;
+    document.getElementById('clip-duration').value = systemConfig['clip_duration'] || 30;
+    document.getElementById('width').value = systemConfig['width'] || 1920;
+    document.getElementById('height').value = systemConfig['height'] || 1080;
+    document.getElementById('frame-rate').value = systemConfig['frame_rate'] || 30;
+    document.getElementById('resolution').value = systemConfig['resolution'] || '1920x1080';
+    document.getElementById('auto-delete').value = systemConfig['auto_delete'] || 30;
+    
+    // Storage Configuration
+    document.getElementById('storage-path').value = systemConfig['storage_path'] || './storage';
+    document.getElementById('hardware-accel').checked = systemConfig['hardware_accel'] === 'true';
+    document.getElementById('codec').value = systemConfig['codec'] || 'h264';
+    
+    // Server Configuration
+    document.getElementById('server-port').value = systemConfig['server_port'] || 8080;
+    document.getElementById('base-url').value = systemConfig['base_url'] || 'http://localhost:8080';
+
+    
+    // R2 Storage Configuration
+    document.getElementById('r2-enabled').checked = systemConfig['r2_enabled'] === 'true';
+    document.getElementById('r2-access-key').value = systemConfig['r2_access_key'] || '';
+    document.getElementById('r2-secret-key').value = systemConfig['r2_secret_key'] || '';
+    document.getElementById('r2-account-id').value = systemConfig['r2_account_id'] || '';
+    document.getElementById('r2-bucket').value = systemConfig['r2_bucket'] || 'ayo-mwr';
+    document.getElementById('r2-region').value = systemConfig['r2_region'] || 'auto';
+    document.getElementById('r2-endpoint').value = systemConfig['r2_endpoint'] || '';
+    document.getElementById('r2-base-url').value = systemConfig['r2_base_url'] || '';
+    document.getElementById('r2-token-value').value = systemConfig['r2_token_value'] || '';
+    
+    // Watermark Configuration
+    document.getElementById('watermark-position').value = systemConfig['watermark_position'] || 'bottom_right';
+    document.getElementById('watermark-margin').value = systemConfig['watermark_margin'] || 20;
+    document.getElementById('watermark-opacity').value = systemConfig['watermark_opacity'] || 0.8;
+    
+    // AYO API Configuration
+    document.getElementById('ayoindo-api-base-endpoint').value = systemConfig['ayoindo_api_base_endpoint'] || 'https://api.ayoindo.com';
+    document.getElementById('ayoindo-api-token').value = systemConfig['ayoindo_api_token'] || '';
+    
+
+    
+    // Disk Manager Configuration
+    document.getElementById('minimum-free-space-gb').value = systemConfig['minimum_free_space_gb'] || 100;
+    document.getElementById('priority-external').value = systemConfig['priority_external'] || 1;
+    document.getElementById('priority-mounted-storage').value = systemConfig['priority_mounted_storage'] || 50;
+    document.getElementById('priority-internal-nvme').value = systemConfig['priority_internal_nvme'] || 101;
+    document.getElementById('priority-internal-sata').value = systemConfig['priority_internal_sata'] || 201;
+    document.getElementById('priority-root-filesystem').value = systemConfig['priority_root_filesystem'] || 500;
     
     showNotification('System configuration loaded successfully', 'success');
   } catch (error) {
@@ -1485,7 +2144,8 @@ async function loadSystemConfig() {
 // Load disk manager configuration from backend
 async function loadDiskManagerConfig() {
   try {
-    const response = await fetch('/api/admin/disk-manager-config');
+    const response = await handleAuthenticatedFetch('/api/admin/disk-manager-config');
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -1521,24 +2181,89 @@ async function loadDiskManagerConfig() {
 // Save system configuration to backend
 async function saveSystemConfig() {
   try {
-    // Collect form data
-    const configData = {
-      'booking_worker_concurrency': parseInt(document.getElementById('booking-worker-concurrency').value),
-      'video_request_worker_concurrency': parseInt(document.getElementById('video-request-worker-concurrency').value),
-      'pending_task_worker_concurrency': parseInt(document.getElementById('pending-task-worker-concurrency').value)
-    };
-    
     // Collect enabled qualities
     const enabledQualities = [];
     document.querySelectorAll('.quality-checkbox:checked').forEach(checkbox => {
       enabledQualities.push(checkbox.value);
     });
-    configData['enabled_qualities'] = enabledQualities.join(',');
     
-    // Get video duration check setting
-    configData['enable_video_duration_check'] = document.getElementById('enable-video-duration-check').checked.toString();
+    const configData = {
+      // Worker Concurrency Settings
+      'booking_worker_concurrency': parseInt(document.getElementById('booking-worker-concurrency').value),
+      'video_request_worker_concurrency': parseInt(document.getElementById('video-request-worker-concurrency').value),
+      'pending_task_worker_concurrency': parseInt(document.getElementById('pending-task-worker-concurrency').value),
+      
+      // Quality Settings
+      'enabled_qualities': enabledQualities.join(','),
+      
+      // Video Processing Settings
+      'enable_video_duration_check': document.getElementById('enable-video-duration-check').checked.toString(),
+      
+      // Venue Configuration
+      'venue_code': document.getElementById('venue-code').value,
+      'venue_secret_key': document.getElementById('venue-secret-key').value,
+      
+      // Arduino Configuration
+      'arduino_com_port': document.getElementById('arduino-com-port').value,
+      'arduino_baud_rate': parseInt(document.getElementById('arduino-baud-rate').value),
+      
+      // RTSP Configuration
+      'rtsp_username': document.getElementById('rtsp-username').value,
+      'rtsp_password': document.getElementById('rtsp-password').value,
+      'rtsp_ip': document.getElementById('rtsp-ip').value,
+      'rtsp_port': parseInt(document.getElementById('rtsp-port').value),
+      'rtsp_path': document.getElementById('rtsp-path').value,
+      
+      // Recording Configuration
+      'segment_duration': parseInt(document.getElementById('segment-duration').value),
+      'clip_duration': parseInt(document.getElementById('clip-duration').value),
+      'width': parseInt(document.getElementById('width').value),
+      'height': parseInt(document.getElementById('height').value),
+      'frame_rate': parseInt(document.getElementById('frame-rate').value),
+      'resolution': document.getElementById('resolution').value,
+      'auto_delete': parseInt(document.getElementById('auto-delete').value),
+      
+      // Storage Configuration
+      'storage_path': document.getElementById('storage-path').value,
+      'hardware_accel': document.getElementById('hardware-accel').checked.toString(),
+      'codec': document.getElementById('codec').value,
+      
+      // Server Configuration
+      'server_port': parseInt(document.getElementById('server-port').value),
+      'base_url': document.getElementById('base-url').value,
+      
+      // R2 Storage Configuration
+      'r2_enabled': document.getElementById('r2-enabled').checked.toString(),
+      'r2_access_key': document.getElementById('r2-access-key').value,
+      'r2_secret_key': document.getElementById('r2-secret-key').value,
+      'r2_account_id': document.getElementById('r2-account-id').value,
+      'r2_bucket': document.getElementById('r2-bucket').value,
+      'r2_region': document.getElementById('r2-region').value,
+      'r2_endpoint': document.getElementById('r2-endpoint').value,
+      'r2_base_url': document.getElementById('r2-base-url').value,
+      'r2_token_value': document.getElementById('r2-token-value').value,
+      
+      // Watermark Configuration
+      'watermark_position': document.getElementById('watermark-position').value,
+      'watermark_margin': parseInt(document.getElementById('watermark-margin').value),
+      'watermark_opacity': parseFloat(document.getElementById('watermark-opacity').value),
+      
+      // AYO API Configuration
+      'ayoindo_api_base_endpoint': document.getElementById('ayoindo-api-base-endpoint').value,
+      'ayoindo_api_token': document.getElementById('ayoindo-api-token').value,
+      
+
+      
+      // Disk Manager Configuration
+      'minimum_free_space_gb': parseInt(document.getElementById('minimum-free-space-gb').value),
+      'priority_external': parseInt(document.getElementById('priority-external').value),
+      'priority_mounted_storage': parseInt(document.getElementById('priority-mounted-storage').value),
+      'priority_internal_nvme': parseInt(document.getElementById('priority-internal-nvme').value),
+      'priority_internal_sata': parseInt(document.getElementById('priority-internal-sata').value),
+      'priority_root_filesystem': parseInt(document.getElementById('priority-root-filesystem').value)
+    };
     
-    // Validate data
+    // Validate worker concurrency data
     if (configData['booking_worker_concurrency'] < 1 || configData['booking_worker_concurrency'] > 10 ||
         configData['video_request_worker_concurrency'] < 1 || configData['video_request_worker_concurrency'] > 10 ||
         configData['pending_task_worker_concurrency'] < 1 || configData['pending_task_worker_concurrency'] > 10) {
@@ -1550,7 +2275,7 @@ async function saveSystemConfig() {
     }
     
     // Send system config to backend
-    const response = await fetch('/api/admin/system-config', {
+    const response = await handleAuthenticatedFetch('/api/admin/system-config', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -1558,6 +2283,7 @@ async function saveSystemConfig() {
       body: JSON.stringify(configData)
     });
     
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1565,9 +2291,6 @@ async function saveSystemConfig() {
     
     const result = await response.json();
     systemConfig = { ...systemConfig, ...configData };
-    
-    // Save disk manager configuration
-    await saveDiskManagerConfig();
     
     showNotification('System configuration saved successfully', 'success');
     
@@ -1610,7 +2333,7 @@ async function saveDiskManagerConfig() {
     }
     
     // Send disk manager config to backend
-    const response = await fetch('/api/admin/disk-manager-config', {
+    const response = await handleAuthenticatedFetch('/api/admin/disk-manager-config', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -1618,6 +2341,7 @@ async function saveDiskManagerConfig() {
       body: JSON.stringify(diskManagerData)
     });
     
+    if (!response) return; // Redirected to login
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `HTTP error! status: ${response.status}`);
@@ -1647,7 +2371,8 @@ function initSystemConfig() {
 // ---------- Arduino status ----------
 async function fetchArduinoStatus() {
   try {
-    const res = await fetch('/api/arduino-status');
+    const res = await handleAuthenticatedFetch('/api/arduino-status');
+    if (!res) return; // Redirected to login
     const data = await res.json();
     const card = document.getElementById('arduino-status-card');
     const txt = document.getElementById('arduino-status-text');
@@ -1679,7 +2404,8 @@ closeArduinoModal.onclick = cancelArduinoBtn.onclick = () => {
 
 async function loadArduinoConfig(){
   try{
-    const res = await fetch('/api/arduino-status');
+    const res = await handleAuthenticatedFetch('/api/arduino-status');
+    if (!res) return; // Redirected to login
     const d = await res.json();
     document.getElementById('arduino-port').value = d.port || '';
     document.getElementById('arduino-baud').value = d.baud_rate || '';
@@ -1691,11 +2417,12 @@ document.getElementById('save-arduino-btn').addEventListener('click', async ()=>
   const baud = parseInt(document.getElementById('arduino-baud').value,10);
   if(!port || !baud){showNotification('Port and baud required','warning');return;}
   try{
-    const res = await fetch('/api/admin/arduino-config',{
+    const res = await handleAuthenticatedFetch('/api/admin/arduino-config',{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({port:port, baud_rate: baud})
     });
+    if (!res) return; // Redirected to login
     const txt = await res.text();
     if(res.ok){
       showNotification('Arduino config saved','success');
@@ -1706,6 +2433,289 @@ document.getElementById('save-arduino-btn').addEventListener('click', async ()=>
     }
   }catch(e){showNotification('Request failed','error');}
 });
+
+// ---------- Onboarding Flow ----------
+let currentOnboardingStep = 1;
+const totalOnboardingSteps = 3;
+
+// Check if onboarding is needed
+async function checkOnboardingStatus() {
+  try {
+    const response = await fetch('/api/onboarding-status');
+    if (response.ok) {
+      const status = await response.json();
+      if (status.success && !status.is_completed) {
+        showOnboardingModal();
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error('Error checking onboarding status:', error);
+    return false;
+  }
+}
+
+function showOnboardingModal() {
+  document.getElementById('onboarding-modal').style.display = 'block';
+  updateOnboardingStep(1);
+}
+
+function hideOnboardingModal() {
+  document.getElementById('onboarding-modal').style.display = 'none';
+}
+
+function updateOnboardingStep(step) {
+  currentOnboardingStep = step;
+  
+  // Hide all steps
+  for (let i = 1; i <= totalOnboardingSteps; i++) {
+    document.getElementById(`onboarding-step-${i}`).style.display = 'none';
+    const stepElement = document.querySelector(`[data-step="${i}"]`);
+    stepElement.classList.remove('active', 'completed');
+  }
+  
+  // Show current step
+  document.getElementById(`onboarding-step-${step}`).style.display = 'block';
+  
+  // Update step indicators
+  for (let i = 1; i < step; i++) {
+    document.querySelector(`[data-step="${i}"]`).classList.add('completed');
+  }
+  document.querySelector(`[data-step="${step}"]`).classList.add('active');
+  
+  // Update navigation buttons
+  const prevBtn = document.getElementById('onboarding-prev-btn');
+  const nextBtn = document.getElementById('onboarding-next-btn');
+  const finishBtn = document.getElementById('onboarding-finish-btn');
+  
+  prevBtn.style.display = step > 1 ? 'block' : 'none';
+  nextBtn.style.display = step < totalOnboardingSteps ? 'block' : 'none';
+  finishBtn.style.display = step === totalOnboardingSteps ? 'block' : 'none';
+}
+
+function validateOnboardingStep(step) {
+  if (step === 1) {
+    const venueCode = document.getElementById('onboarding-venue-code').value.trim();
+    const venueSecret = document.getElementById('onboarding-venue-secret').value.trim();
+    
+    if (!venueCode || venueCode.length !== 10) {
+      showNotification('Venue code harus 10 karakter', 'error');
+      return false;
+    }
+    
+    if (!venueSecret) {
+      showNotification('Venue secret key tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    return true;
+  }
+  
+  if (step === 2) {
+    const cameraName = document.getElementById('onboarding-camera-name').value.trim();
+    const cameraIp = document.getElementById('onboarding-camera-ip').value.trim();
+    const cameraPort = document.getElementById('onboarding-camera-port').value.trim();
+    const cameraPath = document.getElementById('onboarding-camera-path').value.trim();
+    const cameraUsername = document.getElementById('onboarding-camera-username').value.trim();
+    const cameraPassword = document.getElementById('onboarding-camera-password').value.trim();
+    const fieldId = document.getElementById('onboarding-camera-field').value.trim();
+    const buttonNumber = document.getElementById('onboarding-camera-button').value.trim();
+    
+    if (!cameraName) {
+      showNotification('Nama camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraIp) {
+      showNotification('IP Address camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPort) {
+      showNotification('Port camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPath) {
+      showNotification('Path camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraUsername) {
+      showNotification('Username camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!cameraPassword) {
+      showNotification('Password camera tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!fieldId) {
+      showNotification('Field ID tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    if (!buttonNumber) {
+      showNotification('Button Number tidak boleh kosong', 'error');
+      return false;
+    }
+    
+    return true;
+  }
+  
+  return true;
+}
+
+async function saveOnboardingStep(step) {
+  try {
+    if (step === 1) {
+      // Save venue configuration
+      const venueCode = document.getElementById('onboarding-venue-code').value.trim();
+      const venueSecret = document.getElementById('onboarding-venue-secret').value.trim();
+      
+      const configData = {
+        venue_code: venueCode,
+        venue_secret_key: venueSecret
+      };
+      
+      const response = await fetch('/api/admin/system-config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(configData)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      showNotification('Konfigurasi venue berhasil disimpan', 'success');
+      return true;
+    }
+    
+    if (step === 2) {
+      // Get default values from database first
+      let defaultPort = 554;
+      let defaultPath = '/stream';
+      
+      try {
+        const defaultsResponse = await fetch('/api/onboarding/camera-defaults');
+        if (defaultsResponse.ok) {
+          const defaultsData = await defaultsResponse.json();
+          if (defaultsData.success && defaultsData.data) {
+            defaultPort = parseInt(defaultsData.data.port) || 554;
+            defaultPath = defaultsData.data.path || '/stream';
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to get camera defaults, using fallback values:', error);
+      }
+      
+      // Save camera configuration
+      const cameraData = {
+        name: document.getElementById('onboarding-camera-name').value.trim(),
+        ip: document.getElementById('onboarding-camera-ip').value.trim(),
+        port: parseInt(document.getElementById('onboarding-camera-port').value.trim()) || defaultPort,
+        path: document.getElementById('onboarding-camera-path').value.trim() || defaultPath,
+        username: document.getElementById('onboarding-camera-username').value.trim(),
+        password: document.getElementById('onboarding-camera-password').value.trim(),
+        field_id: document.getElementById('onboarding-camera-field').value.trim(),
+        button_number: document.getElementById('onboarding-camera-button').value.trim()
+      };
+      
+      const response = await fetch('/api/onboarding/first-camera', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(cameraData)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      showNotification('Konfigurasi camera berhasil disimpan', 'success');
+      return true;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error saving onboarding step:', error);
+    showNotification(`Error: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+function toggleOnboardingPassword() {
+  const passwordInput = document.getElementById('onboarding-venue-secret');
+  const eyeIcon = document.querySelector('.toggle-password .eye-icon');
+  
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    eyeIcon.textContent = '👁️';
+  } else {
+    passwordInput.type = 'password';
+    eyeIcon.textContent = '🙈';
+  }
+}
+
+// Initialize onboarding event listeners
+function initOnboarding() {
+  document.getElementById('onboarding-next-btn').addEventListener('click', async () => {
+    if (validateOnboardingStep(currentOnboardingStep)) {
+      const saved = await saveOnboardingStep(currentOnboardingStep);
+      if (saved && currentOnboardingStep < totalOnboardingSteps) {
+        updateOnboardingStep(currentOnboardingStep + 1);
+      }
+    }
+  });
+  
+  document.getElementById('onboarding-prev-btn').addEventListener('click', () => {
+    if (currentOnboardingStep > 1) {
+      updateOnboardingStep(currentOnboardingStep - 1);
+    }
+  });
+  
+  document.getElementById('onboarding-finish-btn').addEventListener('click', () => {
+    hideOnboardingModal();
+    showNotification('Setup berhasil! Selamat datang di AYO Middleware 🎉', 'success');
+    // Reload the page to refresh all data
+    setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+  });
+}
+
+// Initialize everything when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+  initTabs();
+  initCameraConfig();
+  initSystemConfig();
+  initOnboarding();
+  loadCameras();
+  loadVideos();
+  updateSummaryCards();
+  updateSystemHealth();
+  updateLogs();
+  
+  // Check if onboarding is needed
+  setTimeout(() => {
+    checkOnboardingStatus();
+  }, 1000);
+  
+  // Set up periodic updates
+  setInterval(updateSystemHealth, 30000);
+  setInterval(updateLogs, 10000);
+  setInterval(loadCameras, 60000);
+  setInterval(loadVideos, 60000);
+});
+
 </script>
 </body>
 </html>

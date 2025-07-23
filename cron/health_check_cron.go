@@ -76,6 +76,12 @@ func (h *HealthCheckCron) Stop() {
 func (h *HealthCheckCron) runHealthCheck() {
 	log.Println("Running health check...")
 	
+	// Reload configuration from database before health check
+	// This ensures we have the latest venue code and secret key
+	if err := h.client.ReloadConfigFromDatabase(); err != nil {
+		log.Printf("Warning: Failed to reload config from database: %v", err)
+	}
+	
 	startTime := time.Now()
 	result, err := h.client.HealthCheck()
 	duration := time.Since(startTime)

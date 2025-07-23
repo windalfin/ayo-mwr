@@ -720,7 +720,22 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 			dbmod.ConfigPriorityMountedStorage,
 			dbmod.ConfigPriorityInternalNVMe,
 			dbmod.ConfigPriorityInternalSATA,
-			dbmod.ConfigPriorityRootFilesystem:
+			dbmod.ConfigPriorityRootFilesystem,
+			// Recording Configuration
+			dbmod.ConfigSegmentDuration,
+			dbmod.ConfigClipDuration,
+			dbmod.ConfigWidth,
+			dbmod.ConfigHeight,
+			dbmod.ConfigFrameRate,
+			dbmod.ConfigAutoDelete,
+			// Arduino Configuration
+			dbmod.ConfigArduinoBaudRate,
+			// RTSP Configuration
+			dbmod.ConfigRTSPPort,
+			// Server Configuration
+			dbmod.ConfigServerPort,
+			// Watermark Configuration
+			dbmod.ConfigWatermarkMargin:
 			// These should be integers
 			if intVal, ok := value.(float64); ok {
 				strValue = strconv.Itoa(int(intVal))
@@ -728,6 +743,80 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 			} else {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Invalid value for %s: expected integer", key),
+				})
+				return
+			}
+		case dbmod.ConfigWatermarkOpacity:
+			// This should be a float
+			if floatVal, ok := value.(float64); ok {
+				strValue = fmt.Sprintf("%.2f", floatVal)
+				configType = "float"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected float", key),
+				})
+				return
+			}
+		case dbmod.ConfigR2Enabled:
+			// This should be a boolean
+			if boolVal, ok := value.(bool); ok {
+				strValue = fmt.Sprintf("%t", boolVal)
+				configType = "boolean"
+			} else if strVal, ok := value.(string); ok {
+				strVal = strings.ToLower(strVal)
+				if strVal == "true" || strVal == "false" {
+					strValue = strVal
+					configType = "boolean"
+				} else {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Invalid value for %s: expected boolean, got %s", key, strVal),
+					})
+					return
+				}
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected boolean", key),
+				})
+				return
+			}
+		case dbmod.ConfigVenueCode,
+			dbmod.ConfigVenueSecretKey,
+			// Arduino Configuration
+			dbmod.ConfigArduinoCOMPort,
+			// RTSP Configuration
+			dbmod.ConfigRTSPUsername,
+			dbmod.ConfigRTSPPassword,
+			dbmod.ConfigRTSPIP,
+			dbmod.ConfigRTSPPath,
+			// Recording Configuration
+			dbmod.ConfigResolution,
+			// Storage Configuration
+			dbmod.ConfigStoragePath,
+			dbmod.ConfigHardwareAccel,
+			dbmod.ConfigCodec,
+			// Server Configuration
+			dbmod.ConfigBaseURL,
+			// R2 Storage Configuration
+			dbmod.ConfigR2AccessKey,
+			dbmod.ConfigR2SecretKey,
+			dbmod.ConfigR2AccountID,
+			dbmod.ConfigR2Bucket,
+			dbmod.ConfigR2Region,
+			dbmod.ConfigR2Endpoint,
+			dbmod.ConfigR2BaseURL,
+			dbmod.ConfigR2TokenValue,
+			// Watermark Configuration
+			dbmod.ConfigWatermarkPosition,
+			// AYO API Configuration
+			dbmod.ConfigAyoindoAPIBaseEndpoint,
+			dbmod.ConfigAyoindoAPIToken:
+			// These should be strings
+			if strVal, ok := value.(string); ok {
+				strValue = strVal
+				configType = "string"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid value for %s: expected string", key),
 				})
 				return
 			}
@@ -769,5 +858,202 @@ func (s *Server) updateSystemConfig(c *gin.Context) {
 		"success": true,
 		"message": "System configuration updated successfully - hot reload active",
 		"note":    "Changes will take effect on next cron run (within 2 minutes)",
+	})
+}
+
+// getOnboardingStatus checks if the system has been properly configured
+func (s *Server) getOnboardingStatus(c *gin.Context) {
+	// Check if venue code is configured
+	venueConfig, err := s.db.GetSystemConfig(dbmod.ConfigVenueCode)
+	hasVenueConfig := err == nil && venueConfig.Value != ""
+
+	// Check if venue secret key is configured
+	venueSecretConfig, err := s.db.GetSystemConfig(dbmod.ConfigVenueSecretKey)
+	hasVenueSecret := err == nil && venueSecretConfig.Value != ""
+
+	// Check if at least one camera is configured
+	cameras, err := s.db.GetCameras()
+	hasCameras := err == nil && len(cameras) > 0
+
+	// Determine onboarding completion status
+	isCompleted := hasVenueConfig && hasVenueSecret && hasCameras
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":          true,
+		"is_completed":     isCompleted,
+		"has_venue_config": hasVenueConfig,
+		"has_venue_secret": hasVenueSecret,
+		"has_cameras":      hasCameras,
+		"camera_count":     len(cameras),
+	})
+}
+
+// saveVenueConfig saves venue configuration during onboarding
+func (s *Server) saveVenueConfig(c *gin.Context) {
+	var request struct {
+		VenueCode string `json:"venue_code" binding:"required"`
+		SecretKey string `json:"secret_key" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Save venue code
+	venueConfig := dbmod.SystemConfig{
+		Key:       dbmod.ConfigVenueCode,
+		Value:     request.VenueCode,
+		Type:      "string",
+		UpdatedBy: "onboarding",
+	}
+	if err := s.db.SetSystemConfig(venueConfig); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to save venue code",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Save secret key
+	secretConfig := dbmod.SystemConfig{
+		Key:       dbmod.ConfigVenueSecretKey,
+		Value:     request.SecretKey,
+		Type:      "string",
+		UpdatedBy: "onboarding",
+	}
+	if err := s.db.SetSystemConfig(secretConfig); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to save secret key",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Update in-memory configuration
+	sysConfigService := config.NewSystemConfigService(s.db)
+	if err := sysConfigService.LoadSystemConfigToConfig(s.config); err != nil {
+		log.Printf("Warning: Failed to reload system config to memory: %v", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Venue configuration saved successfully",
+	})
+}
+
+// getCameraDefaults returns default camera configuration values from database
+func (s *Server) getCameraDefaults(c *gin.Context) {
+	// Get default port from database
+	defaultPort := "554"
+	if portConfig, err := s.db.GetSystemConfig(dbmod.ConfigRTSPPort); err == nil && portConfig.Value != "" {
+		defaultPort = portConfig.Value
+	}
+
+	// Get default path from database
+	defaultPath := "/streaming/channels/101/"
+	if pathConfig, err := s.db.GetSystemConfig(dbmod.ConfigRTSPPath); err == nil && pathConfig.Value != "" {
+		defaultPath = pathConfig.Value
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"port": defaultPort,
+			"path": defaultPath,
+		},
+	})
+}
+
+// saveFirstCamera saves the first camera configuration during onboarding
+func (s *Server) saveFirstCamera(c *gin.Context) {
+	var request struct {
+		Name     string `json:"name" binding:"required"`
+		IP       string `json:"ip" binding:"required"`
+		Port     int    `json:"port"`
+		Path     string `json:"path"`
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Field    string `json:"field_id" binding:"required"`
+		ButtonNo string `json:"button_number" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Get default values from database if not provided
+	defaultPort := "554"
+	if portConfig, err := s.db.GetSystemConfig(dbmod.ConfigRTSPPort); err == nil && portConfig.Value != "" {
+		defaultPort = portConfig.Value
+	}
+
+	defaultPath := "/streaming/channels/101/"
+	if pathConfig, err := s.db.GetSystemConfig(dbmod.ConfigRTSPPath); err == nil && pathConfig.Value != "" {
+		defaultPath = pathConfig.Value
+	}
+
+	// Use provided values or defaults
+	port := defaultPort
+	if request.Port > 0 {
+		port = fmt.Sprintf("%d", request.Port)
+	}
+
+	path := defaultPath
+	if request.Path != "" {
+		path = request.Path
+	}
+
+	// Create camera configuration
+	camera := dbmod.CameraConfig{
+		ButtonNo:   request.ButtonNo,
+		Name:       request.Name,
+		IP:         request.IP,
+		Port:       port,
+		Path:       path,
+		Username:   request.Username,
+		Password:   request.Password,
+		Enabled:    true,
+		Width:      1920,
+		Height:     1080,
+		FrameRate:  30,
+		Field:      request.Field,
+		Resolution: "1080",
+		AutoDelete: 30,
+	}
+
+	// Save camera to database
+	sqldb, ok := s.db.(*dbmod.SQLiteDB)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database is not SQLiteDB"})
+		return
+	}
+
+	// Insert the camera (this will replace all existing cameras)
+	cameras := []dbmod.CameraConfig{camera}
+	if err := sqldb.InsertCameras(cameras); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to save camera configuration",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "First camera configuration saved successfully",
+		"camera": gin.H{
+			"name":      camera.Name,
+			"ip":        camera.IP,
+			"field":     camera.Field,
+			"button_no": camera.ButtonNo,
+		},
 	})
 }

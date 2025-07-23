@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	database "ayo-mwr/database"
 )
@@ -94,94 +92,48 @@ type Config struct {
 
 // LoadConfig loads configuration from environment variables
 func LoadConfig() Config {
+	// Initialize config with default values only for essential startup configurations
 	cfg := Config{
-		// Arduino Configuration
-		ArduinoCOMPort: getEnv("ARDUINO_COM_PORT", "COM4"),
-		ArduinoBaudRate: func() int {
-			rate, _ := strconv.Atoi(getEnv("ARDUINO_BAUD_RATE", "9600"))
-			return rate
-		}(),
-
-		// RTSP Configuration
-		RTSPUsername: getEnv("RTSP_USERNAME", "winda"),
-		RTSPPassword: getEnv("RTSP_PASSWORD", "Morgana12"),
-		RTSPIP:       getEnv("RTSP_IP", "192.168.31.152"),
-		RTSPPort:     getEnv("RTSP_PORT", "554"),
-		RTSPPath:     getEnv("RTSP_PATH", "/streaming/channels/101/"),
-
-		// Recording Configuration
-		SegmentDuration: func() int {
-			duration, _ := strconv.Atoi(getEnv("SEGMENT_DURATION", "30"))
-			return duration
-		}(),
-		Width: func() int {
-			width, _ := strconv.Atoi(getEnv("WIDTH", "800"))
-			return width
-		}(),
-		Height: func() int {
-			height, _ := strconv.Atoi(getEnv("HEIGHT", "600"))
-			return height
-		}(),
-		FrameRate: func() int {
-			rate, _ := strconv.Atoi(getEnv("FRAME_RATE", "30"))
-			return rate
-		}(),
-		AutoDelete: func() int {
-			days, _ := strconv.Atoi(getEnv("AUTO_DELETE", "30"))
-			return days
-		}(),
-
-		// Storage Configuration
-		StoragePath:   getEnv("STORAGE_PATH", "./videos"),
-		HardwareAccel: getEnv("HW_ACCEL", ""),
-		Codec:         getEnv("CODEC", "avc"),
-
-		// Server Configuration
-		ServerPort: getEnv("PORT", "3000"),
-		BaseURL:    getEnv("BASE_URL", "http://localhost:3000"),
-
-		// Database Configuration
+		// Database Configuration - needed to load other configs from database
 		DatabasePath: getEnv("DATABASE_PATH", "./data/videos.db"),
-
-		// R2 Configuration
-		R2Enabled: func() bool {
-			enabled, _ := strconv.ParseBool(getEnv("R2_ENABLED", "false"))
-			return enabled
-		}(),
-		R2TokenValue: getEnv("R2_TOKEN_VALUE", ""),
-		R2AccessKey:  getEnv("R2_ACCESS_KEY", ""),
-		R2SecretKey:  getEnv("R2_SECRET_KEY", ""),
-		R2AccountID:  getEnv("R2_ACCOUNT_ID", ""),
-		R2Bucket:     getEnv("R2_BUCKET", ""),
-		R2Endpoint:   getEnv("R2_ENDPOINT", ""),
-		R2BaseURL:    getEnv("R2_BASE_URL", ""),
-		R2Region:     getEnv("R2_REGION", "auto"),
-
-		// Worker Concurrency Configuration (will be overridden by database values)
-		BookingWorkerConcurrency: func() int {
-			workers, _ := strconv.Atoi(getEnv("BOOKING_WORKER_CONCURRENCY", "2"))
-			return workers
-		}(),
-		VideoRequestWorkerConcurrency: func() int {
-			workers, _ := strconv.Atoi(getEnv("VIDEO_REQUEST_WORKER_CONCURRENCY", "3"))
-			return workers
-		}(),
-		PendingTaskWorkerConcurrency: func() int {
-			workers, _ := strconv.Atoi(getEnv("PENDING_TASK_WORKER_CONCURRENCY", "5"))
-			return workers
-		}(),
-
-		// Transcoding Quality Configuration (will be overridden by database values)
-		EnabledQualities: strings.Split(getEnv("ENABLED_QUALITIES", "1080p,720p,480p,360p"), ","),
+		
+		// Default values that will be overridden by database values
+		VenueCode:                     "",
+		ArduinoCOMPort:                "COM4",
+		ArduinoBaudRate:               9600,
+		RTSPUsername:                  "winda",
+		RTSPPassword:                  "Morgana12",
+		RTSPIP:                        "192.168.31.152",
+		RTSPPort:                      "554",
+		RTSPPath:                      "/streaming/channels/101/",
+		SegmentDuration:               30,
+		ClipDuration:                  0,
+		Width:                         800,
+		Height:                        600,
+		FrameRate:                     30,
+		Resolution:                    "720p",
+		AutoDelete:                    30,
+		StoragePath:                   "./videos",
+		HardwareAccel:                 "",
+		Codec:                         "avc",
+		ServerPort:                    "3000",
+		BaseURL:                       "http://localhost:3000",
+		R2Enabled:                     false,
+		R2TokenValue:                  "",
+		R2AccessKey:                   "",
+		R2SecretKey:                   "",
+		R2AccountID:                   "",
+		R2Bucket:                      "",
+		R2Endpoint:                    "",
+		R2BaseURL:                     "",
+		R2Region:                      "auto",
+		BookingWorkerConcurrency:      2,
+		VideoRequestWorkerConcurrency: 3,
+		PendingTaskWorkerConcurrency:  5,
+		EnabledQualities:              []string{"1080p", "720p", "480p", "360p"},
 	}
 
-	// Load ClipDuration from environment variable if available
-	if clipDurationStr := getEnv("CLIP_DURATION", ""); clipDurationStr != "" {
-		if clipDuration, err := strconv.Atoi(clipDurationStr); err == nil {
-			cfg.ClipDuration = clipDuration
-			log.Printf("Loaded ClipDuration from environment: %d seconds", cfg.ClipDuration)
-		}
-	}
+
 
 	// --- CAMERA CONFIG LOAD via SQLite ---
 	// Open SQLite DB

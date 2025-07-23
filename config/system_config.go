@@ -282,6 +282,114 @@ func (s *SystemConfigService) LoadSystemConfigToConfig(cfg *Config) error {
 		log.Printf("⚙️ CONFIG: Loaded enabled qualities from database: [%s]", strings.Join(qualities, ", "))
 	}
 
+	// Load all other system configurations from database
+	configs, err := s.db.GetAllSystemConfigs()
+	if err != nil {
+		log.Printf("Warning: Failed to load system configs from database: %v", err)
+		return nil
+	}
+
+	// Apply configurations to Config struct
+	for _, config := range configs {
+		switch config.Key {
+		// Venue Configuration
+		case database.ConfigVenueCode:
+			cfg.VenueCode = config.Value
+			log.Printf("⚙️ CONFIG: Loaded venue_code from database: %s", config.Value)
+
+		// Arduino Configuration
+		case database.ConfigArduinoCOMPort:
+			cfg.ArduinoCOMPort = config.Value
+		case database.ConfigArduinoBaudRate:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.ArduinoBaudRate = val
+			}
+
+		// RTSP Configuration
+		case database.ConfigRTSPUsername:
+			cfg.RTSPUsername = config.Value
+		case database.ConfigRTSPPassword:
+			cfg.RTSPPassword = config.Value
+		case database.ConfigRTSPIP:
+			cfg.RTSPIP = config.Value
+		case database.ConfigRTSPPort:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.RTSPPort = strconv.Itoa(val)
+			}
+		case database.ConfigRTSPPath:
+			cfg.RTSPPath = config.Value
+
+		// Recording Configuration
+		case database.ConfigSegmentDuration:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.SegmentDuration = val
+			}
+		case database.ConfigClipDuration:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.ClipDuration = val
+			}
+		case database.ConfigWidth:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.Width = val
+			}
+		case database.ConfigHeight:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.Height = val
+			}
+		case database.ConfigFrameRate:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.FrameRate = val
+			}
+		case database.ConfigResolution:
+			cfg.Resolution = config.Value
+		case database.ConfigAutoDelete:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.AutoDelete = val
+			}
+
+		// Storage Configuration
+		case database.ConfigStoragePath:
+			cfg.StoragePath = config.Value
+		case database.ConfigHardwareAccel:
+			cfg.HardwareAccel = config.Value
+		case database.ConfigCodec:
+			cfg.Codec = config.Value
+
+		// Server Configuration
+		case database.ConfigServerPort:
+			if val, parseErr := strconv.Atoi(config.Value); parseErr == nil {
+				cfg.ServerPort = strconv.Itoa(val)
+			}
+		case database.ConfigBaseURL:
+			cfg.BaseURL = config.Value
+
+
+
+		// R2 Storage Configuration
+		case database.ConfigR2AccessKey:
+			cfg.R2AccessKey = config.Value
+		case database.ConfigR2SecretKey:
+			cfg.R2SecretKey = config.Value
+		case database.ConfigR2AccountID:
+			cfg.R2AccountID = config.Value
+		case database.ConfigR2Bucket:
+			cfg.R2Bucket = config.Value
+		case database.ConfigR2Region:
+			cfg.R2Region = config.Value
+		case database.ConfigR2Endpoint:
+			cfg.R2Endpoint = config.Value
+		case database.ConfigR2BaseURL:
+			cfg.R2BaseURL = config.Value
+		case database.ConfigR2Enabled:
+			if val, parseErr := strconv.ParseBool(config.Value); parseErr == nil {
+				cfg.R2Enabled = val
+			}
+		case database.ConfigR2TokenValue:
+			cfg.R2TokenValue = config.Value
+		}
+	}
+
+	log.Printf("⚙️ CONFIG: Loaded all system configurations from database")
 	return nil
 }
 

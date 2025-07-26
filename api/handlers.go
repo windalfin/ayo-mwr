@@ -368,9 +368,20 @@ func (s *Server) updateCamerasConfig(c *gin.Context) {
 		return
 	}
 
+	// Automatically reload cameras after saving to apply new configuration
+	if err := s.reloadCamerasInternal(); err != nil {
+		log.Printf("Warning: Failed to reload cameras after saving: %v", err)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": fmt.Sprintf("Updated %d cameras, but reload failed. Please manually reload.", len(request.Cameras)),
+			"warning": "Camera reload failed",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": fmt.Sprintf("Updated %d cameras", len(request.Cameras)),
+		"message": fmt.Sprintf("Updated and reloaded %d cameras", len(request.Cameras)),
 	})
 }
 
@@ -416,20 +427,16 @@ func (s *Server) updateArduinoConfig(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "updated and reloaded", "connected": true})
 }
 
-func (s *Server) reloadCameras(c *gin.Context) {
+// reloadCamerasInternal performs the camera reload logic and returns error if any
+func (s *Server) reloadCamerasInternal() error {
 	sqldb, ok := s.db.(*dbmod.SQLiteDB)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database is not SQLiteDB"})
-		return
+		return fmt.Errorf("database is not SQLiteDB")
 	}
 
 	dbCams, err := sqldb.GetCameras()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to load cameras from DB",
-			"details": err.Error(),
-		})
-		return
+		return fmt.Errorf("failed to load cameras from DB: %v", err)
 	}
 
 	// Convert DB rows to config.CameraConfig and reconcile running camera workers
@@ -471,9 +478,22 @@ func (s *Server) reloadCameras(c *gin.Context) {
 	// Rebuild camera lookup map with new button numbers
 	s.config.BuildCameraLookup()
 
+	log.Printf("Successfully reloaded %d cameras", len(newCams))
+	return nil
+}
+
+func (s *Server) reloadCameras(c *gin.Context) {
+	if err := s.reloadCamerasInternal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to reload cameras",
+			"details": err.Error(),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": fmt.Sprintf("Reloaded %d cameras", len(newCams)),
+		"message": fmt.Sprintf("Reloaded %d cameras", len(s.config.Cameras)),
 	})
 }
 
@@ -1046,9 +1066,26 @@ func (s *Server) saveFirstCamera(c *gin.Context) {
 		return
 	}
 
+	// Automatically reload cameras after saving to apply new configuration
+	if err := s.reloadCamerasInternal(); err != nil {
+		log.Printf("Warning: Failed to reload cameras after saving first camera: %v", err)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "First camera configuration saved, but reload failed. Please manually reload.",
+			"warning": "Camera reload failed",
+			"camera": gin.H{
+				"name":      camera.Name,
+				"ip":        camera.IP,
+				"field":     camera.Field,
+				"button_no": camera.ButtonNo,
+			},
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "First camera configuration saved successfully",
+		"message": "First camera configuration saved and reloaded successfully",
 		"camera": gin.H{
 			"name":      camera.Name,
 			"ip":        camera.IP,

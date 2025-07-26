@@ -83,6 +83,9 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 
 	// Static routes - serve HLS files from the recordings directory
 	r.Static("/hls", filepath.Join(s.config.StoragePath, "recordings"))
+	
+	// Static route for watermarks
+	r.Static("/watermarks", filepath.Join(s.config.StoragePath, "watermarks"))
 
 	// Authentication routes (no middleware)
 	r.GET("/login", s.handleLogin)
@@ -171,8 +174,11 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 					   admin.PUT("/system-config", s.updateSystemConfig)
 
 					   // Disk manager configuration endpoints
-					   admin.GET("/disk-manager-config", s.getDiskManagerConfig)
-					   admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
+			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
+			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
+
+			// Watermark endpoints
+			admin.POST("/force-update-watermark", s.forceUpdateWatermark)
 			   }
 	   }
 }

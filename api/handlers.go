@@ -497,6 +497,54 @@ func (s *Server) reloadCameras(c *gin.Context) {
 	})
 }
 
+// ---------- Watermark handlers ----------
+
+// POST /api/admin/force-update-watermark
+// Force update watermark from API
+func (s *Server) forceUpdateWatermark(c *gin.Context) {
+	var request struct {
+		Resolution string `json:"resolution"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
+		return
+	}
+
+	// Default to 1080 if no resolution specified
+	resolution := request.Resolution
+	if resolution == "" {
+		resolution = "1080"
+	}
+
+	// Initialize AYO API client
+	ayoClient, err := NewAyoIndoClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to initialize AYO API client",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Force update watermark
+	watermarkPath, err := ayoClient.ForceUpdateWatermark(resolution)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to force update watermark",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":        true,
+		"message":        fmt.Sprintf("Watermark force updated successfully for resolution %s", resolution),
+		"watermark_path": watermarkPath,
+		"resolution":     resolution,
+	})
+}
+
 // ---------- System Configuration handlers ----------
 
 // GET /api/admin/system-config

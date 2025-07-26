@@ -733,8 +733,18 @@ func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 	return result, nil
 }
 
+// ForceUpdateWatermark forces an update of watermark regardless of file age
+func (c *AyoIndoClient) ForceUpdateWatermark(resolution string) (string, error) {
+	return c.getWatermarkInternal(resolution, true)
+}
+
 // GetWatermark retrieves the watermark image path for the current venue
 func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
+	return c.getWatermarkInternal(resolution, false)
+}
+
+// getWatermarkInternal is the internal implementation for watermark retrieval
+func (c *AyoIndoClient) getWatermarkInternal(resolution string, forceUpdate bool) (string, error) {
 	// Create watermark directory if it doesn't exist
 	venueCode := c.venueCode
 	// Load storage path from database
@@ -785,19 +795,23 @@ func (c *AyoIndoClient) GetWatermark(resolution string) (string, error) {
 	log.Printf("GetWatermark : Watermark path: %s", specificPath)
 
 	// Check file age to determine if we need to update from API
-	needsUpdate := false
-	if stat, err := os.Stat(specificPath); err == nil {
-		// Check if file is older than 24 hours
-		if time.Since(stat.ModTime()) > 24*time.Hour {
-			needsUpdate = true
-			log.Printf("GetWatermark : Watermark exists but is older than 24 hours, checking for updates")
+	needsUpdate := forceUpdate
+	if !forceUpdate {
+		if stat, err := os.Stat(specificPath); err == nil {
+			// Check if file is older than 24 hours
+			if time.Since(stat.ModTime()) > 24*time.Hour {
+				needsUpdate = true
+				log.Printf("GetWatermark : Watermark exists but is older than 24 hours, checking for updates")
+			} else {
+				log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
+				return specificPath, nil
+			}
 		} else {
-			log.Printf("GetWatermark : Watermark found for resolution %s", resolution)
-			return specificPath, nil
+			needsUpdate = true
+			log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
 		}
 	} else {
-		needsUpdate = true
-		log.Printf("GetWatermark : Watermark not found for resolution %s", resolution)
+		log.Printf("ForceUpdateWatermark : Force updating watermark for resolution %s", resolution)
 	}
 
 	// Only proceed with API check if we need to update

@@ -129,7 +129,7 @@ func NewAyoIndoClient() (*AyoIndoClient, error) {
 func (c *AyoIndoClient) ReloadConfigFromDatabase() error {
 	clientMutex.Lock()
 	defer clientMutex.Unlock()
-	
+
 	// Load configuration from database
 	dbPath := os.Getenv("DATABASE_PATH")
 	if dbPath == "" {
@@ -664,8 +664,8 @@ func (c *AyoIndoClient) HealthCheck() (map[string]interface{}, error) {
 	// Check if venue code and secret key are configured
 	if c.venueCode == "" || c.secretKey == "" {
 		return map[string]interface{}{
-			"is_error": true,
-			"message":  "Venue code and secret key must be configured in dashboard before health check can be performed",
+			"is_error":    true,
+			"message":     "Venue code and secret key must be configured in dashboard before health check can be performed",
 			"status_code": 400,
 		}, nil
 	}
@@ -879,8 +879,20 @@ func (c *AyoIndoClient) getWatermarkInternal(resolution string, forceUpdate bool
 			}
 
 			path := filepath.Join(folder, fname)
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				log.Printf("Downloading watermark from: %s", watermarkURL)
+			// Check if file exists and if we should update it
+			fileExists := false
+			if _, err := os.Stat(path); err == nil {
+				fileExists = true
+			}
+
+			// Download if we need to update (covers file doesn't exist, file too old, or force update)
+			if needsUpdate {
+				if forceUpdate && fileExists {
+					log.Printf("Force updating existing watermark from: %s", watermarkURL)
+				} else {
+					log.Printf("Downloading watermark from: %s", watermarkURL)
+				}
+
 				// Download watermark image
 				resp, err := http.Get(watermarkURL)
 				if err != nil {
@@ -910,7 +922,7 @@ func (c *AyoIndoClient) getWatermarkInternal(resolution string, forceUpdate bool
 					log.Printf("Error saving watermark file: %v", err)
 				}
 			} else {
-				// File already exists
+				// File already exists and no update needed
 				log.Printf("Using existing watermark file for resolution %s", resAPI)
 				return path, nil
 			}

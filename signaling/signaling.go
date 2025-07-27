@@ -90,9 +90,11 @@ func (a *ArduinoSignal) Connect() error {
 	return nil
 }
 
-// listen continuously reads from the serial port
+// heartbeat checks connection health periodically
 func (a *ArduinoSignal) heartbeat() {
 	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	
 	for range ticker.C {
 		if !a.connected {
 			continue
@@ -110,23 +112,6 @@ func (a *ArduinoSignal) heartbeat() {
 			a.mutex.Unlock()
 		}
 	}
-    for range ticker.C {
-        if !a.connected {
-            continue
-        }
-        if time.Since(a.lastSignal) > 10*time.Second {
-            // no recent signal, test write
-            a.mutex.Lock()
-            if a.port != nil {
-                _, err := a.port.Write([]byte{0})
-                if err != nil {
-                    log.Printf("[Arduino] Heartbeat failed, marking disconnected: %v", err)
-                    a.connected = false
-                }
-            }
-            a.mutex.Unlock()
-        }
-    }
 }
 
 func (a *ArduinoSignal) listen() {
@@ -203,51 +188,68 @@ func (a *ArduinoSignal) HandleSignal(signal string) error {
 
 	fmt.Printf("Received signal: %s\n", signal)
 
-	// Ignore semicolons as separate signals
-	if signal == ";" || strings.TrimSpace(signal) == ";" {
-		log.Printf("Ignoring semicolon as a separate signal")
+	// Ignore pure semicolons or empty/whitespace signals
+	if signal == ";" || strings.TrimSpace(signal) == ";" || strings.TrimSpace(signal) == "" || signal == "\r" || signal == "\n" || signal == "\r\n" {
+		log.Printf("Ignoring empty/whitespace/control characters")
 		return nil
 	}
 
-	// Ignore carriage return and newline characters
-	if strings.TrimSpace(signal) == "" || signal == "\r" || signal == "\n" || signal == "\r\n" {
-		log.Printf("Ignoring whitespace/control characters")
-		return nil
+	// Parse multiple signals separated by semicolons
+	// Split by semicolon and process each non-empty part as a separate signal
+	signals := strings.Split(signal, ";")
+	var errors []error
+	successCount := 0
+
+	for _, rawButtonNo := range signals {
+		buttonNo := strings.TrimSpace(rawButtonNo)
+		
+		// Skip empty parts (can happen with trailing semicolons)
+		if buttonNo == "" {
+			continue
+		}
+
+		log.Printf("Processing individual signal: %s", buttonNo)
+
+		// Map button number to field ID and camera name using configuration
+		fieldID := buttonNo // Default fallback
+		cameraName := ""   // Empty means not provided
+
+		if a.config != nil && a.config.CameraByButtonNo != nil {
+			if cam, ok := a.config.CameraByButtonNo[buttonNo]; ok {
+				if cam.Field != "" {
+					fieldID = cam.Field
+				}
+				cameraName = cam.Name
+				log.Printf("Mapped button %s -> fieldID=%s, cameraName=%s", buttonNo, fieldID, cameraName)
+			} else {
+				log.Printf("Warning: No camera mapping found for button %s", buttonNo)
+			}
+		} else {
+			log.Printf("Warning: Camera configuration not available, using defaults")
+		}
+
+		// Call the API using the utility function, supplying both field ID and camera name (if available)
+		err := CallProcessBookingVideoAPI(fieldID, cameraName)
+		if err != nil {
+			log.Printf("Error calling Process Booking Video API for button %s: %v", buttonNo, err)
+			errors = append(errors, fmt.Errorf("button %s: %w", buttonNo, err))
+		} else {
+			log.Printf("Successfully initiated API call for button_no: %s, field_id: %s", buttonNo, fieldID)
+			successCount++
+		}
 	}
 
-	// Trim the trailing semicolon from the signal to get the button number
-	buttonNo := strings.TrimSuffix(strings.TrimSpace(signal), ";")
-
-    // Map button number to field ID and camera name using configuration
-    fieldID := buttonNo // Default fallback
-    cameraName := ""   // Empty means not provided
-
-    if a.config != nil && a.config.CameraByButtonNo != nil {
-        if cam, ok := a.config.CameraByButtonNo[buttonNo]; ok {
-            if cam.Field != "" {
-                fieldID = cam.Field
-            }
-            cameraName = cam.Name
-            log.Printf("Mapped button %s -> fieldID=%s, cameraName=%s", buttonNo, fieldID, cameraName)
-        } else {
-            log.Printf("Warning: No camera mapping found for button %s", buttonNo)
-        }
-    } else {
-        log.Printf("Warning: Camera configuration not available, using defaults")
-    }
-
-    // Call the API using the utility function, supplying both field ID and camera name (if available)
-    err := CallProcessBookingVideoAPI(fieldID, cameraName)
-	if err != nil {
-		// The utility function already logs the specific error,
-		// so we can just return a general error or the specific one.
-		log.Printf("Error calling Process Booking Video API: %v", err) // Optional: log here as well
-		return fmt.Errorf("failed to process booking video API call: %w", err)
+	// Log overall results
+	if len(errors) > 0 {
+		log.Printf("Signal processing completed: %d successful, %d failed", successCount, len(errors))
+		// Return the first error, but log all of them
+		for _, err := range errors {
+			log.Printf("Signal processing error: %v", err)
+		}
+		return fmt.Errorf("failed to process %d out of %d signals: %v", len(errors), successCount+len(errors), errors[0])
 	}
 
-	// Log success
-	log.Printf("Successfully initiated API call for button_no: %s, field_id: %s", buttonNo, fieldID)
-
+	log.Printf("Successfully processed %d signals from input: %s", successCount, signal)
 	return nil
 }
 

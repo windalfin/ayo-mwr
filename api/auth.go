@@ -16,9 +16,8 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 		session := sessions.Default(c)
 		userID := session.Get("user_id")
 		
-		log.Printf("🔍 AUTH: Checking authentication for path '%s', userID: %v", c.Request.URL.Path, userID)
-		
 		if userID == nil {
+			log.Printf("🔍 AUTH: Authentication required for path '%s'", c.Request.URL.Path)
 			// Check if this is an API request
 			if c.Request.Header.Get("Accept") == "application/json" || 
 				c.GetHeader("Content-Type") == "application/json" ||
@@ -46,7 +45,11 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		
-		log.Printf("✅ AUTH: User authenticated, allowing access to '%s'", c.Request.URL.Path)
+		// Only log authentication for non-API paths or first time after login
+		// Reduce log noise for frequent API calls
+		if !strings.HasPrefix(c.Request.URL.Path, "/api") {
+			log.Printf("✅ AUTH: User authenticated, allowing access to '%s'", c.Request.URL.Path)
+		}
 		c.Next()
 	}
 }

@@ -76,6 +76,7 @@ echo -e "${GREEN}✓ Binary built successfully${NC}"
 
 echo -e "${GREEN}Step 2: Creating systemd service...${NC}"
 
+
 # Create systemd service file content
 SERVICE_CONTENT="[Unit]
 Description=AYO MWR Video Recording Service
@@ -102,17 +103,42 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
+
+# Allow read/write access to project dir, /mnt, /media, and any other mount points as needed
 ProtectSystem=strict
-ReadWritePaths=$WORK_DIR /mnt
+ReadWritePaths=$WORK_DIR /mnt /media
+# To allow access to other drives, add their mount points here (e.g., /run/media/$USER)
 
 [Install]
 WantedBy=multi-user.target"
 
-# Write service file (requires sudo)
-echo "Creating service file: $SERVICE_FILE"
-echo "$SERVICE_CONTENT" | sudo tee "$SERVICE_FILE" > /dev/null
+# Parse arguments
+FORCE_UPDATE=false
+for arg in "$@"; do
+    case $arg in
+        --update-service|--update-service=true)
+            FORCE_UPDATE=true
+            ;;
+    esac
+done
 
-echo -e "${GREEN}✓ Service file created${NC}"
+# Only create/update the service file if it does not exist, content has changed, or --update-service is passed
+NEED_UPDATE=false
+if [ "$FORCE_UPDATE" = true ]; then
+    NEED_UPDATE=true
+elif [ ! -f "$SERVICE_FILE" ]; then
+    NEED_UPDATE=true
+elif ! diff -q <(echo "$SERVICE_CONTENT") "$SERVICE_FILE" > /dev/null; then
+    NEED_UPDATE=true
+fi
+
+if [ "$NEED_UPDATE" = true ]; then
+    echo "Creating or updating service file: $SERVICE_FILE"
+    echo "$SERVICE_CONTENT" | sudo tee "$SERVICE_FILE" > /dev/null
+    echo -e "${GREEN}✓ Service file created/updated${NC}"
+else
+    echo -e "${YELLOW}Service file already up to date, skipping creation.${NC}"
+fi
 
 echo -e "${GREEN}Step 3: Configuring systemd service...${NC}"
 

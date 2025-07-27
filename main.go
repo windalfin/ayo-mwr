@@ -116,6 +116,7 @@ func main() {
 	diskManager := storage.NewDiskManager(db)
 
 	// Setup initial disk - register current storage path as first disk
+	// Note: cfg.StoragePath will be updated from diskManager.GetActiveDiskPath() inside setupInitialDisk
 	err = setupInitialDisk(diskManager, &cfg)
 	if err != nil {
 		log.Printf("Warning: Failed to setup initial disk: %v", err)
@@ -297,6 +298,16 @@ func setupInitialDisk(diskManager *storage.DiskManager, cfg *config.Config) erro
 	err = diskManager.SelectActiveDisk()
 	if err != nil {
 		log.Printf("Warning: Failed to select initial disk: %v", err)
+	}
+
+	// After initial disk setup, update cfg.StoragePath from active disk
+	if activePath, apErr := diskManager.GetActiveDiskPath(); apErr == nil {
+		log.Printf("[MAIN] Using active disk path for recordings: %s", activePath)
+		cfg.StoragePath = activePath
+		// Update environment variable so all functions use the active disk
+		os.Setenv("STORAGE_PATH", activePath)
+	} else {
+		log.Printf("Warning: Unable to resolve active disk path: %v", apErr)
 	}
 
 	log.Println("Initial disk setup completed successfully")

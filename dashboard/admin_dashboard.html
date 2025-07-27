@@ -1018,7 +1018,7 @@
         
         <!-- Watermark Configuration -->
         <h4 style="color: #273c75; margin-top: 2rem;">Watermark Configuration</h4>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 1rem;">
           <div class="form-group">
             <label for="watermark-position">Watermark Position</label>
             <select id="watermark-position">
@@ -1039,6 +1039,21 @@
             <label for="watermark-opacity">Watermark Opacity</label>
             <input type="number" id="watermark-opacity" min="0" max="1" step="0.1" value="0.8">
             <small style="color: #666; font-size: 0.9em;">Opacity level (0.0 - 1.0)</small>
+          </div>
+        </div>
+        
+        <!-- Watermark Management -->
+        <div style="margin-bottom: 2rem; padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #273c75;">
+          <h5 style="margin: 0 0 1rem 0; color: #273c75;">Watermark Management</h5>
+          <p style="margin: 0 0 1rem 0; color: #666; font-size: 0.9em;">Force update watermark dari server AYO untuk mendapatkan watermark terbaru.</p>
+          <div style="display: flex; gap: 1rem; align-items: center;">
+            <button id="force-update-watermark-btn" class="btn btn-primary">🔄 Force Update Watermark</button>
+            <select id="watermark-resolution" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+            </select>
+            <small style="color: #666;">Pilih resolusi watermark yang akan di-update</small>
           </div>
         </div>
         
@@ -1115,6 +1130,8 @@
             <li>Changes will take effect immediately after saving (hot reload enabled)</li>
           </ul>
         </div>
+
+
       </div>
     </section>
 
@@ -2665,6 +2682,61 @@ function toggleOnboardingPassword() {
   }
 }
 
+
+
+// ---------- Force Update Watermark (Legacy) ----------
+async function forceUpdateWatermark() {
+  const button = document.getElementById('force-update-watermark-btn');
+  const resolution = document.getElementById('watermark-resolution').value;
+  
+  // Disable button and show loading state
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = '🔄 Updating...';
+  
+  try {
+    const response = await handleAuthenticatedFetch('/api/admin/force-update-watermark', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        resolution: resolution
+      })
+    });
+    
+    if (!response) {
+      // Redirected to login
+      return;
+    }
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    showNotification(`Watermark berhasil di-update untuk resolusi ${resolution}p`, 'success');
+    console.log('Watermark updated:', result);
+    
+  } catch (error) {
+    console.error('Error updating watermark:', error);
+    showNotification(`Error updating watermark: ${error.message}`, 'error');
+  } finally {
+    // Re-enable button and restore original text
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+// Initialize force update watermark event listener (Legacy)
+function initForceUpdateWatermark() {
+  const button = document.getElementById('force-update-watermark-btn');
+  if (button) {
+    button.addEventListener('click', forceUpdateWatermark);
+  }
+}
+
 // Initialize onboarding event listeners
 function initOnboarding() {
   document.getElementById('onboarding-next-btn').addEventListener('click', async () => {
@@ -2697,6 +2769,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initTabs();
   initCameraConfig();
   initSystemConfig();
+  initForceUpdateWatermark();
   initOnboarding();
   loadCameras();
   loadVideos();

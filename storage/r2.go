@@ -52,6 +52,11 @@ type R2Storage struct {
 
 // NewR2Storage creates a new R2Storage instance
 func NewR2Storage(config R2Config) (*R2Storage, error) {
+	return NewR2StorageWithConcurrency(config, 1)
+}
+
+// NewR2StorageWithConcurrency creates a new R2Storage instance with configurable concurrency
+func NewR2StorageWithConcurrency(config R2Config, concurrency int) (*R2Storage, error) {
 	// Set default region if not provided
 	if config.Region == "" {
 		config.Region = "auto"
@@ -77,13 +82,19 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 	// Create S3 client
 	client := s3.New(sess)
 
-	// Create uploader with single-connection concurrency to respect limited bandwidth
-	// We set PartSize to 10 MB (must be ≥ 5 MB) and Concurrency to 1 so that multipart
-	// uploads are performed sequentially, ensuring only **one** HTTP connection is
-	// active at a time.
+	// Create uploader with configurable concurrency
+	// We set PartSize to 10 MB (must be ≥ 5 MB) and allow configurable concurrency
+	// for parallel multipart uploads
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > maxUploadConcurrency {
+		concurrency = maxUploadConcurrency
+	}
+	
 	uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
 		u.PartSize = 10 * 1024 * 1024 // 10 MB
-		u.Concurrency = 1             // single connection / no parallel parts
+		u.Concurrency = concurrency   // configurable parallel parts
 	})
 
 	return &R2Storage{

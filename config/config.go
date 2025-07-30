@@ -85,6 +85,7 @@ type Config struct {
 	BookingWorkerConcurrency     int // Max concurrent booking process workers
 	VideoRequestWorkerConcurrency int // Max concurrent video request workers
 	PendingTaskWorkerConcurrency  int // Max concurrent pending task workers
+	UploadWorkerConcurrency       int // Max concurrent upload workers
 
 	// Transcoding Quality Configuration
 	EnabledQualities []string // Enabled transcoding quality presets
@@ -130,6 +131,7 @@ func LoadConfig() Config {
 		BookingWorkerConcurrency:      2,
 		VideoRequestWorkerConcurrency: 3,
 		PendingTaskWorkerConcurrency:  5,
+		UploadWorkerConcurrency:       3,
 		EnabledQualities:              []string{"1080p", "720p", "480p", "360p"},
 	}
 

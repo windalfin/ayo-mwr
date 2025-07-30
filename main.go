@@ -211,7 +211,7 @@ func main() {
 		Endpoint:  cfg.R2Endpoint,
 		BaseURL:   cfg.R2BaseURL, // Menggunakan R2_BASE_URL dari environment
 	}
-	r2Storage, err := storage.NewR2Storage(r2Config)
+	r2Storage, err := storage.NewR2StorageWithConcurrency(r2Config, cfg.UploadWorkerConcurrency)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize R2 storage: %v", err)
 	}

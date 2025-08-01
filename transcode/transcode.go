@@ -306,13 +306,13 @@ func GetOutputParams(hwAccel, codec string, preset QualityPreset) []string {
 		if codec == "hevc" {
 			outputParams = append([]string{
 				"-c:v", "libx265",
-				"-preset", "fast",
+				"-preset", "ultrafast",
 				"-crf", "28",
 			}, baseParams...)
 		} else {
 			outputParams = append([]string{
 				"-c:v", "libx264",
-				"-preset", "fast",
+				"-preset", "ultrafast",
 				"-profile:v", "high",
 				"-crf", "23",
 			}, baseParams...)
@@ -368,10 +368,10 @@ func ConvertTSToMP4(inputPath, outputPath string) error {
 	// -c copy means copy streams without re-encoding (preserves quality)
 	cmd := exec.Command("ffmpeg",
 		"-i", inputPath,
-		"-c", "copy",           // Copy streams without re-encoding
+		"-c", "copy", // Copy streams without re-encoding
 		"-avoid_negative_ts", "make_zero", // Handle negative timestamps
-		"-fflags", "+genpts",   // Generate presentation timestamps
-		"-y",                   // Overwrite output file if exists
+		"-fflags", "+genpts", // Generate presentation timestamps
+		"-y", // Overwrite output file if exists
 		outputPath)
 
 	cmd.Stdout = os.Stdout

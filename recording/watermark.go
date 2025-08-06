@@ -293,7 +293,7 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 		"-filter_complex", filter,
 		"-c:v", "libx264",           // Codec video H.264
 		"-crf", "17",                // CRF sangat rendah untuk kualitas mendekati lossless (0-51, semakin rendah semakin bagus)
-		"-preset", "slow",           // Preset encoding yang mementingkan kualitas
+		"-preset", "ultrafast",     // Preset encoding yang mementingkan kecepatan
 		"-profile:v", "high",        // Profil high untuk kualitas maksimal
 		"-pix_fmt", "yuv420p",       // Format pixel standar untuk kompatibilitas maksimal
 		"-c:a", "copy",              // Copy audio tanpa mengubah kualitas

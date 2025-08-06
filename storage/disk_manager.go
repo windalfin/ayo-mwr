@@ -114,12 +114,50 @@ func (dm *DiskManager) SelectActiveDisk() error {
 		return fmt.Errorf("failed to get storage disks: %v", err)
 	}
 
+	// Get current active disk to check if rotation is needed
+	currentActiveDisk, _ := dm.db.GetActiveDisk()
+	
+	// Check if current active disk needs rotation (add 20% buffer for safety)
+	rotationThreshold := int64(float64(minimumFreeSpaceGB) * 1.2)
+	if currentActiveDisk != nil {
+		for _, disk := range disks {
+			if disk.ID == currentActiveDisk.ID && disk.AvailableSpaceGB < rotationThreshold {
+				log.Printf("Current active disk %s (%s) is getting full: %dGB available (rotation threshold: %dGB)",
+					disk.ID, disk.Path, disk.AvailableSpaceGB, rotationThreshold)
+				break
+			}
+		}
+	}
+
 	// Find the first disk with sufficient free space (sorted by priority)
 	var selectedDisk *database.StorageDisk
 	for _, disk := range disks {
 		if disk.AvailableSpaceGB >= int64(minimumFreeSpaceGB) {
-			selectedDisk = &disk
-			break
+			// If this is the current active disk, check if we should rotate to a better disk
+			if currentActiveDisk != nil && disk.ID == currentActiveDisk.ID {
+				// Look for a disk with more space and similar or better priority
+				foundBetter := false
+				for _, otherDisk := range disks {
+					if otherDisk.ID != disk.ID && 
+					   otherDisk.AvailableSpaceGB >= int64(minimumFreeSpaceGB) &&
+					   otherDisk.AvailableSpaceGB > disk.AvailableSpaceGB + 50 && // At least 50GB more
+					   otherDisk.PriorityOrder <= disk.PriorityOrder + 50 { // Similar priority range
+						selectedDisk = &otherDisk
+						foundBetter = true
+						log.Printf("Found better disk %s (%s) with %dGB available vs current %dGB",
+							otherDisk.ID, otherDisk.Path, otherDisk.AvailableSpaceGB, disk.AvailableSpaceGB)
+						break
+					}
+				}
+				if !foundBetter {
+					selectedDisk = &disk
+				}
+			} else {
+				selectedDisk = &disk
+			}
+			if selectedDisk != nil {
+				break
+			}
 		}
 	}
 
@@ -127,14 +165,20 @@ func (dm *DiskManager) SelectActiveDisk() error {
 		return fmt.Errorf("no disk has sufficient free space (minimum %dGB required)", minimumFreeSpaceGB)
 	}
 
-	// Set the selected disk as active
-	err = dm.db.SetActiveDisk(selectedDisk.ID)
-	if err != nil {
-		return fmt.Errorf("failed to set active disk: %v", err)
-	}
+	// Only update if different from current active disk
+	if currentActiveDisk == nil || currentActiveDisk.ID != selectedDisk.ID {
+		// Set the selected disk as active
+		err = dm.db.SetActiveDisk(selectedDisk.ID)
+		if err != nil {
+			return fmt.Errorf("failed to set active disk: %v", err)
+		}
 
-	log.Printf("Selected disk %s (%s) as active: %dGB available",
-		selectedDisk.ID, selectedDisk.Path, selectedDisk.AvailableSpaceGB)
+		log.Printf("Selected new disk %s (%s) as active: %dGB available",
+			selectedDisk.ID, selectedDisk.Path, selectedDisk.AvailableSpaceGB)
+	} else {
+		log.Printf("Keeping current disk %s (%s) as active: %dGB available",
+			selectedDisk.ID, selectedDisk.Path, selectedDisk.AvailableSpaceGB)
+	}
 
 	return nil
 }

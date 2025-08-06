@@ -644,6 +644,32 @@ func (h *BookingVideoRequestHandler) GetQueueStatus(c *gin.Context) {
 	})
 }
 
+// CleanupStuckTasks manually cleans up stuck tasks in the queue
+func (h *BookingVideoRequestHandler) CleanupStuckTasks(c *gin.Context) {
+	log.Printf("📦 QUEUE: 🧹 Manual cleanup requested via API")
+	
+	err := h.queueManager.CleanupStuckTasks()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ApiResponse{
+			Success: false,
+			Message: "Failed to cleanup stuck tasks: " + err.Error(),
+		})
+		return
+	}
+
+	// Get updated queue stats after cleanup
+	queueStats, err := h.queueManager.GetQueueStats()
+	if err != nil {
+		log.Printf("Warning: Failed to get updated queue stats: %v", err)
+	}
+
+	c.JSON(http.StatusOK, ApiResponse{
+		Success: true,
+		Message: "Stuck tasks cleanup completed successfully",
+		Data:    queueStats,
+	})
+}
+
 func getConnectivityStatusString(isOnline bool) string {
 	if isOnline {
 		return "ONLINE ✅"

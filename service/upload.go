@@ -201,7 +201,7 @@ func (s *UploadService) StartUploadWorker() {
 			if err != nil {
 				log.Printf("Error uploading MP4 for video %s: %v", video.ID, err)
 				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("MP4 upload error: %v", err))
-				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("MP4 upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusFailed, fmt.Sprintf("MP4 upload error: %v", err))
 				continue
 			}
 
@@ -269,28 +269,28 @@ func (s *UploadService) StartUploadWorker() {
 			if err != nil {
 				log.Printf("Error getting complete video data: %v", err)
 
-				// Fallback ke UpdateVideoStatus standar jika gagal mendapatkan data lengkap
-				err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
+				// Fallback - keep as uploading until API notification succeeds
+				err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
 				if err != nil {
-					log.Printf("Error updating video status back to ready: %v", err)
+					log.Printf("Error updating video status to uploading: %v", err)
 				}
 			} else {
-				// Set status dan timestamp
-				fullVideoData.Status = database.StatusReady
+				// Don't set to ready yet - only set UploadedAt timestamp
+				// Status will be set to ready only after API notification succeeds
+				fullVideoData.Status = database.StatusUploading // Keep as uploading until API notification
 				fullVideoData.ErrorMessage = ""
-				fullVideoData.FinishedAt = &now
-
-				// Pastikan UploadedAt juga diset
+				
+				// Set UploadedAt timestamp to indicate upload completed
 				if fullVideoData.UploadedAt == nil {
 					fullVideoData.UploadedAt = &now
 				}
 
-				// Update video dengan semua data
+				// Update video with upload completion data
 				err = s.db.UpdateVideo(*fullVideoData)
 				if err != nil {
-					log.Printf("Error updating video to ready status with full data: %v", err)
+					log.Printf("Error updating video upload completion data: %v", err)
 				} else {
-					log.Printf("Successfully updated video %s to ready status with complete data", video.ID)
+					log.Printf("Successfully updated video %s with upload completion (status: uploading)", video.ID)
 				}
 			}
 

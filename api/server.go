@@ -179,6 +179,9 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 
 			// Watermark endpoints
 			admin.POST("/force-update-watermark", s.forceUpdateWatermark)
+			
+			// Queue management endpoints
+			admin.POST("/cleanup-stuck-tasks", s.videoRequestHandler.CleanupStuckTasks)
 			   }
 	   }
 }

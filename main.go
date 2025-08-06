@@ -141,10 +141,10 @@ func main() {
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
 
-	// Start disk management cron job (nightly at 2 AM)
+	// Start disk management cron job (every 4 hours)
 	diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)
 	diskCron.Start()
-	log.Println("Started disk management cron job")
+	log.Println("Started disk management cron job (runs every 4 hours)")
 
 	// Start HLS cleanup cron job (nightly at 3 AM)
 	hlsCron := cron.NewHLSCleanupCron(db)

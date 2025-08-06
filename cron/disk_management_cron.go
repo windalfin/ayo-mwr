@@ -43,17 +43,15 @@ func (dmc *DiskManagementCron) Start() {
 		dmc.runDiskSpaceScan()
 		dmc.runDiskSelection()
 
-		// Then run nightly at 2 AM
+		// Then run every 4 hours
+		ticker := time.NewTicker(4 * time.Hour)
+		defer ticker.Stop()
+
 		for dmc.running {
-			now := time.Now()
-			next2AM := time.Date(now.Year(), now.Month(), now.Day()+1, 2, 0, 0, 0, now.Location())
-			duration := next2AM.Sub(now)
-
-			log.Printf("Disk management cron: next run scheduled in %v at %v", duration, next2AM)
-
 			select {
-			case <-time.After(duration):
+			case <-ticker.C:
 				if dmc.running {
+					log.Println("Running scheduled 4-hour disk management check")
 					dmc.runDiskSpaceScan()
 					dmc.runDiskSelection()
 				}
@@ -68,9 +66,10 @@ func (dmc *DiskManagementCron) Stop() {
 	dmc.running = false
 }
 
-// runDiskSpaceScan performs the nightly disk space scan
+// runDiskSpaceScan performs the disk space scan
 func (dmc *DiskManagementCron) runDiskSpaceScan() {
-	log.Println("=== Starting nightly disk space scan ===")
+	log.Println("=== Starting disk space scan ===")
+	log.Printf("Scan time: %s", time.Now().Format("2006-01-02 15:04:05"))
 
     // Discover and register any newly mounted disks before scanning
     dmc.diskManager.DiscoverAndRegisterDisks()
@@ -95,9 +94,16 @@ func (dmc *DiskManagementCron) runDiskSpaceScan() {
 	dmc.logDiskUsageStats()
 }
 
-// runDiskSelection selects the active disk for the next day's recordings
+// runDiskSelection selects the active disk for recording
 func (dmc *DiskManagementCron) runDiskSelection() {
 	log.Println("=== Selecting active disk for recording ===")
+	
+	// Get current active disk before selection
+	currentDisk, _ := dmc.db.GetActiveDisk()
+	currentPath := ""
+	if currentDisk != nil {
+		currentPath = currentDisk.Path
+	}
 
 	err := dmc.diskManager.SelectActiveDisk()
 	if err != nil {
@@ -110,6 +116,12 @@ func (dmc *DiskManagementCron) runDiskSelection() {
 	if err != nil {
 		log.Printf("ERROR: Failed to get active disk path: %v", err)
 		return
+	}
+	
+	// Check if disk changed
+	if currentPath != "" && currentPath != activeDiskPath {
+		log.Printf("🔄 DISK ROTATION: Active disk changed from %s to %s", currentPath, activeDiskPath)
+		log.Printf("🔄 DISK ROTATION: New recordings will be saved to: %s", activeDiskPath)
 	}
 
 	// Update the global storage path so legacy recorders will use the new disk for future restarts

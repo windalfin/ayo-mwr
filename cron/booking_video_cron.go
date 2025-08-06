@@ -576,10 +576,33 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 
 				// Find segments for this camera in the time range
+				// First try the current video directory
 				segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 				if err != nil || len(segments) == 0 {
-					log.Printf("processBookings : No video segments found for booking %s on camera %s: %v", bookingID, camera.Name, err)
-					continue
+					log.Printf("processBookings : No video segments found in primary path for booking %s on camera %s: %v", bookingID, camera.Name, err)
+					
+					// Try to find segments across all registered storage disks
+					log.Printf("processBookings : Searching for segments across all storage disks for camera %s", camera.Name)
+					
+					// Get all storage disks from database
+					disks, diskErr := db.GetStorageDisks()
+					if diskErr == nil && len(disks) > 0 {
+						var allStoragePaths []string
+						for _, disk := range disks {
+							allStoragePaths = append(allStoragePaths, disk.Path)
+						}
+						
+						// Search across all disks
+						segments, err = recording.FindSegmentsInRangeMultiDisk(camera.Name, startTime, endTime, allStoragePaths)
+						if err != nil || len(segments) == 0 {
+							log.Printf("processBookings : No video segments found across all disks for booking %s on camera %s: %v", bookingID, camera.Name, err)
+							continue
+						}
+						log.Printf("processBookings : Found %d video segments across multiple disks for booking %s on camera %s", len(segments), bookingID, camera.Name)
+					} else {
+						log.Printf("processBookings : Could not retrieve storage disks for multi-disk search: %v", diskErr)
+						continue
+					}
 				}
 
 				log.Printf("processBookings : Found %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)

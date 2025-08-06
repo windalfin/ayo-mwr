@@ -137,33 +137,52 @@ func FindSegmentsInRangeMultiDisk(cameraName string, startTime, endTime time.Tim
 		ts   time.Time
 	}
 
-	// Search across all provided storage paths
+	// Search across all provided storage paths for both HLS and MP4 segments
 	for _, storagePath := range storagePaths {
-		cameraPath := filepath.Join(storagePath, "recordings", cameraName, "mp4")
-
-		// Skip if directory doesn't exist
-		if _, err := os.Stat(cameraPath); os.IsNotExist(err) {
-			continue
-		}
-
-		segments, err := FindSegmentsInRange(cameraPath, startTime, endTime)
-		if err != nil {
-			fmt.Printf("Warning: failed to scan %s: %v\n", cameraPath, err)
-			continue
-		}
-
-		// Add found segments with timestamp for sorting
-		for _, segmentPath := range segments {
-			filename := filepath.Base(segmentPath)
-			ts, err := parseTimestampFromFilename(filename)
+		// Check HLS segments first (primary format)
+		hlsPath := filepath.Join(storagePath, "recordings", cameraName, "hls")
+		if _, err := os.Stat(hlsPath); err == nil {
+			segments, err := FindSegmentsInRange(hlsPath, startTime, endTime)
 			if err != nil {
-				fmt.Printf("Warning: failed to parse timestamp from %s: %v\n", filename, err)
-				continue
+				fmt.Printf("Warning: failed to scan HLS path %s: %v\n", hlsPath, err)
+			} else {
+				// Add found segments with timestamp for sorting
+				for _, segmentPath := range segments {
+					filename := filepath.Base(segmentPath)
+					ts, err := parseTimestampFromFilename(filename)
+					if err != nil {
+						fmt.Printf("Warning: failed to parse timestamp from %s: %v\n", filename, err)
+						continue
+					}
+					allSegments = append(allSegments, struct {
+						path string
+						ts   time.Time
+					}{segmentPath, ts})
+				}
 			}
-			allSegments = append(allSegments, struct {
-				path string
-				ts   time.Time
-			}{segmentPath, ts})
+		}
+
+		// Also check MP4 segments as fallback
+		mp4Path := filepath.Join(storagePath, "recordings", cameraName, "mp4")
+		if _, err := os.Stat(mp4Path); err == nil {
+			segments, err := FindSegmentsInRange(mp4Path, startTime, endTime)
+			if err != nil {
+				fmt.Printf("Warning: failed to scan MP4 path %s: %v\n", mp4Path, err)
+			} else {
+				// Add found segments with timestamp for sorting
+				for _, segmentPath := range segments {
+					filename := filepath.Base(segmentPath)
+					ts, err := parseTimestampFromFilename(filename)
+					if err != nil {
+						fmt.Printf("Warning: failed to parse timestamp from %s: %v\n", filename, err)
+						continue
+					}
+					allSegments = append(allSegments, struct {
+						path string
+						ts   time.Time
+					}{segmentPath, ts})
+				}
+			}
 		}
 	}
 

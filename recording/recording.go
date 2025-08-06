@@ -335,7 +335,7 @@ func CaptureRTSPSegments(cfg *config.Config) error {
 // MergeSessionVideos merges MP4 segments in inputPath between startTime and endTime into outputPath with hardware acceleration.
 func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPath string, resolution string) error {
 
-	log.Printf("MergeSessionVideos: Merging video segments with hardware acceleration")
+	log.Printf("MergeSessionVideos: Merging video segments from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 	// find segment in range of the startTime and endTime
 	segments, err := FindSegmentsInRange(inputPath, startTime, endTime)
 	if err != nil {
@@ -344,6 +344,26 @@ func MergeSessionVideos(inputPath string, startTime, endTime time.Time, outputPa
 	if len(segments) == 0 {
 		return fmt.Errorf("no video segments found in the specified range")
 	}
+	
+	// Log segment distribution across disks
+	diskMap := make(map[string]int)
+	for _, seg := range segments {
+		// Extract disk path from segment path
+		parts := strings.Split(seg, "/recordings/")
+		if len(parts) > 0 {
+			diskPath := parts[0]
+			diskMap[diskPath]++
+		}
+	}
+	
+	if len(diskMap) > 1 {
+		log.Printf("MergeSessionVideos: Found segments across %d different disks:", len(diskMap))
+		for disk, count := range diskMap {
+			log.Printf("  - %s: %d segments", disk, count)
+		}
+	}
+	
+	log.Printf("MergeSessionVideos: Total %d segments found to merge", len(segments))
 
 	// Ensure output directory exists
 	outDir := filepath.Dir(outputPath)

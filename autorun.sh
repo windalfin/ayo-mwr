@@ -9,10 +9,13 @@ set -e  # Exit on any error
 # Configuration
 APP_NAME="ayo-mwr"
 SERVICE_NAME="ayo-mwr"
+TIMER_NAME="restart-ayo-mwr"
 USER=$(whoami)
 WORK_DIR=$(pwd)
 BINARY_PATH="$WORK_DIR/$APP_NAME"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
+TIMER_SERVICE_FILE="/etc/systemd/system/$TIMER_NAME.service"
+TIMER_FILE="/etc/systemd/system/$TIMER_NAME.timer"
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,8 +28,9 @@ echo -e "${BLUE}=== AYO MWR Auto Setup Script ===${NC}"
 echo -e "${BLUE}This script will:${NC}"
 echo -e "${BLUE}1. Build the Go application${NC}"
 echo -e "${BLUE}2. Create a systemd service${NC}"
-echo -e "${BLUE}3. Enable auto-start on boot${NC}"
-echo -e "${BLUE}4. Start the service${NC}"
+echo -e "${BLUE}3. Create a daily restart timer (2 AM)${NC}"
+echo -e "${BLUE}4. Enable auto-start on boot${NC}"
+echo -e "${BLUE}5. Start the service${NC}"
 echo ""
 
 # Check if running as root for systemd operations
@@ -76,7 +80,6 @@ echo -e "${GREEN}✓ Binary built successfully${NC}"
 
 echo -e "${GREEN}Step 2: Creating systemd service...${NC}"
 
-
 # Create systemd service file content
 SERVICE_CONTENT="[Unit]
 Description=AYO MWR Video Recording Service
@@ -114,10 +117,14 @@ WantedBy=multi-user.target"
 
 # Parse arguments
 FORCE_UPDATE=false
+DISABLE_TIMER=false
 for arg in "$@"; do
     case $arg in
         --update-service|--update-service=true)
             FORCE_UPDATE=true
+            ;;
+        --disable-timer|--disable-timer=true)
+            DISABLE_TIMER=true
             ;;
     esac
 done
@@ -140,17 +147,73 @@ else
     echo -e "${YELLOW}Service file already up to date, skipping creation.${NC}"
 fi
 
-echo -e "${GREEN}Step 3: Configuring systemd service...${NC}"
+echo -e "${GREEN}Step 3: Creating daily restart timer...${NC}"
 
-# Reload systemd to pick up the new service
+if [ "$DISABLE_TIMER" = false ]; then
+    # Create timer service content
+    TIMER_SERVICE_CONTENT="[Unit]
+Description=Restart AYO MWR Video Recording Service
+After=$SERVICE_NAME.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart $SERVICE_NAME.service"
+
+    # Create timer content
+    TIMER_CONTENT="[Unit]
+Description=Restart AYO MWR Video Recording Service daily at 2 AM
+Requires=$SERVICE_NAME.service
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+
+    # Check if timer files need updating
+    TIMER_NEED_UPDATE=false
+    if [ "$FORCE_UPDATE" = true ]; then
+        TIMER_NEED_UPDATE=true
+    elif [ ! -f "$TIMER_SERVICE_FILE" ] || [ ! -f "$TIMER_FILE" ]; then
+        TIMER_NEED_UPDATE=true
+    elif ! diff -q <(echo "$TIMER_SERVICE_CONTENT") "$TIMER_SERVICE_FILE" > /dev/null || ! diff -q <(echo "$TIMER_CONTENT") "$TIMER_FILE" > /dev/null; then
+        TIMER_NEED_UPDATE=true
+    fi
+
+    if [ "$TIMER_NEED_UPDATE" = true ]; then
+        echo "Creating or updating timer service file: $TIMER_SERVICE_FILE"
+        echo "$TIMER_SERVICE_CONTENT" | sudo tee "$TIMER_SERVICE_FILE" > /dev/null
+        
+        echo "Creating or updating timer file: $TIMER_FILE"
+        echo "$TIMER_CONTENT" | sudo tee "$TIMER_FILE" > /dev/null
+        
+        echo -e "${GREEN}✓ Timer files created/updated${NC}"
+    else
+        echo -e "${YELLOW}Timer files already up to date, skipping creation.${NC}"
+    fi
+else
+    echo -e "${YELLOW}Timer creation disabled by --disable-timer flag${NC}"
+fi
+
+echo -e "${GREEN}Step 4: Configuring systemd service...${NC}"
+
+# Reload systemd to pick up the new service and timer
 sudo systemctl daemon-reload
 
 # Enable the service to start on boot
 sudo systemctl enable "$SERVICE_NAME"
 
+# Enable and start the timer if not disabled
+if [ "$DISABLE_TIMER" = false ]; then
+    sudo systemctl enable "$TIMER_NAME.timer"
+    sudo systemctl start "$TIMER_NAME.timer"
+    echo -e "${GREEN}✓ Daily restart timer enabled (2 AM)${NC}"
+fi
+
 echo -e "${GREEN}✓ Service enabled for auto-start on boot${NC}"
 
-echo -e "${GREEN}Step 4: Starting the service...${NC}"
+echo -e "${GREEN}Step 5: Starting the service...${NC}"
 
 # Stop the service if it's already running
 if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -176,6 +239,9 @@ fi
 echo ""
 echo -e "${GREEN}=== Setup Complete! ===${NC}"
 echo -e "${GREEN}Your AYO MWR application is now running as a systemd service.${NC}"
+if [ "$DISABLE_TIMER" = false ]; then
+    echo -e "${GREEN}The service will automatically restart every day at 2:00 AM.${NC}"
+fi
 echo ""
 echo -e "${BLUE}Useful commands:${NC}"
 echo -e "${BLUE}• Check status:${NC} sudo systemctl status $SERVICE_NAME"
@@ -184,9 +250,25 @@ echo -e "${BLUE}• Stop service:${NC} sudo systemctl stop $SERVICE_NAME"
 echo -e "${BLUE}• Start service:${NC} sudo systemctl start $SERVICE_NAME"
 echo -e "${BLUE}• Restart service:${NC} sudo systemctl restart $SERVICE_NAME"
 echo -e "${BLUE}• Disable auto-start:${NC} sudo systemctl disable $SERVICE_NAME"
+
+if [ "$DISABLE_TIMER" = false ]; then
+    echo ""
+    echo -e "${BLUE}Timer commands:${NC}"
+    echo -e "${BLUE}• Check timer status:${NC} sudo systemctl status $TIMER_NAME.timer"
+    echo -e "${BLUE}• List all timers:${NC} sudo systemctl list-timers $TIMER_NAME.timer"
+    echo -e "${BLUE}• Disable timer:${NC} sudo systemctl disable $TIMER_NAME.timer"
+    echo -e "${BLUE}• View timer logs:${NC} sudo journalctl -u $TIMER_NAME.service -f"
+fi
+
 echo ""
 echo -e "${GREEN}The service will automatically start when you reboot your PC.${NC}"
 
 # Show current status
 echo -e "${BLUE}Current service status:${NC}"
 sudo systemctl status "$SERVICE_NAME" --no-pager -l
+
+if [ "$DISABLE_TIMER" = false ]; then
+    echo ""
+    echo -e "${BLUE}Timer status:${NC}"
+    sudo systemctl list-timers "$TIMER_NAME.timer" --no-pager
+fi

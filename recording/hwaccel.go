@@ -186,7 +186,7 @@ func testQSVEncoder() bool {
 		"-f", "lavfi",
 		"-i", "testsrc2=duration=1:size=320x240:rate=1",
 		"-c:v", "h264_qsv",
-		"-preset", "fast",
+		"-preset", "ultrafast",
 		"-f", "null",
 		"-",
 	)
@@ -209,7 +209,7 @@ func testNVIDIAEncoder() bool {
 		"-f", "lavfi",
 		"-i", "testsrc2=duration=1:size=320x240:rate=1",
 		"-c:v", "h264_nvenc",
-		"-preset", "fast",
+		"-preset", "ultrafast",
 		"-f", "null",
 		"-",
 	)

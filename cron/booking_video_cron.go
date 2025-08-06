@@ -574,7 +574,7 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 					log.Printf("processBookings : No video directory found for camera %s", camera.Name)
 					continue
 				}
-
+				log.Printf("processBookings : videoDirectory %s", videoDirectory)
 				// Find segments for this camera in the time range
 				segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 				if err != nil || len(segments) == 0 {

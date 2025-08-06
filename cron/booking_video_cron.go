@@ -74,6 +74,80 @@ func isRetryableError(err error) bool {
 	return true
 }
 
+// shouldSkipBookingRetry checks if a booking should be skipped based on failed videos count and time intervals
+func shouldSkipBookingRetry(db database.Database, bookingID string) (bool, string) {
+	// Query failed videos for this booking
+	failedVideos, err := db.GetVideosByBookingID(bookingID)
+	if err != nil {
+		log.Printf("Error getting videos for booking %s: %v", bookingID, err)
+		// If we can't check, proceed with processing
+		return false, ""
+	}
+
+	// Filter only failed videos
+	var failedVideosList []database.VideoMetadata
+	var mostRecentFailedTime time.Time
+	for _, video := range failedVideos {
+		if video.Status == database.StatusFailed {
+			failedVideosList = append(failedVideosList, video)
+			// Use CreatedAt as the failure time (when the failed video was created)
+			if video.CreatedAt.After(mostRecentFailedTime) {
+				mostRecentFailedTime = video.CreatedAt
+			}
+		}
+	}
+
+	failedCount := len(failedVideosList)
+	if failedCount == 0 {
+		// No previous failures, proceed
+		return false, ""
+	}
+
+	if failedCount > 5 {
+		// More than 5 failures, skip permanently
+		return true, fmt.Sprintf("Booking %s has failed %d times (>5), skipping permanently", bookingID, failedCount)
+	}
+
+	if mostRecentFailedTime.IsZero() {
+		// No last failed time recorded, proceed
+		return false, ""
+	}
+
+	timeSinceLastFailure := time.Since(mostRecentFailedTime)
+	var requiredWaitTime time.Duration
+	var waitDescription string
+
+	switch failedCount {
+	case 1:
+		requiredWaitTime = 5 * time.Minute
+		waitDescription = "5 minutes"
+	case 2:
+		requiredWaitTime = 15 * time.Minute
+		waitDescription = "15 minutes"
+	case 3:
+		requiredWaitTime = 30 * time.Minute
+		waitDescription = "30 minutes"
+	case 4:
+		requiredWaitTime = 60 * time.Minute
+		waitDescription = "60 minutes"
+	case 5:
+		requiredWaitTime = 120 * time.Minute
+		waitDescription = "120 minutes"
+	default:
+		// Should not reach here due to check above, but handle gracefully
+		return true, fmt.Sprintf("Booking %s has unexpected failed count %d, skipping", bookingID, failedCount)
+	}
+
+	if timeSinceLastFailure < requiredWaitTime {
+		remainingTime := requiredWaitTime - timeSinceLastFailure
+		return true, fmt.Sprintf("Booking %s failed %d times, need to wait %s (remaining: %v) since last failure", 
+			bookingID, failedCount, waitDescription, remainingTime.Round(time.Minute))
+	}
+
+	// Enough time has passed, can retry
+	return false, ""
+}
+
 // cleanRetryWithBackoff melakukan retry dengan logging yang bersih dan emoji
 func cleanRetryWithBackoff(operation func() error, maxRetries int, operationName string) error {
 	var lastErr error
@@ -541,6 +615,12 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 			if status != "success" {
 				log.Printf("⏭️ CRON-RUN-%d: Booking %s status is '%s', skipping video processing", cronID, bookingID, status)
+				return
+			}
+			// check apakah ada failed di booking
+			shouldSkip, skipReason := shouldSkipBookingRetry(db, bookingID)
+			if shouldSkip {
+				log.Printf("⏭️ CRON-RUN-%d: %s", cronID, skipReason)
 				return
 			}
 

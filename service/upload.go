@@ -11,6 +11,7 @@ import (
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/metrics"
 	"ayo-mwr/storage"
 	"ayo-mwr/transcode"
 )
@@ -35,6 +36,7 @@ type UploadService struct {
 	queueMutex   sync.Mutex
 	maxRetries   int
 	retryBackoff time.Duration
+	metricsCollector *metrics.MetricsCollector
 }
 
 // NewUploadService creates a new upload service
@@ -52,6 +54,7 @@ func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *c
 		uploadQueue:  make([]QueuedVideo, 0),
 		maxRetries:   5,               // Maximum number of retry attempts
 		retryBackoff: 5 * time.Minute, // Time to wait between retries
+		metricsCollector: metrics.NewMetricsCollector(),
 	}
 }
 
@@ -176,6 +179,10 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
+			// Start metrics tracking for this upload
+			videoMetrics := s.metricsCollector.StartVideo(video.ID)
+			defer videoMetrics.Finalize()
+
 			// Start upload process
 			log.Printf("Attempting upload for video %s (attempt %d/%d)",
 				video.ID, queuedVideo.RetryCount+1, s.maxRetries)
@@ -187,8 +194,8 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
-			// Upload HLS stream - sekarang mengembalikan r2Path, r2URL, error
-			_, hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
+			// Upload HLS stream with metrics - sekarang mengembalikan r2Path, r2URL, error
+			_, hlsURL, err := s.r2Storage.UploadHLSStreamWithMetrics(video.HLSPath, video.ID, videoMetrics)
 			if err != nil {
 				log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
 				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("HLS upload error: %v", err))
@@ -196,8 +203,8 @@ func (s *UploadService) StartUploadWorker() {
 				continue
 			}
 
-			// Upload MP4 file
-			mp4URL, err := s.r2Storage.UploadMP4(video.LocalPath, video.ID)
+			// Upload MP4 file with metrics
+			mp4URL, err := s.r2Storage.UploadMP4WithMetrics(video.LocalPath, video.ID, videoMetrics)
 			if err != nil {
 				log.Printf("Error uploading MP4 for video %s: %v", video.ID, err)
 				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("MP4 upload error: %v", err))

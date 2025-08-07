@@ -15,6 +15,7 @@ import (
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/metrics"
 	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 	// "ayo-mwr/transcode"
@@ -33,6 +34,7 @@ type BookingVideoService struct {
 	ayoClient AyoAPIClient
 	r2Client  *storage.R2Storage
 	config    *config.Config
+	metricsCollector *metrics.MetricsCollector
 }
 
 // Tipe file sementara yang disimpan
@@ -69,6 +71,7 @@ func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Clie
 		ayoClient: ayoClient,
 		r2Client:  r2Client,
 		config:    cfg,
+		metricsCollector: metrics.NewMetricsCollector(),
 	}
 }
 
@@ -205,13 +208,17 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	bookingID string,
 	cameraName string,
 ) (string, string, error) {
+	// Start metrics tracking for this video
+	videoMetrics := s.metricsCollector.StartVideo(uniqueID)
+	defer videoMetrics.Finalize()
+
 	// UniqueID sudah berisi booking ID yang aman
 	// getVideoMeta := s.db.GetVideo(uniqueID)
 
 	// Create preview video (di folder preview)
 	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4", cameraName)
 	log.Printf("Creating preview video at: %s", previewVideoPath)
-	err := s.CreateVideoPreview(videoPath, previewVideoPath)
+	err := s.CreateVideoPreviewWithMetrics(videoPath, previewVideoPath, videoMetrics)
 	if err != nil {
 		log.Printf("Warning: Failed to create preview video: %v", err)
 		previewVideoPath = "" // Don't use preview if creation failed
@@ -270,7 +277,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	previewPath := fmt.Sprintf("mp4/%s_preview.mp4", uniqueID)
 	previewURL := ""
 	if previewVideoPath != "" {
-		_, err = s.r2Client.UploadFile(previewVideoPath, previewPath)
+		_, err = s.r2Client.UploadFileWithMetrics(previewVideoPath, previewPath, videoMetrics)
 		if err != nil {
 			log.Printf("Warning: Failed to upload preview video: %v", err)
 		} else {
@@ -284,7 +291,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	thumbnailR2Path := fmt.Sprintf("mp4/%s_thumbnail.png", uniqueID)
 	thumbnailURL := ""
 	if thumbnailPath != "" {
-		_, err = s.r2Client.UploadFile(thumbnailPath, thumbnailR2Path)
+		_, err = s.r2Client.UploadFileWithMetrics(thumbnailPath, thumbnailR2Path, videoMetrics)
 		if err != nil {
 			log.Printf("Warning: Failed to upload thumbnail: %v", err)
 		} else {
@@ -490,6 +497,16 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, 
 
 // CreateVideoPreview creates a preview video using interval-based clipping based on video duration
 func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) error {
+	return s.CreateVideoPreviewWithMetrics(inputPath, outputPath, nil)
+}
+
+// CreateVideoPreviewWithMetrics creates a preview video with metrics tracking
+func (s *BookingVideoService) CreateVideoPreviewWithMetrics(inputPath, outputPath string, videoMetrics *metrics.VideoProcessingMetrics) error {
+	// Start preview metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartPreview()
+		defer videoMetrics.EndPreview()
+	}
 	// Get video duration to determine which interval pattern to use
 	duration, err := s.GetVideoDuration(inputPath)
 	if err != nil {

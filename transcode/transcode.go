@@ -257,7 +257,7 @@ func GetOutputParams(hwAccel, codec string, preset QualityPreset) []string {
 		if codec == "hevc" {
 			outputParams = append([]string{
 				"-c:v", "hevc_nvenc",
-				"-preset", "p4",
+				"-preset", "p1",
 				"-profile:v", "main",
 				"-rc", "vbr",
 				"-cq", "28",
@@ -265,7 +265,7 @@ func GetOutputParams(hwAccel, codec string, preset QualityPreset) []string {
 		} else {
 			outputParams = append([]string{
 				"-c:v", "h264_nvenc",
-				"-preset", "p4",
+				"-preset", "p1",
 				"-profile:v", "high",
 				"-rc", "vbr",
 				"-cq", "23",
@@ -275,13 +275,13 @@ func GetOutputParams(hwAccel, codec string, preset QualityPreset) []string {
 		if codec == "hevc" {
 			outputParams = append([]string{
 				"-c:v", "hevc_qsv",
-				"-preset", "medium",
+				"-preset", "veryfast",
 				"-profile:v", "main",
 			}, baseParams...)
 		} else {
 			outputParams = append([]string{
 				"-c:v", "h264_qsv",
-				"-preset", "medium",
+				"-preset", "veryfast",
 				"-profile:v", "high",
 			}, baseParams...)
 		}

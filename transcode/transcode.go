@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ayo-mwr/config"
+	"ayo-mwr/metrics"
 )
 
 // QualityPreset defines parameters for a specific video quality
@@ -77,6 +78,11 @@ func GetQualityPresets(cfg config.Config) []QualityPreset {
 
 // TranscodeVideo generates multi-quality HLS format from the MP4 file
 func TranscodeVideo(inputPath, videoID, cameraName string, cfg *config.Config) (map[string]string, map[string]float64, error) {
+	return TranscodeVideoWithMetrics(inputPath, videoID, cameraName, cfg, nil)
+}
+
+// TranscodeVideoWithMetrics generates multi-quality HLS format from the MP4 file with metrics tracking
+func TranscodeVideoWithMetrics(inputPath, videoID, cameraName string, cfg *config.Config, videoMetrics *metrics.VideoProcessingMetrics) (map[string]string, map[string]float64, error) {
 	// Set up camera-specific paths
 	baseDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	hlsPath := filepath.Join(baseDir, "hls", videoID)
@@ -88,11 +94,21 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg *config.Config) (
 
 	timings := make(map[string]float64)
 
+	// Start HLS metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartHLS()
+	}
+
 	hlsStart := time.Now()
 	if err := GenerateHLS(inputPath, hlsPath, videoID, cfg); err != nil {
 		return nil, nil, fmt.Errorf("HLS transcoding error: %v", err)
 	}
 	timings["hlsTranscode"] = time.Since(hlsStart).Seconds()
+
+	// End HLS metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.EndHLS()
+	}
 
 	return map[string]string{
 		"hls": fmt.Sprintf("%s/recordings/%s/hls/%s/master.m3u8", cfg.BaseURL, cameraName, videoID),
@@ -353,6 +369,11 @@ func SplitFFmpegParams(hwAccel, codec string, cfg config.Config) ([]string, []st
 // ConvertTSToMP4 converts a TS file to MP4 format without changing quality
 // This is essentially a remux operation that preserves the original quality
 func ConvertTSToMP4(inputPath, outputPath string) error {
+	return ConvertTSToMP4WithMetrics(inputPath, outputPath, nil)
+}
+
+// ConvertTSToMP4WithMetrics converts a TS file to MP4 format with metrics tracking
+func ConvertTSToMP4WithMetrics(inputPath, outputPath string, videoMetrics *metrics.VideoProcessingMetrics) error {
 	// Create output directory if it doesn't exist (do this first)
 	outputDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -362,6 +383,11 @@ func ConvertTSToMP4(inputPath, outputPath string) error {
 	// Check if input file exists
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 		return fmt.Errorf("input TS file does not exist: %s", inputPath)
+	}
+
+	// Start transcode metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartTranscode()
 	}
 
 	// FFmpeg command to convert TS to MP4 without re-encoding
@@ -377,7 +403,14 @@ func ConvertTSToMP4(inputPath, outputPath string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	
+	// End transcode metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.EndTranscode()
+	}
+
+	if err != nil {
 		return fmt.Errorf("failed to convert TS to MP4: %v", err)
 	}
 

@@ -35,7 +35,6 @@ type UploadService struct {
 	queueMutex   sync.Mutex
 	maxRetries   int
 	retryBackoff time.Duration
-	semaphore    chan struct{} // Semaphore to limit concurrent uploads
 }
 
 // NewUploadService creates a new upload service
@@ -53,7 +52,6 @@ func NewUploadService(db database.Database, r2Storage *storage.R2Storage, cfg *c
 		uploadQueue:  make([]QueuedVideo, 0),
 		maxRetries:   5,               // Maximum number of retry attempts
 		retryBackoff: 5 * time.Minute, // Time to wait between retries
-		semaphore:    make(chan struct{}, cfg.UploadWorkerConcurrency),
 	}
 }
 
@@ -105,10 +103,10 @@ func (s *UploadService) updateQueuedVideo(videoID string, failReason string) {
 	}
 }
 
-// StartUploadWorker starts concurrent workers to upload videos to R2 storage
+// StartUploadWorker starts a worker to upload videos to R2 storage
 func (s *UploadService) StartUploadWorker() {
 	go func() {
-		log.Printf("Starting R2 upload worker with %d concurrent workers", s.config.UploadWorkerConcurrency)
+		log.Println("Starting R2 upload worker")
 		isOffline := false
 
 		for {
@@ -143,201 +141,163 @@ func (s *UploadService) StartUploadWorker() {
 				}
 			}
 
-			// Process queue concurrently
+			// Process queue
 			s.queueMutex.Lock()
-			queueLength := len(s.uploadQueue)
-			
-			if queueLength == 0 {
+			if len(s.uploadQueue) == 0 {
 				s.queueMutex.Unlock()
 				time.Sleep(10 * time.Second)
 				continue
 			}
 
-			// Process multiple queue items concurrently
-			processedCount := 0
-			for i := 0; i < queueLength && processedCount < s.config.UploadWorkerConcurrency; i++ {
-				queuedVideo := s.uploadQueue[i]
-				
-				// Check if we should retry yet
-				if !queuedVideo.LastAttempt.IsZero() && time.Since(queuedVideo.LastAttempt) < s.retryBackoff {
-					continue
-				}
-
-				// Check retry count
-				if queuedVideo.RetryCount >= s.maxRetries {
-					log.Printf("Video %s exceeded maximum retry attempts (%d). Last error: %s",
-						queuedVideo.VideoID, s.maxRetries, queuedVideo.FailReason)
-					s.db.UpdateVideoStatus(queuedVideo.VideoID, database.StatusFailed,
-						fmt.Sprintf("Exceeded maximum retry attempts. Last error: %s", queuedVideo.FailReason))
-					s.removeFromQueueUnsafe(queuedVideo.VideoID)
-					continue
-				}
-
-				// Try to acquire semaphore (non-blocking)
-				select {
-				case s.semaphore <- struct{}{}:
-					// Got semaphore, start concurrent upload
-					processedCount++
-					go func(qv QueuedVideo) {
-						defer func() { <-s.semaphore }() // Release semaphore
-						s.processUpload(qv)
-					}(queuedVideo)
-				default:
-					// Semaphore full, skip this video for now
-					break
-				}
-			}
-			
+			// Get next video from queue
+			queuedVideo := s.uploadQueue[0]
 			s.queueMutex.Unlock()
-			
-			if processedCount == 0 {
+
+			// Check if we should retry yet
+			if !queuedVideo.LastAttempt.IsZero() && time.Since(queuedVideo.LastAttempt) < s.retryBackoff {
 				time.Sleep(5 * time.Second)
-			} else {
-				time.Sleep(1 * time.Second) // Short sleep to allow processing
+				continue
 			}
+
+			// Check retry count
+			if queuedVideo.RetryCount >= s.maxRetries {
+				log.Printf("Video %s exceeded maximum retry attempts (%d). Last error: %s",
+					queuedVideo.VideoID, s.maxRetries, queuedVideo.FailReason)
+				s.db.UpdateVideoStatus(queuedVideo.VideoID, database.StatusFailed,
+					fmt.Sprintf("Exceeded maximum retry attempts. Last error: %s", queuedVideo.FailReason))
+				s.removeFromQueue(queuedVideo.VideoID)
+				continue
+			}
+
+			video, err := s.db.GetVideo(queuedVideo.VideoID)
+			if err != nil {
+				log.Printf("Error fetching video %s from database: %v", queuedVideo.VideoID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Database error: %v", err))
+				continue
+			}
+
+			// Start upload process
+			log.Printf("Attempting upload for video %s (attempt %d/%d)",
+				video.ID, queuedVideo.RetryCount+1, s.maxRetries)
+
+			err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
+			if err != nil {
+				log.Printf("Error updating video status to uploading: %v", err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Status update error: %v", err))
+				continue
+			}
+
+			// Upload HLS stream - sekarang mengembalikan r2Path, r2URL, error
+			_, hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
+			if err != nil {
+				log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("HLS upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("HLS upload error: %v", err))
+				continue
+			}
+
+			// Upload MP4 file
+			mp4URL, err := s.r2Storage.UploadMP4(video.LocalPath, video.ID)
+			if err != nil {
+				log.Printf("Error uploading MP4 for video %s: %v", video.ID, err)
+				s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("MP4 upload error: %v", err))
+				s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("MP4 upload error: %v", err))
+				continue
+			}
+
+			// Update R2 paths and URLs in database
+			err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("mp4/%s", video.ID))
+			if err != nil {
+				log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
+			}
+
+			err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, mp4URL)
+			if err != nil {
+				log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
+			}
+
+			// Verifikasi dan pastikan field-field penting tidak kosong
+			if video.CameraName == "" || video.LocalPath == "" || video.UniqueID == "" ||
+				video.OrderDetailID == "" || video.BookingID == "" {
+				// Ambil data lengkap dari database
+				fullVideo, err := s.db.GetVideo(video.ID)
+				if err != nil {
+					log.Printf("Error fetching complete data for video %s: %v", video.ID, err)
+				} else if fullVideo != nil {
+					// Update field yang kosong
+					updateNeeded := false
+
+					if video.CameraName == "" && fullVideo.CameraName != "" {
+						video.CameraName = fullVideo.CameraName
+						updateNeeded = true
+					}
+					if video.LocalPath == "" && fullVideo.LocalPath != "" {
+						video.LocalPath = fullVideo.LocalPath
+						updateNeeded = true
+					}
+					if video.UniqueID == "" && fullVideo.UniqueID != "" {
+						video.UniqueID = fullVideo.UniqueID
+						updateNeeded = true
+					}
+					if video.OrderDetailID == "" && fullVideo.OrderDetailID != "" {
+						video.OrderDetailID = fullVideo.OrderDetailID
+						updateNeeded = true
+					}
+					if video.BookingID == "" && fullVideo.BookingID != "" {
+						video.BookingID = fullVideo.BookingID
+						updateNeeded = true
+					}
+
+					// Update jika ada field yang perlu diperbarui
+					if updateNeeded {
+						// Gunakan dereferensi pointer (*video) untuk mengakses nilai
+						err = s.db.UpdateVideo(*video)
+						if err != nil {
+							log.Printf("Error updating missing fields for video %s: %v", video.ID, err)
+						} else {
+							log.Printf("Successfully updated missing fields for video %s", video.ID)
+						}
+					}
+				}
+			}
+
+			// Persiapkan data untuk update status
+			now := time.Now()
+
+			// Ambil data video lengkap
+			fullVideoData, err := s.db.GetVideo(video.ID)
+			if err != nil {
+				log.Printf("Error getting complete video data: %v", err)
+
+				// Fallback ke UpdateVideoStatus standar jika gagal mendapatkan data lengkap
+				err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
+				if err != nil {
+					log.Printf("Error updating video status back to ready: %v", err)
+				}
+			} else {
+				// Set status dan timestamp
+				fullVideoData.Status = database.StatusReady
+				fullVideoData.ErrorMessage = ""
+				fullVideoData.FinishedAt = &now
+
+				// Pastikan UploadedAt juga diset
+				if fullVideoData.UploadedAt == nil {
+					fullVideoData.UploadedAt = &now
+				}
+
+				// Update video dengan semua data
+				err = s.db.UpdateVideo(*fullVideoData)
+				if err != nil {
+					log.Printf("Error updating video to ready status with full data: %v", err)
+				} else {
+					log.Printf("Successfully updated video %s to ready status with complete data", video.ID)
+				}
+			}
+
+			log.Printf("Video %s successfully uploaded to R2 storage at %s", video.ID, now.Format(time.RFC3339))
+			s.removeFromQueue(video.ID)
 		}
 	}()
-}
-
-// removeFromQueueUnsafe removes a video from the queue without acquiring mutex (caller must hold mutex)
-func (s *UploadService) removeFromQueueUnsafe(videoID string) {
-	for i, v := range s.uploadQueue {
-		if v.VideoID == videoID {
-			s.uploadQueue = append(s.uploadQueue[:i], s.uploadQueue[i+1:]...)
-			return
-		}
-	}
-}
-
-// processUpload handles the upload process for a single video
-func (s *UploadService) processUpload(queuedVideo QueuedVideo) {
-	video, err := s.db.GetVideo(queuedVideo.VideoID)
-	if err != nil {
-		log.Printf("Error fetching video %s from database: %v", queuedVideo.VideoID, err)
-		s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Database error: %v", err))
-		return
-	}
-
-	// Start upload process
-	log.Printf("Attempting upload for video %s (attempt %d/%d)",
-		video.ID, queuedVideo.RetryCount+1, s.maxRetries)
-
-	err = s.db.UpdateVideoStatus(video.ID, database.StatusUploading, "")
-	if err != nil {
-		log.Printf("Error updating video status to uploading: %v", err)
-		s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("Status update error: %v", err))
-		return
-	}
-
-	// Upload HLS stream - sekarang mengembalikan r2Path, r2URL, error
-	_, hlsURL, err := s.r2Storage.UploadHLSStream(video.HLSPath, video.ID)
-	if err != nil {
-		log.Printf("Error uploading HLS stream for video %s: %v", video.ID, err)
-		s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("HLS upload error: %v", err))
-		s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("HLS upload error: %v", err))
-		return
-	}
-
-	// Upload MP4 file
-	mp4URL, err := s.r2Storage.UploadMP4(video.LocalPath, video.ID)
-	if err != nil {
-		log.Printf("Error uploading MP4 for video %s: %v", video.ID, err)
-		s.updateQueuedVideo(queuedVideo.VideoID, fmt.Sprintf("MP4 upload error: %v", err))
-		s.db.UpdateVideoStatus(video.ID, database.StatusReady, fmt.Sprintf("MP4 upload error: %v", err))
-		return
-	}
-
-	// Update R2 paths and URLs in database
-	err = s.db.UpdateVideoR2Paths(video.ID, fmt.Sprintf("hls/%s", video.ID), fmt.Sprintf("mp4/%s", video.ID))
-	if err != nil {
-		log.Printf("Error updating R2 paths for video %s: %v", video.ID, err)
-	}
-
-	err = s.db.UpdateVideoR2URLs(video.ID, hlsURL, mp4URL)
-	if err != nil {
-		log.Printf("Error updating R2 URLs for video %s: %v", video.ID, err)
-	}
-
-	// Verifikasi dan pastikan field-field penting tidak kosong
-	if video.CameraName == "" || video.LocalPath == "" || video.UniqueID == "" ||
-		video.OrderDetailID == "" || video.BookingID == "" {
-		// Ambil data lengkap dari database
-		fullVideo, err := s.db.GetVideo(video.ID)
-		if err != nil {
-			log.Printf("Error fetching complete data for video %s: %v", video.ID, err)
-		} else if fullVideo != nil {
-			// Update field yang kosong
-			updateNeeded := false
-
-			if video.CameraName == "" && fullVideo.CameraName != "" {
-				video.CameraName = fullVideo.CameraName
-				updateNeeded = true
-			}
-			if video.LocalPath == "" && fullVideo.LocalPath != "" {
-				video.LocalPath = fullVideo.LocalPath
-				updateNeeded = true
-			}
-			if video.UniqueID == "" && fullVideo.UniqueID != "" {
-				video.UniqueID = fullVideo.UniqueID
-				updateNeeded = true
-			}
-			if video.OrderDetailID == "" && fullVideo.OrderDetailID != "" {
-				video.OrderDetailID = fullVideo.OrderDetailID
-				updateNeeded = true
-			}
-			if video.BookingID == "" && fullVideo.BookingID != "" {
-				video.BookingID = fullVideo.BookingID
-				updateNeeded = true
-			}
-
-			// Update jika ada field yang perlu diperbarui
-			if updateNeeded {
-				// Gunakan dereferensi pointer (*video) untuk mengakses nilai
-				err = s.db.UpdateVideo(*video)
-				if err != nil {
-					log.Printf("Error updating missing fields for video %s: %v", video.ID, err)
-				} else {
-					log.Printf("Successfully updated missing fields for video %s", video.ID)
-				}
-			}
-		}
-	}
-
-	// Persiapkan data untuk update status
-	now := time.Now()
-
-	// Ambil data video lengkap
-	fullVideoData, err := s.db.GetVideo(video.ID)
-	if err != nil {
-		log.Printf("Error getting complete video data: %v", err)
-
-		// Fallback ke UpdateVideoStatus standar jika gagal mendapatkan data lengkap
-		err = s.db.UpdateVideoStatus(video.ID, database.StatusReady, "")
-		if err != nil {
-			log.Printf("Error updating video status back to ready: %v", err)
-		}
-	} else {
-		// Set status dan timestamp
-		fullVideoData.Status = database.StatusReady
-		fullVideoData.ErrorMessage = ""
-		fullVideoData.FinishedAt = &now
-
-		// Pastikan UploadedAt juga diset
-		if fullVideoData.UploadedAt == nil {
-			fullVideoData.UploadedAt = &now
-		}
-
-		// Update video dengan semua data
-		err = s.db.UpdateVideo(*fullVideoData)
-		if err != nil {
-			log.Printf("Error updating video to ready status with full data: %v", err)
-		} else {
-			log.Printf("Successfully updated video %s to ready status with complete data", video.ID)
-		}
-	}
-
-	log.Printf("Video %s successfully uploaded to R2 storage at %s", video.ID, now.Format(time.RFC3339))
-	s.removeFromQueue(video.ID)
 }
 
 // CleanupLocalStorage removes local files that have been successfully uploaded to R2
@@ -587,3 +547,4 @@ func (s *UploadService) NotifyAyoAPI(uniqueID, mp4URL, previewURL, thumbnailURL 
 	log.Printf("📡 AYO API: ✅ Successfully notified AYO API for video %s", uniqueID)
 	return nil
 }
+

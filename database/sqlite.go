@@ -437,6 +437,8 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+
+
 	// Create system_config table for storing system configuration
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS system_config (
@@ -2043,6 +2045,8 @@ func (s *SQLiteDB) UpdateBookingStatus(bookingID string, status string) error {
 	log.Printf("📅 BOOKING: Updated status for booking %s to %s", bookingID, status)
 	return nil
 }
+
+
 
 // DeleteOldBookings removes bookings older than specified time
 func (s *SQLiteDB) DeleteOldBookings(olderThan time.Time) error {

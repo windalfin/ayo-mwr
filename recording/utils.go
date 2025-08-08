@@ -2,6 +2,7 @@ package recording
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -312,4 +313,200 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// FindSegmentsInRangeMultiRoot searches for HLS segments across multiple day camera roots for booking processing
+func FindSegmentsInRangeMultiRoot(db database.Database, cameraName string, startTime, endTime time.Time) ([]string, error) {
+	// Derive date from start time (bookings don't span midnight)
+	date := startTime.Format("20060102")
+	
+	// Get all day camera roots for this camera and date
+	roots, err := db.GetDayCameraRoots(cameraName, date)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get day camera roots for camera %s, date %s: %v", cameraName, date, err)
+	}
+	
+	if len(roots) == 0 {
+		log.Printf("[FindSegmentsInRangeMultiRoot] No roots found for camera %s, date %s", cameraName, date)
+		return nil, fmt.Errorf("no storage roots found for camera %s on date %s", cameraName, date)
+	}
+	
+	log.Printf("[FindSegmentsInRangeMultiRoot] Searching %d roots for camera %s, date %s", len(roots), cameraName, date)
+	
+	var allSegments []struct {
+		path string
+		ts   time.Time
+	}
+	
+	// Search across all roots for this camera/date combination
+	for _, root := range roots {
+		// Check if root directory exists
+		if _, err := os.Stat(root.BasePath); os.IsNotExist(err) {
+			log.Printf("[FindSegmentsInRangeMultiRoot] Root path does not exist: %s", root.BasePath)
+			continue
+		}
+		
+		// Find segments in this root using existing logic
+		segments, err := FindSegmentsInRange(root.BasePath, startTime, endTime)
+		if err != nil {
+			log.Printf("[FindSegmentsInRangeMultiRoot] Warning: failed to scan root %s: %v", root.BasePath, err)
+			continue
+		}
+		
+		log.Printf("[FindSegmentsInRangeMultiRoot] Found %d segments in root %s (disk %s)", len(segments), root.BasePath, root.DiskID)
+		
+		// Add found segments with timestamp for sorting
+		for _, segmentPath := range segments {
+			filename := filepath.Base(segmentPath)
+			ts, err := parseSegmentTimeFromFilename(filename)
+			if err != nil {
+				log.Printf("[FindSegmentsInRangeMultiRoot] Warning: failed to parse timestamp from %s: %v", filename, err)
+				continue
+			}
+			allSegments = append(allSegments, struct {
+				path string
+				ts   time.Time
+			}{segmentPath, ts})
+		}
+		
+		// Update last seen time for this root
+		db.UpdateDayCameraRootLastSeen(cameraName, date, root.DiskID, time.Now())
+	}
+	
+	if len(allSegments) == 0 {
+		return nil, fmt.Errorf("no segments found across %d roots for camera %s on date %s", len(roots), cameraName, date)
+	}
+	
+	// Sort segments by timestamp
+	sort.Slice(allSegments, func(i, j int) bool {
+		return allSegments[i].ts.Before(allSegments[j].ts)
+	})
+	
+	// Extract just the paths
+	result := make([]string, len(allSegments))
+	for i, seg := range allSegments {
+		result[i] = seg.path
+	}
+	
+	log.Printf("[FindSegmentsInRangeMultiRoot] ✅ SUCCESS: %d segments found across %d roots for camera %s", len(result), len(roots), cameraName)
+	
+	// Log detailed multi-root lookup statistics for monitoring
+	logMultiRootLookupStats(cameraName, date, roots, len(result), startTime, endTime)
+	
+	return result, nil
+}
+
+// logMultiRootLookupStats provides detailed observability for multi-root operations
+func logMultiRootLookupStats(cameraName, date string, roots []database.DayCameraRoot, totalSegments int, startTime, endTime time.Time) {
+	log.Printf("📊 [MULTI-ROOT STATS] Camera: %s | Date: %s | Roots: %d | Segments: %d | Window: %v to %v", 
+		cameraName, date, len(roots), totalSegments, startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+	
+	// Log per-root statistics
+	for i, root := range roots {
+		age := time.Since(root.CreatedAt)
+		lastSeen := time.Since(root.LastSeenTime)
+		log.Printf("📁 [ROOT %d] Disk: %s | Path: %s | Age: %v | Last seen: %v ago", 
+			i+1, root.DiskID, root.BasePath, age.Round(time.Minute), lastSeen.Round(time.Second))
+	}
+	
+	// Monitor for potential issues
+	if len(roots) > 3 {
+		log.Printf("⚠️ [MULTI-ROOT WARNING] Camera %s has %d roots for date %s - possible excessive disk switching", 
+			cameraName, len(roots), date)
+	}
+	
+	if totalSegments == 0 {
+		log.Printf("❌ [MULTI-ROOT ALERT] No segments found across %d roots for camera %s on date %s", 
+			len(roots), cameraName, date)
+	}
+}
+
+// GetMultiRootStats returns comprehensive statistics about multi-root operations
+func GetMultiRootStats(db database.Database) (map[string]interface{}, error) {
+	allRoots, err := db.GetAllDayCameraRoots()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all day camera roots: %v", err)
+	}
+	
+	// Aggregate statistics
+	stats := map[string]interface{}{
+		"total_roots":          len(allRoots),
+		"cameras_with_roots":   make(map[string]int),
+		"dates_with_roots":     make(map[string]int),
+		"disks_with_roots":     make(map[string]int),
+		"multi_root_dates":     make([]map[string]interface{}, 0),
+		"disk_switch_events":   0,
+		"oldest_root":          time.Time{},
+		"newest_root":          time.Time{},
+	}
+	
+	cameraStats := make(map[string]int)
+	dateStats := make(map[string]int)
+	diskStats := make(map[string]int)
+	dateRootCount := make(map[string]map[string]int) // date -> camera -> root count
+	
+	var oldestRoot, newestRoot time.Time
+	for i, root := range allRoots {
+		// Camera statistics
+		cameraStats[root.CameraName]++
+		
+		// Date statistics
+		dateKey := root.Date
+		dateStats[dateKey]++
+		
+		// Disk statistics
+		diskStats[root.DiskID]++
+		
+		// Track roots per date per camera for multi-root detection
+		if dateRootCount[dateKey] == nil {
+			dateRootCount[dateKey] = make(map[string]int)
+		}
+		dateRootCount[dateKey][root.CameraName]++
+		
+		// Track oldest and newest roots
+		if i == 0 || root.CreatedAt.Before(oldestRoot) {
+			oldestRoot = root.CreatedAt
+		}
+		if i == 0 || root.CreatedAt.After(newestRoot) {
+			newestRoot = root.CreatedAt
+		}
+	}
+	
+	// Detect multi-root scenarios (disk switches)
+	multiRootEvents := make([]map[string]interface{}, 0)
+	diskSwitchCount := 0
+	
+	for date, cameraRoots := range dateRootCount {
+		for camera, rootCount := range cameraRoots {
+			if rootCount > 1 {
+				diskSwitchCount += rootCount - 1 // Each additional root represents a disk switch
+				multiRootEvents = append(multiRootEvents, map[string]interface{}{
+					"date":       date,
+					"camera":     camera,
+					"root_count": rootCount,
+					"switches":   rootCount - 1,
+				})
+			}
+		}
+	}
+	
+	// Update statistics
+	stats["cameras_with_roots"] = cameraStats
+	stats["dates_with_roots"] = dateStats
+	stats["disks_with_roots"] = diskStats
+	stats["multi_root_dates"] = multiRootEvents
+	stats["disk_switch_events"] = diskSwitchCount
+	stats["unique_cameras"] = len(cameraStats)
+	stats["unique_dates"] = len(dateStats)
+	stats["unique_disks"] = len(diskStats)
+	
+	if !oldestRoot.IsZero() {
+		stats["oldest_root"] = oldestRoot.Format("2006-01-02 15:04:05")
+		stats["system_age_days"] = int(time.Since(oldestRoot).Hours() / 24)
+	}
+	if !newestRoot.IsZero() {
+		stats["newest_root"] = newestRoot.Format("2006-01-02 15:04:05")
+	}
+	
+	return stats, nil
 }

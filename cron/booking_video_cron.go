@@ -646,17 +646,24 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 
 				log.Printf("processBookings : Checking camera %s for booking %s", camera.Name, bookingID)
 				BaseDir := filepath.Join(cfg.StoragePath, "recordings", camera.Name)
-				// Find video segments directory for this camera
-				videoDirectory := filepath.Join(BaseDir, "hls")
-
-				// Check if directory exists
-				if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
-					log.Printf("processBookings : No video directory found for camera %s", camera.Name)
-					continue
+				
+				// Use multi-root segment lookup for date-based folder structure
+				log.Printf("processBookings : Searching segments for camera %s from %v to %v", camera.Name, startTime, endTime)
+				segments, err := recording.FindSegmentsInRangeMultiRoot(db, camera.Name, startTime, endTime)
+				
+				// Fallback to legacy single-path lookup if multi-root fails
+				if err != nil {
+					log.Printf("processBookings : Multi-root lookup failed for camera %s, trying legacy path: %v", camera.Name, err)
+					videoDirectory := filepath.Join(BaseDir, "hls")
+					if _, statErr := os.Stat(videoDirectory); statErr == nil {
+						legacySegments, legacyErr := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
+						if legacyErr == nil {
+							segments = legacySegments
+							err = nil
+							log.Printf("processBookings : Using legacy segments for camera %s", camera.Name)
+						}
+					}
 				}
-				log.Printf("processBookings : videoDirectory %s", videoDirectory)
-				// Find segments for this camera in the time range
-				segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 				if err != nil || len(segments) == 0 {
 					log.Printf("processBookings : No video segments found for booking %s on camera %s: %v", bookingID, camera.Name, err)
 					continue

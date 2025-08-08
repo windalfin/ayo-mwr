@@ -14,27 +14,6 @@ type APIClient interface {
 	GetVideoConfiguration() (map[string]interface{}, error)
 }
 
-// calculateDimensions menghitung width dan height berdasarkan resolution
-func calculateDimensions(resolution string) (int, int) {
-	switch resolution {
-	case "360":
-		return 640, 360
-	case "480":
-		return 854, 480
-	case "720":
-		return 1280, 720
-	case "1080":
-		return 1920, 1080
-	case "1440":
-		return 2560, 1440
-	case "2160", "4k":
-		return 3840, 2160
-	default:
-		// Default ke 720p jika resolution tidak dikenali
-		log.Printf("⚠️ WARNING: Unknown resolution '%s', defaulting to 720p", resolution)
-		return 1280, 720
-	}
-}
 
 // UpdateConfigFromAPIResponse memperbarui konfigurasi dari response API
 func UpdateConfigFromAPIResponse(cfg *Config, data map[string]interface{}, db database.Database) {

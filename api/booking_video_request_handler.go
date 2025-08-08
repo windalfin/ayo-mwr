@@ -410,21 +410,26 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 		})
 		return
 	}
+	// Set BaseDir for temp file paths (still needed for watermark/preview processing)
 	BaseDir := filepath.Join(h.config.StoragePath, "recordings", targetCamera.Name)
-	// Find video directory for this camera
-	videoDirectory := filepath.Join(BaseDir, "hls")
-
-	// Check if directory exists
-	if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, ApiResponse{
-			Success: false,
-			Message: fmt.Sprintf("No video directory found for camera %s", targetCamera.Name),
-		})
-		return
+	
+	// Use multi-root segment lookup for date-based folder structure
+	log.Printf("ProcessBookingVideo : Searching segments for camera %s from %v to %v", targetCamera.Name, startTime, endTime)
+	segments, err := recording.FindSegmentsInRangeMultiRoot(h.db, targetCamera.Name, startTime, endTime)
+	
+	// Fallback to legacy single-path lookup if multi-root fails
+	if err != nil {
+		log.Printf("ProcessBookingVideo : Multi-root lookup failed for camera %s, trying legacy path: %v", targetCamera.Name, err)
+		videoDirectory := filepath.Join(BaseDir, "hls")
+		if _, statErr := os.Stat(videoDirectory); statErr == nil {
+			legacySegments, legacyErr := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
+			if legacyErr == nil {
+				segments = legacySegments
+				err = nil
+				log.Printf("ProcessBookingVideo : Using legacy segments for camera %s", targetCamera.Name)
+			}
+		}
 	}
-
-	// Find segments for this camera in the time range
-	segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
 	if err != nil || len(segments) == 0 {
 		c.JSON(http.StatusNotFound, ApiResponse{
 			Success: false,

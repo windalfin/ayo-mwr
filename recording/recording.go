@@ -22,6 +22,76 @@ import (
 // per-camera locks to avoid race when writing concat list & mp4
 var segmenterLocks sync.Map
 
+// getOrCreateDateCameraRoot creates or retrieves a day camera root for the given date and camera
+func getOrCreateDateCameraRoot(db database.Database, diskManager *storage.DiskManager, cameraName string, date string) (string, error) {
+	// Get current active disk path
+	activeDiskPath, err := diskManager.GetActiveDiskPath()
+	if err != nil {
+		return "", fmt.Errorf("failed to get active disk path: %v", err)
+	}
+
+	// Get current active disk for diskID
+	activeDisk, err := db.GetActiveDisk()
+	if err != nil {
+		return "", fmt.Errorf("failed to get active disk: %v", err)
+	}
+	if activeDisk == nil {
+		return "", fmt.Errorf("no active disk found")
+	}
+
+	// Create the date-based path structure: /<disk>/recordings/YYYYMMDD/<camera>/hls/
+	basePath := filepath.Join(activeDiskPath, "recordings", date, cameraName, "hls")
+	
+	// Create the directory structure
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory %s: %v", basePath, err)
+	}
+
+	// Check if this root already exists in the database
+	existingRoots, err := db.GetDayCameraRoots(cameraName, date)
+	if err != nil {
+		log.Printf("Warning: Failed to get existing day camera roots: %v", err)
+	}
+
+	// Check if we already have a root for this disk/camera/date combination
+	for _, root := range existingRoots {
+		if root.DiskID == activeDisk.ID {
+			// Update last seen time
+			db.UpdateDayCameraRootLastSeen(cameraName, date, activeDisk.ID, time.Now())
+			return root.BasePath, nil
+		}
+	}
+
+	// Create new root entry
+	newRoot := database.DayCameraRoot{
+		CameraName: cameraName,
+		Date:       date,
+		DiskID:     activeDisk.ID,
+		BasePath:   basePath,
+		LastSeenTime: time.Now(),
+		CreatedAt:  time.Now(),
+	}
+
+	err = db.CreateDayCameraRoot(newRoot)
+	if err != nil {
+		log.Printf("Warning: Failed to create day camera root entry: %v", err)
+		// Continue anyway, as the directory structure is created
+	}
+
+	log.Printf("[%s] ✅ NEW ROOT: Created day camera root for date %s on disk %s: %s", cameraName, date, activeDisk.ID, basePath)
+	
+	// Log multi-root statistics for monitoring
+	allRoots, statErr := db.GetDayCameraRoots(cameraName, date)
+	if statErr == nil {
+		log.Printf("[%s] 📊 MULTI-ROOT STATS: Camera %s now has %d root(s) for date %s", cameraName, cameraName, len(allRoots), date)
+		for i, root := range allRoots {
+			log.Printf("[%s] 📁 Root %d: Disk %s -> %s (created: %s)", cameraName, i+1, root.DiskID, root.BasePath, root.CreatedAt.Format("15:04:05"))
+		}
+	}
+	
+	return basePath, nil
+}
+
 // Initialize random seed for unique ID generation
 func init() {
 	rand.Seed(time.Now().UnixNano())
@@ -746,18 +816,32 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 		cameraName = fmt.Sprintf("camera_%d", cameraID)
 	}
 
-	// Get recording path from active disk
-	recordingDir, activeDiskID, err := diskManager.GetRecordingPath(cameraName)
+	// Get current date for date-based folder structure
+	currentDate := time.Now().Format("20060102")
+	
+	// Get or create date-based camera root path
+	cameraHLSDir, err := getOrCreateDateCameraRoot(db, diskManager, cameraName, currentDate)
 	if err != nil {
-		log.Printf("[%s] Error getting recording path: %v", cameraName, err)
+		log.Printf("[%s] Error getting date-based camera root: %v", cameraName, err)
 		return
 	}
 
-	// Create camera-specific directories - MP4 and logs only (no HLS)
-	cameraLogsDir := filepath.Join(recordingDir, "logs")
-	cameraMP4Dir := filepath.Join(recordingDir, "mp4")
+	// Get active disk ID for logging
+	activeDisk, err := db.GetActiveDisk()
+	if err != nil {
+		log.Printf("[%s] Error getting active disk: %v", cameraName, err)
+		return
+	}
+	activeDiskID := activeDisk.ID
 
-	// Create required directories
+	// Create directory structure based on date-based root
+	// Structure: /<disk>/recordings/YYYYMMDD/<camera>/hls/
+	// Also create logs and mp4 directories alongside hls
+	baseCameraDir := filepath.Dir(cameraHLSDir) // Remove /hls to get camera base dir
+	cameraLogsDir := filepath.Join(baseCameraDir, "logs")
+	cameraMP4Dir := filepath.Join(baseCameraDir, "mp4")
+
+	// Create required directories (hls already created by getOrCreateDateCameraRoot)
 	for _, dir := range []string{cameraLogsDir, cameraMP4Dir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
@@ -766,8 +850,11 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 
 	// Start the enhanced MP4 segmenter that records directly to database
 	StartEnhancedMP4Segmenter(cameraName, cameraMP4Dir, activeDiskID, db)
+	
+	// Also start HLS segmenter for booking compatibility (segments go to date-based HLS dir)
+	StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
-	log.Printf("Starting enhanced capture for camera: %s on disk: %s (path: %s)", cameraName, activeDiskID, recordingDir)
+	log.Printf("Starting enhanced capture for camera: %s on disk: %s (date-based path: %s)", cameraName, activeDiskID, cameraHLSDir)
 
 	for {
 		select {
@@ -802,22 +889,25 @@ func captureRTSPStreamForCameraEnhanced(ctx context.Context, cfg *config.Config,
 			ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
 			ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb") // Convert H.264 format for segmentation
 
+			// Create HLS playlist path in date-based directory
+			hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
+			
 			ffmpegArgs = append(ffmpegArgs,
 				"-flags", "+global_header", // Ensure codec parameters in each segment
 				"-c:a", "aac",
 				"-b:a", "128k",
 				"-ar", "44100",
 				"-max_muxing_queue_size", "1024",
-				"-f", "segment",
-				"-segment_time", "60", // 1-minute segments
-				"-segment_format", "mp4",
-				"-segment_list_flags", "cache",
-				"-strftime", "1",
-				"-segment_filename", filepath.Join(cameraMP4Dir, fmt.Sprintf("%s_%%Y%%m%%d_%%H%%M%%S.mp4", cameraName)),
+				"-f", "hls",
+				"-hls_time", "4", // 4-second segments for booking compatibility
+				"-hls_list_size", "0",
+				"-hls_flags", "independent_segments+delete_segments",
+				"-hls_segment_type", "mpegts",
 				"-reset_timestamps", "1",
-				"-avoid_negative_ts", "make_zero",
+				"-strftime", "1", // Enable strftime for filename template
+				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
 				"-y", // Overwrite existing files
-				filepath.Join(cameraMP4Dir, "output.m3u8"), // Placeholder output (not used but required)
+				hlsPlaylistPath,
 			)
 
 			// Execute FFmpeg command

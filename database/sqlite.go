@@ -437,6 +437,39 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Create day_camera_roots table for tracking date-based storage roots
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS day_camera_roots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			camera_name TEXT NOT NULL,
+			date TEXT NOT NULL,
+			disk_id TEXT NOT NULL,
+			base_path TEXT NOT NULL,
+			first_segment_time DATETIME,
+			last_seen_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(camera_name, date, disk_id)
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for day_camera_roots
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_day_camera_roots_lookup ON day_camera_roots (camera_name, date)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_day_camera_roots_date ON day_camera_roots (date)
+	`)
+	if err != nil {
+		return err
+	}
+
 
 
 	// Create system_config table for storing system configuration
@@ -2300,4 +2333,168 @@ func (s *SQLiteDB) HasUsers() (bool, error) {
 func ValidatePassword(hashedPassword, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// Day camera root operations
+
+// CreateDayCameraRoot creates or updates a day camera root record
+func (s *SQLiteDB) CreateDayCameraRoot(root DayCameraRoot) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO day_camera_roots 
+		(camera_name, date, disk_id, base_path, first_segment_time, last_seen_time, created_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 
+		        CASE WHEN (SELECT id FROM day_camera_roots WHERE camera_name = ? AND date = ? AND disk_id = ?) IS NULL 
+		        THEN CURRENT_TIMESTAMP 
+		        ELSE (SELECT created_at FROM day_camera_roots WHERE camera_name = ? AND date = ? AND disk_id = ?) 
+		        END)
+	`, root.CameraName, root.Date, root.DiskID, root.BasePath, root.FirstSegmentTime,
+		root.CameraName, root.Date, root.DiskID, 
+		root.CameraName, root.Date, root.DiskID)
+
+	if err != nil {
+		return fmt.Errorf("failed to create/update day camera root: %v", err)
+	}
+
+	log.Printf("📁 ROOT: Created/updated root for camera=%s, date=%s, disk=%s, path=%s", 
+		root.CameraName, root.Date, root.DiskID, root.BasePath)
+	return nil
+}
+
+// GetDayCameraRoots retrieves all roots for a specific camera and date
+func (s *SQLiteDB) GetDayCameraRoots(cameraName, date string) ([]DayCameraRoot, error) {
+	rows, err := s.db.Query(`
+		SELECT id, camera_name, date, disk_id, base_path, first_segment_time, last_seen_time, created_at
+		FROM day_camera_roots 
+		WHERE camera_name = ? AND date = ?
+		ORDER BY created_at ASC
+	`, cameraName, date)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get day camera roots: %v", err)
+	}
+	defer rows.Close()
+
+	var roots []DayCameraRoot
+	for rows.Next() {
+		var root DayCameraRoot
+		var firstSegmentTime sql.NullTime
+
+		err := rows.Scan(
+			&root.ID,
+			&root.CameraName,
+			&root.Date,
+			&root.DiskID,
+			&root.BasePath,
+			&firstSegmentTime,
+			&root.LastSeenTime,
+			&root.CreatedAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan day camera root row: %v", err)
+		}
+
+		if firstSegmentTime.Valid {
+			root.FirstSegmentTime = &firstSegmentTime.Time
+		}
+
+		roots = append(roots, root)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating day camera root rows: %v", err)
+	}
+
+	return roots, nil
+}
+
+// UpdateDayCameraRootLastSeen updates the last seen time for a specific root
+func (s *SQLiteDB) UpdateDayCameraRootLastSeen(cameraName, date, diskID string, lastSeenTime time.Time) error {
+	result, err := s.db.Exec(`
+		UPDATE day_camera_roots 
+		SET last_seen_time = ?
+		WHERE camera_name = ? AND date = ? AND disk_id = ?
+	`, lastSeenTime, cameraName, date, diskID)
+
+	if err != nil {
+		return fmt.Errorf("failed to update day camera root last seen: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no day camera root found for camera=%s, date=%s, disk=%s", cameraName, date, diskID)
+	}
+
+	return nil
+}
+
+// GetAllDayCameraRoots retrieves all day camera roots (for admin/debug purposes)
+func (s *SQLiteDB) GetAllDayCameraRoots() ([]DayCameraRoot, error) {
+	rows, err := s.db.Query(`
+		SELECT id, camera_name, date, disk_id, base_path, first_segment_time, last_seen_time, created_at
+		FROM day_camera_roots 
+		ORDER BY date DESC, camera_name ASC, created_at ASC
+	`)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all day camera roots: %v", err)
+	}
+	defer rows.Close()
+
+	var roots []DayCameraRoot
+	for rows.Next() {
+		var root DayCameraRoot
+		var firstSegmentTime sql.NullTime
+
+		err := rows.Scan(
+			&root.ID,
+			&root.CameraName,
+			&root.Date,
+			&root.DiskID,
+			&root.BasePath,
+			&firstSegmentTime,
+			&root.LastSeenTime,
+			&root.CreatedAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan day camera root row: %v", err)
+		}
+
+		if firstSegmentTime.Valid {
+			root.FirstSegmentTime = &firstSegmentTime.Time
+		}
+
+		roots = append(roots, root)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating day camera root rows: %v", err)
+	}
+
+	return roots, nil
+}
+
+// DeleteOldDayCameraRoots removes day camera root records older than specified time
+func (s *SQLiteDB) DeleteOldDayCameraRoots(olderThan time.Time) error {
+	result, err := s.db.Exec(`
+		DELETE FROM day_camera_roots 
+		WHERE created_at < ?
+	`, olderThan)
+
+	if err != nil {
+		return fmt.Errorf("error deleting old day camera roots: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	log.Printf("📁 ROOT: Deleted %d old day camera roots", rowsAffected)
+	return nil
 }

@@ -42,7 +42,6 @@ type VideoMetadata struct {
 	R2PreviewPNGPath string      `json:"r2PreviewPngPath"`    // R2 path to preview PNG file
 	R2PreviewPNGURL  string      `json:"r2PreviewPngUrl"`     // R2 URL to preview PNG file
 	MP4Path          string      `json:"mp4Path"`             // Path to MP4 file
-	MP4URL           string      `json:"mp4Url"`              // URL to MP4 file
 	CameraName       string      `json:"cameraName"`          // Name of the camera that recorded this video
 	UniqueID         string      `json:"uniqueId"`            // Unique ID for the video (used for API)
 	OrderDetailID    string      `json:"orderDetailId"`       // Order detail ID from booking
@@ -183,6 +182,18 @@ type User struct {
 	PasswordHash string    `json:"-"`            // Hashed password (not exposed in JSON)
 	CreatedAt    time.Time `json:"createdAt"`    // When user was created
 	UpdatedAt    time.Time `json:"updatedAt"`    // When user was last updated
+}
+
+// DayCameraRoot represents a root storage location for a specific (camera, date) combination
+type DayCameraRoot struct {
+	ID               int        `json:"id"`               // Auto-increment primary key
+	CameraName       string     `json:"cameraName"`       // Name of the camera
+	Date             string     `json:"date"`             // Date in YYYYMMDD format
+	DiskID           string     `json:"diskId"`           // ID of the storage disk
+	BasePath         string     `json:"basePath"`         // Full path to the date/camera/hls folder
+	FirstSegmentTime *time.Time `json:"firstSegmentTime"` // Time of first segment written to this root (optional)
+	LastSeenTime     time.Time  `json:"lastSeenTime"`     // Last time this root was accessed/updated
+	CreatedAt        time.Time  `json:"createdAt"`        // When this root was first created
 }
 
 // System configuration keys
@@ -335,6 +346,13 @@ type Database interface {
 	CreateUser(username, passwordHash string) error
 	GetUserByUsername(username string) (*User, error)
 	HasUsers() (bool, error)
+
+	// Day camera root operations  
+	CreateDayCameraRoot(root DayCameraRoot) error
+	GetDayCameraRoots(cameraName, date string) ([]DayCameraRoot, error)
+	UpdateDayCameraRootLastSeen(cameraName, date, diskID string, lastSeenTime time.Time) error
+	GetAllDayCameraRoots() ([]DayCameraRoot, error)
+	DeleteOldDayCameraRoots(olderThan time.Time) error
 
 	// Helper operations
 	Close() error

@@ -154,6 +154,14 @@ func main() {
 	hlsCron.Start()
 	log.Println("Started HLS cleanup cron job")
 
+	// Start chunk processing cron job (every 15 minutes)
+	chunkCron := cron.NewChunkProcessingCron(db, &cfg, diskManager)
+	if err := chunkCron.Start(); err != nil {
+		log.Printf("Warning: Failed to start chunk processing cron: %v", err)
+	} else {
+		log.Println("Started chunk processing cron job (15-minute intervals)")
+	}
+
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
 	if err != nil {

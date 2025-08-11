@@ -2,6 +2,7 @@ package recording
 
 import (
     "context"
+    "fmt"
     "log"
     "sync"
 
@@ -111,4 +112,68 @@ func StartAllCamerasEnhanced(cfg *config.Config, db database.Database, diskManag
         }
         StartCameraEnhanced(cfg, cam, i, db, diskManager)
     }
+}
+
+// StartAllCamerasWithContext starts all cameras with graceful shutdown support
+func StartAllCamerasWithContext(ctx context.Context, cfg *config.Config) {
+    var wg sync.WaitGroup
+    
+    for i, cam := range cfg.Cameras {
+        if !cam.Enabled {
+            continue
+        }
+        
+        wg.Add(1)
+        go func(camera config.CameraConfig, cameraID int) {
+            defer wg.Done()
+            startCameraWithContext(ctx, cfg, camera, cameraID)
+        }(cam, i)
+    }
+    
+    // Wait for context cancellation
+    <-ctx.Done()
+    log.Println("[workers] Context canceled, stopping all cameras...")
+    
+    // Stop all running cameras
+    mu.Lock()
+    for name, cancel := range workers {
+        log.Printf("[workers] Stopping camera %s for graceful shutdown", name)
+        cancel()
+    }
+    mu.Unlock()
+    
+    // Wait for all workers to finish gracefully
+    wg.Wait()
+    log.Println("[workers] All cameras stopped gracefully")
+}
+
+// startCameraWithContext starts a camera with context support for graceful shutdown
+func startCameraWithContext(ctx context.Context, cfg *config.Config, cam config.CameraConfig, idx int) {
+    cameraName := cam.Name
+    if cameraName == "" {
+        cameraName = fmt.Sprintf("camera_%d", idx)
+    }
+    
+    mu.Lock()
+    if _, ok := workers[cameraName]; ok {
+        mu.Unlock()
+        return
+    }
+    
+    // Create camera-specific context that can be canceled individually or by parent
+    cameraCtx, cameraCancel := context.WithCancel(ctx)
+    workers[cameraName] = cameraCancel
+    mu.Unlock()
+    
+    defer func() {
+        mu.Lock()
+        delete(workers, cameraName)
+        mu.Unlock()
+        log.Printf("[workers] Camera %s worker cleaned up", cameraName)
+    }()
+    
+    log.Printf("[workers] Starting camera %s with graceful shutdown support", cameraName)
+    
+    // Start the camera capture with context
+    captureRTSPStreamForCameraWithGracefulShutdown(cameraCtx, cfg, cam, idx)
 }

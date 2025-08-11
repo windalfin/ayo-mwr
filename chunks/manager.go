@@ -18,7 +18,7 @@ import (
 
 // ChunkManager handles the creation and management of pre-concatenated video chunks
 type ChunkManager struct {
-	db                 database.Database
+	db                database.Database
 	config            *config.Config
 	storageManager    *storage.DiskManager
 	chunkConfig       *config.ChunkProcessingConfig
@@ -44,16 +44,16 @@ func NewChunkManager(db database.Database, cfg *config.Config, storageManager *s
 			MaxConcurrentProcessing:  2,
 		}
 	}
-	
-	log.Printf("[ChunkManager] Initialized with config: enabled=%v, duration=%dm, retention=%dd", 
+
+	log.Printf("[ChunkManager] Initialized with config: enabled=%v, duration=%dm, retention=%dd",
 		chunkConfig.Enabled, chunkConfig.ChunkDurationMinutes, chunkConfig.RetentionDays)
-	
+
 	return &ChunkManager{
 		db:                db,
-		config:           cfg,
-		storageManager:   storageManager,
-		chunkConfig:      chunkConfig,
-		isProcessing:     make(map[string]bool),
+		config:            cfg,
+		storageManager:    storageManager,
+		chunkConfig:       chunkConfig,
+		isProcessing:      make(map[string]bool),
 		processingTimeout: time.Duration(chunkConfig.ProcessingTimeoutMinutes) * time.Minute,
 	}
 }
@@ -85,7 +85,7 @@ func (cm *ChunkManager) ProcessPendingChunks(ctx context.Context) error {
 		wg.Add(1)
 		go func(cameraName string) {
 			defer wg.Done()
-			
+
 			// Acquire semaphore
 			select {
 			case sem <- struct{}{}:
@@ -116,7 +116,7 @@ func (cm *ChunkManager) ProcessCameraChunks(ctx context.Context, cameraName stri
 	}
 	cm.isProcessing[cameraName] = true
 	cm.mu.Unlock()
-	
+
 	defer func() {
 		cm.mu.Lock()
 		delete(cm.isProcessing, cameraName)
@@ -137,7 +137,7 @@ func (cm *ChunkManager) ProcessCameraChunks(ctx context.Context, cameraName stri
 
 		err := cm.processChunkWindow(ctx, cameraName, window)
 		if err != nil {
-			log.Printf("[ChunkManager] Error processing chunk window %s for camera %s: %v", 
+			log.Printf("[ChunkManager] Error processing chunk window %s for camera %s: %v",
 				window.Start.Format("15:04"), cameraName, err)
 			continue
 		}
@@ -155,11 +155,11 @@ type ChunkWindow struct {
 // calculateChunkWindows calculates the 15-minute windows that need chunk processing
 func (cm *ChunkManager) calculateChunkWindows() []ChunkWindow {
 	now := time.Now()
-	
+
 	// We process chunks with a 2-minute delay to ensure all segments are available
 	processingDelay := 2 * time.Minute
 	latestTime := now.Add(-processingDelay)
-	
+
 	// Round down to the nearest 15-minute boundary
 	minute := latestTime.Minute()
 	roundedMinute := (minute / cm.chunkConfig.ChunkDurationMinutes) * cm.chunkConfig.ChunkDurationMinutes
@@ -167,34 +167,34 @@ func (cm *ChunkManager) calculateChunkWindows() []ChunkWindow {
 		latestTime.Year(), latestTime.Month(), latestTime.Day(),
 		latestTime.Hour(), roundedMinute, 0, 0, latestTime.Location(),
 	)
-	
+
 	// Generate chunk windows for the last few periods (to catch any missed chunks)
 	var windows []ChunkWindow
 	for i := 0; i < 4; i++ { // Process last 4 windows (1 hour)
 		start := latestChunkStart.Add(-time.Duration(i*cm.chunkConfig.ChunkDurationMinutes) * time.Minute)
 		end := start.Add(time.Duration(cm.chunkConfig.ChunkDurationMinutes) * time.Minute)
-		
+
 		windows = append(windows, ChunkWindow{
 			Start: start,
 			End:   end,
 		})
 	}
-	
+
 	return windows
 }
 
 // processChunkWindow processes a specific chunk window for a camera
 func (cm *ChunkManager) processChunkWindow(ctx context.Context, cameraName string, window ChunkWindow) error {
 	chunkID := fmt.Sprintf("%s_%s_chunk", cameraName, window.Start.Format("20060102_1504"))
-	
+
 	// Check if chunk already exists
 	existingChunks, err := cm.db.FindChunksInTimeRange(cameraName, window.Start, window.End)
 	if err != nil {
 		return fmt.Errorf("error checking existing chunks: %v", err)
 	}
-	
+
 	if len(existingChunks) > 0 {
-		log.Printf("[ChunkManager] Chunk already exists for %s at %s, skipping", 
+		log.Printf("[ChunkManager] Chunk already exists for %s at %s, skipping",
 			cameraName, window.Start.Format("15:04"))
 		return nil
 	}
@@ -206,12 +206,12 @@ func (cm *ChunkManager) processChunkWindow(ctx context.Context, cameraName strin
 	}
 
 	if len(segments) < cm.chunkConfig.MinSegmentsForChunk {
-		log.Printf("[ChunkManager] Not enough segments for chunk (%d < %d) for camera %s at %s", 
+		log.Printf("[ChunkManager] Not enough segments for chunk (%d < %d) for camera %s at %s",
 			len(segments), cm.chunkConfig.MinSegmentsForChunk, cameraName, window.Start.Format("15:04"))
 		return nil
 	}
 
-	log.Printf("[ChunkManager] Creating chunk from %d segments for camera %s (%s)", 
+	log.Printf("[ChunkManager] Creating chunk from %d segments for camera %s (%s)",
 		len(segments), cameraName, window.Start.Format("15:04"))
 
 	// Create the chunk
@@ -233,7 +233,7 @@ func (cm *ChunkManager) createChunk(ctx context.Context, cameraName, chunkID str
 		MP4Path:              "", // Will be set when chunk is created
 		SegmentStart:         window.Start,
 		SegmentEnd:           window.End,
-		FileSizeBytes:        0,  // Will be set when chunk is created
+		FileSizeBytes:        0, // Will be set when chunk is created
 		CreatedAt:            time.Now(),
 		ChunkType:            database.ChunkTypeChunk,
 		SourceSegmentsCount:  len(segments),
@@ -310,7 +310,7 @@ func (cm *ChunkManager) createChunk(ctx context.Context, cameraName, chunkID str
 		return fmt.Errorf("error updating chunk record: %v", err)
 	}
 
-	log.Printf("[ChunkManager] ✅ Created chunk %s (%.1f MB, %d segments) for camera %s", 
+	log.Printf("[ChunkManager] ✅ Created chunk %s (%.1f MB, %d segments) for camera %s",
 		chunkID, float64(fileInfo.Size())/(1024*1024), len(segments), cameraName)
 
 	return nil
@@ -339,7 +339,7 @@ func (cm *ChunkManager) createSegmentList(segments []database.RecordingSegment, 
 
 		// Construct full path
 		fullPath := filepath.Join(diskPaths[segment.StorageDiskID], segment.MP4Path)
-		
+
 		// Check if file exists
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			log.Printf("[ChunkManager] Warning: Segment file not found: %s", fullPath)
@@ -388,7 +388,7 @@ func (cm *ChunkManager) CleanupOldChunks(ctx context.Context) error {
 	log.Println("[ChunkManager] Starting chunk cleanup...")
 
 	retentionTime := time.Now().Add(-time.Duration(cm.chunkConfig.RetentionDays) * 24 * time.Hour)
-	
+
 	// Get old chunks
 	oldChunks, err := cm.db.GetChunksByProcessingStatus(database.ProcessingStatusReady)
 	if err != nil {
@@ -404,13 +404,13 @@ func (cm *ChunkManager) CleanupOldChunks(ctx context.Context) error {
 		// Get full file path
 		disk, err := cm.db.GetStorageDisk(chunk.StorageDiskID)
 		if err != nil {
-			log.Printf("[ChunkManager] Warning: Could not get disk %s for chunk %s: %v", 
+			log.Printf("[ChunkManager] Warning: Could not get disk %s for chunk %s: %v",
 				chunk.StorageDiskID, chunk.ID, err)
 			continue
 		}
 
 		fullPath := filepath.Join(disk.Path, chunk.MP4Path)
-		
+
 		// Remove file
 		if err := os.Remove(fullPath); err != nil {
 			log.Printf("[ChunkManager] Warning: Could not remove chunk file %s: %v", fullPath, err)
@@ -464,11 +464,11 @@ func (cm *ChunkManager) GetChunkStatistics() (map[string]interface{}, error) {
 func (cm *ChunkManager) UpdateConfiguration(config *config.ChunkProcessingConfig) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	cm.chunkConfig = config
 	cm.processingTimeout = time.Duration(config.ProcessingTimeoutMinutes) * time.Minute
-	
-	log.Printf("[ChunkManager] Configuration updated: enabled=%v, duration=%dm, min_segments=%d", 
+
+	log.Printf("[ChunkManager] Configuration updated: enabled=%v, duration=%dm, min_segments=%d",
 		config.Enabled, config.ChunkDurationMinutes, config.MinSegmentsForChunk)
 }
 

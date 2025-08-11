@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"ayo-mwr/config"
@@ -930,6 +931,161 @@ func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
 	}
 
 	return segmentTime, nil
+}
+
+// captureRTSPStreamForCameraWithGracefulShutdown handles graceful shutdown for FFmpeg processes
+func captureRTSPStreamForCameraWithGracefulShutdown(ctx context.Context, cfg *config.Config, camera config.CameraConfig, cameraID int) {
+	// Construct the RTSP URL
+	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+		camera.Username,
+		camera.Password,
+		camera.IP,
+		camera.Port,
+		camera.Path,
+	)
+
+	cameraName := camera.Name
+	if cameraName == "" {
+		cameraName = fmt.Sprintf("camera_%d", cameraID)
+	}
+
+	// Create camera-specific directories
+	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
+	cameraLogsDir := filepath.Join(cameraDir, "logs")
+	cameraHLSDir := filepath.Join(cameraDir, "hls")
+	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
+
+	// Create all required directories
+	for _, dir := range []string{cameraDir, cameraLogsDir, cameraHLSDir, cameraMP4Dir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
+		}
+	}
+
+	log.Printf("[%s] Starting capture with graceful shutdown support", cameraName)
+
+	// Start continuous HLS streaming with graceful shutdown
+	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
+	var currentCmd *exec.Cmd
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s] Graceful shutdown requested", cameraName)
+			
+			// Give FFmpeg time to finish current segment
+			if currentCmd != nil && currentCmd.Process != nil {
+				log.Printf("[%s] Sending SIGTERM to FFmpeg process", cameraName)
+				currentCmd.Process.Signal(syscall.SIGTERM)
+				
+				// Wait up to 15 seconds for graceful termination
+				gracefulDone := make(chan error, 1)
+				go func() {
+					gracefulDone <- currentCmd.Wait()
+				}()
+				
+				select {
+				case err := <-gracefulDone:
+					if err != nil {
+						log.Printf("[%s] FFmpeg terminated gracefully with status: %v", cameraName, err)
+					} else {
+						log.Printf("[%s] FFmpeg terminated gracefully", cameraName)
+					}
+				case <-time.After(15 * time.Second):
+					log.Printf("[%s] FFmpeg graceful shutdown timeout, forcing kill", cameraName)
+					currentCmd.Process.Kill()
+				}
+			}
+			
+			log.Printf("[%s] Camera capture stopped gracefully", cameraName)
+			return
+			
+		default:
+			logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s.log", time.Now().Format("20060102_150405"))))
+			if err != nil {
+				log.Printf("[%s] Error creating FFmpeg log file: %v", cameraName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			defer logFile.Close()
+
+			// Detect stream info first
+			streamInfo := detectStreamInfo(rtspURL, cameraName)
+
+			ffmpegArgs := []string{
+				"-rtsp_transport", "tcp",
+				"-timeout", "5000000",
+				"-fflags", "nobuffer+discardcorrupt",
+				"-analyzeduration", "2000000",
+				"-probesize", "1000000",
+				"-re",
+				"-i", rtspURL,
+				"-c:v", "copy", // Stream copy for zero CPU encoding
+			}
+
+			// Add appropriate bitstream filter based on video codec
+			if streamInfo.VideoCodec == "h264" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
+				log.Printf("[%s] Using H.264 bitstream filter", cameraName)
+			} else if streamInfo.VideoCodec == "hevc" {
+				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
+				log.Printf("[%s] Using HEVC bitstream filter", cameraName)
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-flags", "+global_header",
+				"-sc_threshold", "0",
+				"-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+				"-max_muxing_queue_size", "1024",
+				"-f", "hls",
+				"-hls_time", "4",
+				"-hls_list_size", "0",
+				"-hls_flags", "independent_segments+delete_segments",
+				"-hls_segment_type", "mpegts",
+				"-reset_timestamps", "1",
+				"-strftime", "1",
+				"-hls_segment_filename", filepath.Join(cameraHLSDir, "segment_%Y%m%d_%H%M%S.ts"),
+				hlsPlaylistPath,
+			)
+
+			log.Printf("[%s] Starting FFmpeg with graceful shutdown support", cameraName)
+
+			currentCmd = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+			currentCmd.Stdout = logFile
+			currentCmd.Stderr = logFile
+
+			err = currentCmd.Start()
+			if err != nil {
+				log.Printf("[%s] Failed to start FFmpeg: %v", cameraName, err)
+				currentCmd = nil
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Wait for FFmpeg to complete
+			err = currentCmd.Wait()
+			currentCmd = nil
+			
+			if ctx.Err() != nil {
+				// Context was canceled, this is expected
+				log.Printf("[%s] FFmpeg stopped due to context cancellation", cameraName)
+				return
+			}
+			
+			if err != nil {
+				log.Printf("[%s] FFmpeg process exited with error: %v", cameraName, err)
+			} else {
+				log.Printf("[%s] FFmpeg process exited normally", cameraName)
+			}
+
+			// Wait before restarting to avoid rapid restarts
+			log.Printf("[%s] Restarting FFmpeg in 2 seconds...", cameraName)
+			time.Sleep(2 * time.Second)
+		}
+	}
 }
 
 // parseSegmentTime extracts start and end times from segment filename

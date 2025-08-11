@@ -57,26 +57,45 @@ check_health() {
     local start_time=$(date +%s)
     
     while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        # Check if curl can connect and get response
         if curl -sf "$HEALTH_CHECK_URL" >/dev/null 2>&1; then
-            local health_status=$(curl -s "$HEALTH_CHECK_URL" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+            # Get the full response and extract status
+            local health_response=$(curl -s "$HEALTH_CHECK_URL" 2>/dev/null)
+            # Parse the main status field (look for the top-level status field)
+            local health_status=$(echo "$health_response" | sed -n 's/.*"response_time_ms":[^,]*,"status":"\([^"]*\)".*/\1/p')
+            
+            # If we got a valid status, check if it's acceptable
             if [ "$health_status" = "healthy" ] || [ "$health_status" = "degraded" ]; then
                 echo -e "${GREEN}✓ Service is healthy (status: $health_status)${NC}"
                 return 0
+            elif [ "$health_status" = "unhealthy" ]; then
+                echo -e "${YELLOW}⚠ Service is unhealthy, continuing to wait...${NC}"
+            elif [ -n "$health_response" ]; then
+                # We got a response but no valid status, might be starting up
+                echo -e "${YELLOW}⚠ Service responding but status unclear, waiting...${NC}"
             fi
+        else
+            echo "Waiting for health check to pass..."
         fi
-        echo "Waiting for health check to pass..."
         sleep 2
     done
     
     echo -e "${RED}✗ Health check failed after $timeout seconds${NC}"
+    echo -e "${RED}Last response: $(curl -s "$HEALTH_CHECK_URL" 2>/dev/null || echo "No response")${NC}"
     return 1
 }
 
 # Function to check if service is recording
 check_recording_status() {
     local health_response=$(curl -s "$HEALTH_CHECK_URL" 2>/dev/null || echo "{}")
-    local recording_status=$(echo "$health_response" | grep -o '"recording":{[^}]*}' | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+    local recording_status=$(echo "$health_response" | grep -o '"status":"[^"]*"' | grep -A1 '"recording"' | tail -1 | cut -d'"' -f4)
     local running_cameras=$(echo "$health_response" | grep -o '"running_cameras":[0-9]*' | cut -d':' -f2)
+    
+    # More robust parsing using different approach
+    if [ -z "$running_cameras" ]; then
+        # Try alternative parsing method
+        running_cameras=$(echo "$health_response" | sed -n 's/.*"running_cameras":\([0-9]*\).*/\1/p')
+    fi
     
     echo "Recording Status: $recording_status"
     echo "Running Cameras: $running_cameras"

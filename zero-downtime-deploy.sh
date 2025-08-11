@@ -193,7 +193,8 @@ sudo systemctl status "$SERVICE_NAME" --no-pager -l
 # Show health check response
 echo ""
 echo -e "${BLUE}Current health status:${NC}"
-curl -s "$HEALTH_CHECK_URL" | python3 -m json.tool 2>/dev/null || curl -s "$HEALTH_CHECK_URL"
+HEALTH_RESPONSE=$(curl -s "$HEALTH_CHECK_URL")
+echo "$HEALTH_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$HEALTH_RESPONSE"
 
 # Cleanup backup after successful deployment
 if [ -f "$BACKUP_BINARY_PATH" ]; then

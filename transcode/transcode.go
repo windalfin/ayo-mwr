@@ -2,13 +2,17 @@ package transcode
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"ayo-mwr/config"
+	"ayo-mwr/database"
 )
 
 // QualityPreset defines parameters for a specific video quality
@@ -99,13 +103,183 @@ func TranscodeVideo(inputPath, videoID, cameraName string, cfg *config.Config) (
 	}, timings, nil
 }
 
+// copyFile copies a single file from source to destination
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
+}
+
+// getPresetNames returns slice of preset names for logging
+func getPresetNames(presets []QualityPreset) []string {
+	names := make([]string, len(presets))
+	for i, preset := range presets {
+		names[i] = preset.Name
+	}
+	return names
+}
+
+// parseSegmentTimestamp extracts timestamp from HLS segment filename
+// Format: segment_YYYYMMDD_HHMMSS.ts
+func parseSegmentTimestamp(filename string) (time.Time, error) {
+	// Remove extension
+	nameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+	
+	// Check if it starts with segment_
+	if !strings.HasPrefix(nameWithoutExt, "segment_") {
+		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
+	}
+	
+	// Remove prefix
+	timestampStr := strings.TrimPrefix(nameWithoutExt, "segment_")
+	
+	// Parse timestamp (format: YYYYMMDD_HHMMSS)
+	timestamp, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse timestamp from %s: %v", filename, err)
+	}
+	
+	return timestamp, nil
+}
+
+// findSegmentsInTimeRange finds HLS segments within the specified time range
+func findSegmentsInTimeRange(hlsDir string, startTime, endTime time.Time) ([]string, error) {
+	// Add 1 minute tolerance to end time
+	endTime = endTime.Add(1 * time.Minute)
+	
+	entries, err := os.ReadDir(hlsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory: %v", err)
+	}
+	
+	var matches []struct {
+		path string
+		ts   time.Time
+	}
+	
+	// Find segments that match the time range
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		
+		// Only process .ts files with segment naming pattern
+		if filepath.Ext(entry.Name()) == ".ts" && strings.HasPrefix(entry.Name(), "segment_") {
+			// Parse timestamp from filename
+			timestamp, err := parseSegmentTimestamp(entry.Name())
+			if err != nil {
+				log.Printf("[1080P-OPT] WARNING: Failed to parse timestamp from %s: %v", entry.Name(), err)
+				continue
+			}
+			
+			// Check if segment is within time range
+			if !timestamp.Before(startTime) && !timestamp.After(endTime) {
+				segmentPath := filepath.Join(hlsDir, entry.Name())
+				matches = append(matches, struct {
+					path string
+					ts   time.Time
+				}{segmentPath, timestamp})
+			}
+		}
+	}
+	
+	// Sort by timestamp ascending
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].ts.Before(matches[j].ts)
+	})
+	
+	// Extract just the paths
+	result := make([]string, len(matches))
+	for i, match := range matches {
+		result[i] = match.path
+	}
+	
+	return result, nil
+}
+
 // GenerateHLS creates a multi-quality HLS stream
 func GenerateHLS(inputPath, outputDir, videoID string, cfg *config.Config) error {
+	log.Printf("[TRANSCODE] Starting HLS generation for video ID: %s", videoID)
+	log.Printf("[TRANSCODE] Input path: %s", inputPath)
+	log.Printf("[TRANSCODE] Output directory: %s", outputDir)
+	
 	inputParams, _ := GetInputParams(cfg.HardwareAccel)
 	qualityPresets := GetQualityPresets(*cfg)
+	log.Printf("[TRANSCODE] Quality presets enabled: %v", getPresetNames(qualityPresets))
 
-	// Create variant streams for each quality
-	for _, preset := range qualityPresets {
+	// Get video metadata from database to get start_time and end_time
+	log.Printf("[TRANSCODE] Attempting to connect to database for 1080p optimization")
+	db, err := database.NewSQLiteDB(cfg.DatabasePath)
+	if err != nil {
+		log.Printf("[TRANSCODE] WARNING: Failed to init database for 1080p optimization: %v", err)
+		log.Printf("[TRANSCODE] Proceeding with standard FFmpeg processing for all qualities")
+	} else {
+		log.Printf("[TRANSCODE] Database connected successfully, looking up video metadata")
+		video, err := db.GetVideo(videoID)
+		if err == nil && video.StartTime != nil && video.EndTime != nil {
+			log.Printf("[TRANSCODE] Video metadata found - StartTime: %v, EndTime: %v", 
+				video.StartTime.Format("15:04:05"), video.EndTime.Format("15:04:05"))
+			
+			// Extract camera name from input path
+			cameraName := ""
+			pathParts := strings.Split(inputPath, string(os.PathSeparator))
+			for i, part := range pathParts {
+				if part == "recordings" && i+1 < len(pathParts) {
+					cameraName = pathParts[i+1]
+					break
+				}
+			}
+			
+			log.Printf("[TRANSCODE] Extracted camera name from path: %s", cameraName)
+
+			if cameraName != "" {
+				log.Printf("[TRANSCODE] Attempting 1080p segment optimization for camera: %s", cameraName)
+				// Try to find and copy existing 1080p HLS segments
+				if err := copy1080pSegments(cfg, cameraName, *video.StartTime, *video.EndTime, outputDir); err == nil {
+					log.Printf("[TRANSCODE] SUCCESS: 1080p optimization completed for video %s", videoID)
+					log.Printf("[TRANSCODE] Removing 1080p from FFmpeg processing queue")
+					// Remove 1080p from quality presets since we already handled it
+					var filteredPresets []QualityPreset
+					for _, preset := range qualityPresets {
+						if preset.Name != "1080p" {
+							filteredPresets = append(filteredPresets, preset)
+						}
+					}
+					qualityPresets = filteredPresets
+					log.Printf("[TRANSCODE] Remaining qualities for FFmpeg: %v", getPresetNames(qualityPresets))
+				} else {
+					log.Printf("[TRANSCODE] WARNING: 1080p optimization failed: %v", err)
+					log.Printf("[TRANSCODE] Falling back to standard FFmpeg processing for all qualities")
+				}
+			} else {
+				log.Printf("[TRANSCODE] WARNING: Could not extract camera name from input path")
+			}
+		} else {
+			log.Printf("[TRANSCODE] WARNING: Video metadata not found or incomplete for video %s", videoID)
+			if err != nil {
+				log.Printf("[TRANSCODE] Database error: %v", err)
+			}
+			log.Printf("[TRANSCODE] Proceeding with standard FFmpeg processing")
+		}
+	}
+
+	// Create variant streams for each quality (excluding 1080p if already copied)
+	log.Printf("[TRANSCODE] Starting FFmpeg processing for %d qualities", len(qualityPresets))
+	
+	for i, preset := range qualityPresets {
+		log.Printf("[TRANSCODE] Processing quality %d/%d: %s", i+1, len(qualityPresets), preset.Name)
+		
 		qualityDir := filepath.Join(outputDir, preset.Name)
 		os.MkdirAll(qualityDir, 0755)
 
@@ -120,13 +294,143 @@ func GenerateHLS(inputPath, outputDir, videoID string, cfg *config.Config) error
 		hlsCmd.Stdout = os.Stdout
 		hlsCmd.Stderr = os.Stderr
 
+		log.Printf("[TRANSCODE] Executing FFmpeg for %s quality", preset.Name)
+		start := time.Now()
+		
 		if err := hlsCmd.Run(); err != nil {
+			log.Printf("[TRANSCODE] ERROR: Failed to create HLS variant %s: %v", preset.Name, err)
 			return fmt.Errorf("error creating HLS variant %s: %v", preset.Name, err)
+		}
+		
+		duration := time.Since(start)
+		log.Printf("[TRANSCODE] SUCCESS: %s quality completed in %.2f seconds", preset.Name, duration.Seconds())
+	}
+	
+	log.Printf("[TRANSCODE] All FFmpeg processing completed")
+
+	// Create master playlist with all original presets (including 1080p)
+	log.Printf("[TRANSCODE] Creating master playlist...")
+	originalPresets := GetQualityPresets(*cfg)
+	if err := createHLSMasterPlaylist(outputDir, originalPresets); err != nil {
+		log.Printf("[TRANSCODE] ERROR: Failed to create master playlist: %v", err)
+		return err
+	}
+	
+	log.Printf("[TRANSCODE] SUCCESS: HLS generation completed for video %s", videoID)
+	log.Printf("[TRANSCODE] Master playlist created with %d quality variants", len(originalPresets))
+	return nil
+}
+
+// copy1080pSegments finds and copies existing 1080p HLS segments for the given time range
+func copy1080pSegments(cfg *config.Config, cameraName string, startTime, endTime time.Time, outputDir string) error {
+	// Look for existing HLS segments directly in the camera's HLS directory
+	// Use "videos" as the base path instead of cfg.StoragePath
+	baseDir := filepath.Join("videos", "recordings", cameraName, "hls")
+	
+	log.Printf("[1080P-OPT] Starting 1080p segment search for camera: %s", cameraName)
+	log.Printf("[1080P-OPT] Time range: %s - %s", startTime.Format("2006-01-02 15:04:05"), endTime.Format("2006-01-02 15:04:05"))
+	log.Printf("[1080P-OPT] Searching in directory: %s", baseDir)
+	
+	// Check if base HLS directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		log.Printf("[1080P-OPT] ERROR: HLS base directory does not exist: %s", baseDir)
+		return fmt.Errorf("HLS base directory does not exist: %s", baseDir)
+	}
+
+	// Use the optimized time range filtering function
+	log.Printf("[1080P-OPT] Searching for segments within time range...")
+	matchingSegments, err := findSegmentsInTimeRange(baseDir, startTime, endTime)
+	if err != nil {
+		log.Printf("[1080P-OPT] ERROR: Failed to find segments in time range: %v", err)
+		return fmt.Errorf("failed to find segments in time range: %v", err)
+	}
+
+	if len(matchingSegments) == 0 {
+		log.Printf("[1080P-OPT] ERROR: No HLS segments found in time range %s - %s", 
+			startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+		return fmt.Errorf("no HLS segments found in specified time range")
+	}
+
+	log.Printf("[1080P-OPT] FOUND: %d segments matching time range", len(matchingSegments))
+	
+	// Log first and last segment for verification
+	if len(matchingSegments) > 0 {
+		firstSegment := filepath.Base(matchingSegments[0])
+		lastSegment := filepath.Base(matchingSegments[len(matchingSegments)-1])
+		log.Printf("[1080P-OPT] First segment: %s", firstSegment)
+		log.Printf("[1080P-OPT] Last segment: %s", lastSegment)
+		
+		// Parse and log timestamps for verification
+		if firstTs, err := parseSegmentTimestamp(firstSegment); err == nil {
+			log.Printf("[1080P-OPT] First segment time: %s", firstTs.Format("2006-01-02 15:04:05"))
+		}
+		if lastTs, err := parseSegmentTimestamp(lastSegment); err == nil {
+			log.Printf("[1080P-OPT] Last segment time: %s", lastTs.Format("2006-01-02 15:04:05"))
 		}
 	}
 
-	// Create master playlist
-	return createHLSMasterPlaylist(outputDir, qualityPresets)
+	// Create 1080p directory in output
+	qualityDir := filepath.Join(outputDir, "1080p")
+	if err := os.MkdirAll(qualityDir, 0755); err != nil {
+		log.Printf("[1080P-OPT] ERROR: Failed to create output directory: %v", err)
+		return fmt.Errorf("failed to create 1080p output directory: %v", err)
+	}
+
+	log.Printf("[1080P-OPT] Created output directory: %s", qualityDir)
+	log.Printf("[1080P-OPT] Starting segment copy process...")
+
+	// Copy segments and create playlist
+	var copiedSegments []string
+	copyStart := time.Now()
+	
+	for i, segmentPath := range matchingSegments {
+		destFile := filepath.Join(qualityDir, fmt.Sprintf("segment_%03d.ts", i))
+		if err := copyFile(segmentPath, destFile); err != nil {
+			log.Printf("[1080P-OPT] ERROR: Failed to copy segment %s: %v", filepath.Base(segmentPath), err)
+			return fmt.Errorf("failed to copy segment: %v", err)
+		}
+		copiedSegments = append(copiedSegments, fmt.Sprintf("segment_%03d.ts", i))
+		
+		// Log progress every 20 segments (since we expect fewer segments now)
+		if (i+1)%20 == 0 || i == len(matchingSegments)-1 {
+			log.Printf("[1080P-OPT] Copied %d/%d segments", i+1, len(matchingSegments))
+		}
+	}
+	
+	copyDuration := time.Since(copyStart)
+	log.Printf("[1080P-OPT] Segment copying completed in %.2f seconds", copyDuration.Seconds())
+
+	// Create playlist.m3u8 file
+	log.Printf("[1080P-OPT] Creating playlist.m3u8...")
+	playlistPath := filepath.Join(qualityDir, "playlist.m3u8")
+	playlistFile, err := os.Create(playlistPath)
+	if err != nil {
+		log.Printf("[1080P-OPT] ERROR: Failed to create playlist file: %v", err)
+		return fmt.Errorf("failed to create playlist file: %v", err)
+	}
+	defer playlistFile.Close()
+
+	// Write playlist content
+	playlistFile.WriteString("#EXTM3U\n")
+	playlistFile.WriteString("#EXT-X-VERSION:3\n")
+	playlistFile.WriteString("#EXT-X-TARGETDURATION:4\n")
+	playlistFile.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
+
+	for _, segmentName := range copiedSegments {
+		playlistFile.WriteString("#EXTINF:4.0,\n")
+		playlistFile.WriteString(segmentName + "\n")
+	}
+
+	playlistFile.WriteString("#EXT-X-ENDLIST\n")
+
+	totalDuration := time.Since(copyStart)
+	log.Printf("[1080P-OPT] SUCCESS: 1080p optimization completed!")
+	log.Printf("[1080P-OPT] - Segments copied: %d", len(copiedSegments))
+	log.Printf("[1080P-OPT] - Total processing time: %.2f seconds", totalDuration.Seconds())
+	log.Printf("[1080P-OPT] - Average time per segment: %.3f seconds", totalDuration.Seconds()/float64(len(copiedSegments)))
+	log.Printf("[1080P-OPT] - Time range efficiency: Only copied segments within specified range")
+	
+	return nil
 }
 
 // createHLSMasterPlaylist generates the HLS master playlist file
@@ -429,3 +733,4 @@ func GetVideoDuration(filePath string) (float64, error) {
 
 	return duration, nil
 }
+

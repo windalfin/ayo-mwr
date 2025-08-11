@@ -359,12 +359,8 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 	log.Printf("🔄 CRON-RUN-%d: Starting booking video processing task...", currentCronID)
 	logProcessingStatus(currentCronID, "CRON START", maxConcurrent)
 
-	// Use fixed date for testing
-	today := time.Now().Format("2006-01-02")
-	// today := "2025-04-30" // Fixed date for testing purposes
-
-	// Get bookings from database by date
-	bookingsData, err := db.GetBookingsByDate(today)
+	// Get bookings from database that need execution
+	bookingsData, err := db.GetBookingsForExecution()
 	if err != nil {
 		log.Printf("❌ CRON-RUN-%d: Error fetching bookings from database: %v", currentCronID, err)
 		return
@@ -645,9 +641,17 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 
 				log.Printf("processBookings : Checking camera %s for booking %s", camera.Name, bookingID)
-				BaseDir := filepath.Join(cfg.StoragePath, "recordings", camera.Name)
-				// Find video segments directory for this camera
-				videoDirectory := filepath.Join(BaseDir, "hls")
+				// Get storage path for this booking's date
+				storagePath, err := db.GetStoragePathForBookingDate(date)
+				if err != nil {
+					log.Printf("❌ CRON-RUN-%d: Error getting storage path for booking %s date %s: %v", cronID, bookingID, date, err)
+					continue
+				}
+				
+				BaseDir := filepath.Join(storagePath, "recordings", camera.Name)
+				// Find video segments directory for this camera with date subdirectory
+				today := time.Now().Format("060102") // YYMMDD format
+				videoDirectory := filepath.Join(BaseDir, "hls", today)
 
 				// Check if directory exists
 				if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
@@ -861,8 +865,42 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 			processingDuration := time.Since(bookingStartTime)
 			if camerasWithVideo > 0 {
 				log.Printf("✅ CRON-RUN-%d: Successfully processed %d cameras for booking %s in %v", cronID, camerasWithVideo, bookingID, processingDuration.Round(time.Second))
+				
+				// Update booking execution - successful processing
+				lastStatus, err := db.GetLastStatusFromVideos(bookingID)
+				if err != nil {
+					log.Printf("⚠️ CRON-RUN-%d: Error getting last status for booking %s: %v", cronID, bookingID, err)
+					lastStatus = "completed" // fallback
+				}
+				
+				var nextExecution *time.Time
+				// If there are failed videos, calculate next execution time
+				if lastStatus == "failed" {
+					nextExecution = db.CalculateNextExecutionTime(bookingID)
+					log.Printf("📅 CRON-RUN-%d: Booking %s has failed videos, next_execution: %v", cronID, bookingID, nextExecution)
+				} else {
+					// If successful, set next_execution to null
+					nextExecution = nil
+					log.Printf("📅 CRON-RUN-%d: Booking %s completed successfully, next_execution set to null", cronID, bookingID)
+				}
+				
+				err = db.UpdateBookingExecution(bookingID, lastStatus, nextExecution)
+				if err != nil {
+					log.Printf("⚠️ CRON-RUN-%d: Error updating booking execution for %s: %v", cronID, bookingID, err)
+				} else {
+					log.Printf("📅 CRON-RUN-%d: Updated booking %s execution status to %s", cronID, bookingID, lastStatus)
+				}
 			} else {
 				log.Printf("⚠️ CRON-RUN-%d: No camera videos found for booking %s in the specified time range (took %v)", cronID, bookingID, processingDuration.Round(time.Second))
+				
+				// Update booking execution - no videos found (treat as failed)
+				nextExecution := db.CalculateNextExecutionTime(bookingID)
+				err := db.UpdateBookingExecution(bookingID, "failed", nextExecution)
+				if err != nil {
+					log.Printf("⚠️ CRON-RUN-%d: Error updating booking execution for %s: %v", cronID, bookingID, err)
+				} else {
+					log.Printf("📅 CRON-RUN-%d: Updated booking %s execution status to failed, next_execution: %v", cronID, bookingID, nextExecution)
+				}
 			}
 		}(bookingItem, bookingID, startTime, endTime, orderDetailID, localOffsetHours, field_id, currentCronID, maxConcurrent) // Pass variables to goroutine
 	}

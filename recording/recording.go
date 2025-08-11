@@ -145,11 +145,15 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	// Create camera-specific directories and add HLS and MP4 folders
 	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
 	cameraLogsDir := filepath.Join(cameraDir, "logs")
-	cameraHLSDir := filepath.Join(cameraDir, "hls")
 	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
+	
+	// Create HLS directory with today's date subdirectory
+	today := time.Now().Format("060102") // YYMMDD format
+	cameraHLSBaseDir := filepath.Join(cameraDir, "hls")
+	cameraHLSDir := filepath.Join(cameraHLSBaseDir, today)
 
 	// Create all required directories
-	for _, dir := range []string{cameraDir, cameraLogsDir, cameraHLSDir, cameraMP4Dir} {
+	for _, dir := range []string{cameraDir, cameraLogsDir, cameraHLSBaseDir, cameraHLSDir, cameraMP4Dir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
 		}

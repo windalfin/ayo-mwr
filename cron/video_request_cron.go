@@ -670,11 +670,11 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: Failed to send video data to AYO API for %s: %v", cronID, uniqueID, err)
 
 				// Set database status to failed when API call fails
-				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
-					fmt.Sprintf("AYO API call failed: %v", err))
-				if updateErr != nil {
-					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
-				}
+				// updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
+				// 	fmt.Sprintf("AYO API call failed: %v", err))
+				// if updateErr != nil {
+				// 	log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
+				// }
 
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return

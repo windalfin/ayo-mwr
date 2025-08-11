@@ -152,19 +152,21 @@ type AyoAPINotifyTaskData struct {
 
 // BookingData represents a booking from AYO API
 type BookingData struct {
-	ID            int       `json:"id"`            // Auto-increment primary key
-	BookingID     string    `json:"bookingId"`     // Booking ID from API
-	OrderDetailID int       `json:"orderDetailId"` // Order detail ID
-	FieldID       int       `json:"fieldId"`       // Field ID
-	Date          string    `json:"date"`          // Booking date (YYYY-MM-DD)
-	StartTime     string    `json:"startTime"`     // Start time (HH:MM:SS)
-	EndTime       string    `json:"endTime"`       // End time (HH:MM:SS)
-	BookingSource string    `json:"bookingSource"` // Booking source (reservation, order_detail, etc.)
-	Status        string    `json:"status"`        // Booking status (SUCCESS, CANCELLED, etc.)
-	CreatedAt     time.Time `json:"createdAt"`     // When record was created in our DB
-	UpdatedAt     time.Time `json:"updatedAt"`     // When record was last updated in our DB
-	RawJSON       string    `json:"rawJson"`       // Complete raw JSON from API
-	LastSyncAt    time.Time `json:"lastSyncAt"`    // Last time we synced this booking
+	ID            int        `json:"id"`            // Auto-increment primary key
+	BookingID     string     `json:"bookingId"`     // Booking ID from API
+	OrderDetailID int        `json:"orderDetailId"` // Order detail ID
+	FieldID       int        `json:"fieldId"`       // Field ID
+	Date          string     `json:"date"`          // Booking date (YYYY-MM-DD)
+	StartTime     string     `json:"startTime"`     // Start time (HH:MM:SS)
+	EndTime       string     `json:"endTime"`       // End time (HH:MM:SS)
+	BookingSource string     `json:"bookingSource"` // Booking source (reservation, order_detail, etc.)
+	Status        string     `json:"status"`        // Booking status (SUCCESS, CANCELLED, etc.)
+	CreatedAt     time.Time  `json:"createdAt"`     // When record was created in our DB
+	UpdatedAt     time.Time  `json:"updatedAt"`     // When record was last updated in our DB
+	RawJSON       string     `json:"rawJson"`       // Complete raw JSON from API
+	LastSyncAt    time.Time  `json:"lastSyncAt"`    // Last time we synced this booking
+	LastStatus    string     `json:"lastStatus"`    // Last status from related videos
+	NextExecution *time.Time `json:"nextExecution"` // Next execution time (null if successful)
 }
 
 // SystemConfig represents system configuration stored in the database
@@ -183,6 +185,14 @@ type User struct {
 	PasswordHash string    `json:"-"`            // Hashed password (not exposed in JSON)
 	CreatedAt    time.Time `json:"createdAt"`    // When user was created
 	UpdatedAt    time.Time `json:"updatedAt"`    // When user was last updated
+}
+
+// SegmentDir represents disk segment directory changes for tracking disk switching
+type SegmentDir struct {
+	ID          int       `json:"id"`          // Auto-increment primary key
+	Date        time.Time `json:"date"`        // Date when disk switch occurred
+	DiskSegment string    `json:"diskSegment"` // Disk segment/path that was switched to
+	CreatedAt   time.Time `json:"createdAt"`   // When this record was created
 }
 
 // System configuration keys
@@ -324,6 +334,11 @@ type Database interface {
 	GetBookingsByStatus(status string) ([]BookingData, error)
 	UpdateBookingStatus(bookingID string, status string) error
 	DeleteOldBookings(olderThan time.Time) error
+	GetBookingsForExecution() ([]BookingData, error)
+	UpdateBookingExecution(bookingID string, lastStatus string, nextExecution *time.Time) error
+	GetStoragePathForBookingDate(bookingDate string) (string, error)
+	CalculateNextExecutionTime(bookingID string) *time.Time
+	GetLastStatusFromVideos(bookingID string) (string, error)
 
 	// System configuration operations
 	GetSystemConfig(key string) (*SystemConfig, error)
@@ -335,6 +350,13 @@ type Database interface {
 	CreateUser(username, passwordHash string) error
 	GetUserByUsername(username string) (*User, error)
 	HasUsers() (bool, error)
+
+	// SegmentDir operations
+	CreateSegmentDir(segmentDir SegmentDir) error
+	GetSegmentDirs(limit, offset int) ([]SegmentDir, error)
+	GetSegmentDirsByDate(date time.Time) ([]SegmentDir, error)
+	LogDiskSwitch(diskPath string) error
+	CreateOrUpdateSegmentDirForToday(diskPath string) error
 
 	// Helper operations
 	Close() error

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -386,7 +387,9 @@ func initTables(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			raw_json TEXT,
-			last_sync_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			last_sync_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_status TEXT,
+			next_execution DATETIME
 		)
 	`)
 	if err != nil {
@@ -437,7 +440,35 @@ func initTables(db *sql.DB) error {
 		return err
 	}
 
+	// Add new columns to bookings table if they don't exist
+	_, migrationErr = db.Exec("ALTER TABLE bookings ADD COLUMN last_status TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for last_status: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added last_status column to bookings table")
+	}
 
+	_, migrationErr = db.Exec("ALTER TABLE bookings ADD COLUMN next_execution DATETIME")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for next_execution: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added next_execution column to bookings table")
+	}
+
+	// Create indexes for new booking columns
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_next_execution ON bookings (next_execution)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_bookings_last_status ON bookings (last_status)
+	`)
+	if err != nil {
+		return err
+	}
 
 	// Create system_config table for storing system configuration
 	_, err = db.Exec(`
@@ -462,6 +493,34 @@ func initTables(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create segmentdir table for tracking disk switching
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS segmentdir (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date DATETIME NOT NULL,
+			disk_segment TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create indexes for segmentdir
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_segmentdir_date ON segmentdir (date)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_segmentdir_disk_segment ON segmentdir (disk_segment)
 	`)
 	if err != nil {
 		return err
@@ -1560,6 +1619,18 @@ func (s *SQLiteDB) SetActiveDisk(id string) error {
 	}
 	defer tx.Rollback()
 
+	// Get the disk path for the new active disk
+	var diskPath string
+	err = tx.QueryRow("SELECT path FROM storage_disks WHERE id = ?", id).Scan(&diskPath)
+	if err != nil {
+		return fmt.Errorf("error getting disk path: %v", err)
+	}
+
+	// Check if there's currently an active disk
+	var currentActiveDiskPath string
+	err = tx.QueryRow("SELECT path FROM storage_disks WHERE is_active = 1").Scan(&currentActiveDiskPath)
+	hasCurrentActive := err == nil
+
 	// Deactivate all disks
 	_, err = tx.Exec("UPDATE storage_disks SET is_active = 0")
 	if err != nil {
@@ -1570,6 +1641,35 @@ func (s *SQLiteDB) SetActiveDisk(id string) error {
 	_, err = tx.Exec("UPDATE storage_disks SET is_active = 1 WHERE id = ?", id)
 	if err != nil {
 		return err
+	}
+
+	// Log disk switch to segmentdir table if this is actually a change
+	// Use the new logic: 1 tanggal 1 record
+	if !hasCurrentActive || currentActiveDiskPath != diskPath {
+		// Commit the transaction first to make disk active
+		err = tx.Commit()
+		if err != nil {
+			return fmt.Errorf("error committing disk activation: %v", err)
+		}
+		
+		// Now handle segmentdir logging and file moving
+		err = s.CreateOrUpdateSegmentDirForToday(diskPath)
+		if err != nil {
+			log.Printf("⚠️ SEGMENTDIR: Error logging disk switch: %v", err)
+			// Don't return error here, disk switch should still succeed
+		}
+		
+		// Move HLS segments if there's a previous active disk
+		if hasCurrentActive && currentActiveDiskPath != diskPath {
+			err = s.moveHLSSegments(currentActiveDiskPath, diskPath)
+			if err != nil {
+				log.Printf("⚠️ SEGMENT_MOVER: Error moving HLS segments: %v", err)
+				// Don't return error here, disk switch should still succeed
+			}
+		}
+		
+		log.Printf("📁 SEGMENTDIR: Processed disk switch to %s", diskPath)
+		return nil
 	}
 
 	return tx.Commit()
@@ -1915,13 +2015,14 @@ func (s *SQLiteDB) CreateOrUpdateBooking(booking BookingData) error {
 // GetBookingByID retrieves a booking by its booking ID
 func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
 	var booking BookingData
-	var createdAt, updatedAt, lastSyncAt sql.NullTime
+	var createdAt, updatedAt, lastSyncAt, nextExecution sql.NullTime
 	var orderDetailID, fieldID sql.NullInt64
-	var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+	var date, startTime, endTime, bookingSource, status, rawJSON, lastStatus sql.NullString
 
 	err := s.db.QueryRow(`
 		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
-			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at,
+			last_status, next_execution
 		FROM bookings WHERE booking_id = ?`, bookingID).Scan(
 		&booking.ID,
 		&booking.BookingID,
@@ -1936,6 +2037,8 @@ func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
 		&updatedAt,
 		&rawJSON,
 		&lastSyncAt,
+		&lastStatus,
+		&nextExecution,
 	)
 
 	if err == sql.ErrNoRows {
@@ -1979,6 +2082,12 @@ func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
 	if lastSyncAt.Valid {
 		booking.LastSyncAt = lastSyncAt.Time
 	}
+	if lastStatus.Valid {
+		booking.LastStatus = lastStatus.String
+	}
+	if nextExecution.Valid {
+		booking.NextExecution = &nextExecution.Time
+	}
 
 	return &booking, nil
 }
@@ -1987,7 +2096,8 @@ func (s *SQLiteDB) GetBookingByID(bookingID string) (*BookingData, error) {
 func (s *SQLiteDB) GetBookingsByDate(date string) ([]BookingData, error) {
 	rows, err := s.db.Query(`
 		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
-			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at,
+			last_status, next_execution
 		FROM bookings 
 		WHERE date = ?
 		ORDER BY start_time ASC`, date)
@@ -2004,7 +2114,8 @@ func (s *SQLiteDB) GetBookingsByDate(date string) ([]BookingData, error) {
 func (s *SQLiteDB) GetBookingsByStatus(status string) ([]BookingData, error) {
 	rows, err := s.db.Query(`
 		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
-			booking_source, status, created_at, updated_at, raw_json, last_sync_at
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at,
+			last_status, next_execution
 		FROM bookings 
 		WHERE status = ?
 		ORDER BY date DESC, start_time ASC`, status)
@@ -2074,9 +2185,9 @@ func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
 
 	for rows.Next() {
 		var booking BookingData
-		var createdAt, updatedAt, lastSyncAt sql.NullTime
+		var createdAt, updatedAt, lastSyncAt, nextExecution sql.NullTime
 		var orderDetailID, fieldID sql.NullInt64
-		var date, startTime, endTime, bookingSource, status, rawJSON sql.NullString
+		var date, startTime, endTime, bookingSource, status, rawJSON, lastStatus sql.NullString
 
 		err := rows.Scan(
 			&booking.ID,
@@ -2092,6 +2203,8 @@ func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
 			&updatedAt,
 			&rawJSON,
 			&lastSyncAt,
+			&lastStatus,
+			&nextExecution,
 		)
 
 		if err != nil {
@@ -2131,6 +2244,12 @@ func (s *SQLiteDB) scanBookings(rows *sql.Rows) ([]BookingData, error) {
 		}
 		if lastSyncAt.Valid {
 			booking.LastSyncAt = lastSyncAt.Time
+		}
+		if lastStatus.Valid {
+			booking.LastStatus = lastStatus.String
+		}
+		if nextExecution.Valid {
+			booking.NextExecution = &nextExecution.Time
 		}
 
 		bookings = append(bookings, booking)
@@ -2300,4 +2419,468 @@ func (s *SQLiteDB) HasUsers() (bool, error) {
 func ValidatePassword(hashedPassword, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// ===== SegmentDir Operations =====
+
+// CreateSegmentDir creates a new segment directory record
+func (s *SQLiteDB) CreateSegmentDir(segmentDir SegmentDir) error {
+	_, err := s.db.Exec(`
+		INSERT INTO segmentdir (date, disk_segment, created_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+	`, segmentDir.Date, segmentDir.DiskSegment)
+
+	if err != nil {
+		return fmt.Errorf("error creating segment dir record: %v", err)
+	}
+
+	log.Printf("📁 SEGMENTDIR: Created record for disk switch to %s on %v", segmentDir.DiskSegment, segmentDir.Date)
+	return nil
+}
+
+// GetSegmentDirs retrieves segment directory records with pagination
+func (s *SQLiteDB) GetSegmentDirs(limit, offset int) ([]SegmentDir, error) {
+	query := `
+		SELECT id, date, disk_segment, created_at
+		FROM segmentdir
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.Query(query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("error querying segment dirs: %v", err)
+	}
+	defer rows.Close()
+
+	var segmentDirs []SegmentDir
+	for rows.Next() {
+		var segmentDir SegmentDir
+		var date, createdAt time.Time
+
+		err := rows.Scan(&segmentDir.ID, &date, &segmentDir.DiskSegment, &createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning segment dir row: %v", err)
+		}
+
+		segmentDir.Date = date
+		segmentDir.CreatedAt = createdAt
+		segmentDirs = append(segmentDirs, segmentDir)
+	}
+
+	return segmentDirs, nil
+}
+
+// GetSegmentDirsByDate retrieves segment directory records for a specific date
+func (s *SQLiteDB) GetSegmentDirsByDate(date time.Time) ([]SegmentDir, error) {
+	// Format date to YYYY-MM-DD for comparison
+	dateStr := date.Format("2006-01-02")
+	
+	query := `
+		SELECT id, date, disk_segment, created_at
+		FROM segmentdir
+		WHERE DATE(date) = DATE(?)
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.db.Query(query, dateStr)
+	if err != nil {
+		return nil, fmt.Errorf("error querying segment dirs by date: %v", err)
+	}
+	defer rows.Close()
+
+	var segmentDirs []SegmentDir
+	for rows.Next() {
+		var segmentDir SegmentDir
+		var segmentDate, createdAt time.Time
+
+		err := rows.Scan(&segmentDir.ID, &segmentDate, &segmentDir.DiskSegment, &createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning segment dir row: %v", err)
+		}
+
+		segmentDir.Date = segmentDate
+		segmentDir.CreatedAt = createdAt
+		segmentDirs = append(segmentDirs, segmentDir)
+	}
+
+	return segmentDirs, nil
+}
+
+// GetBookingsForExecution retrieves bookings that need to be executed
+// Returns bookings where next_execution is NULL or <= current time
+func (s *SQLiteDB) GetBookingsForExecution() ([]BookingData, error) {
+	rows, err := s.db.Query(`
+		SELECT id, booking_id, order_detail_id, field_id, date, start_time, end_time,
+			booking_source, status, created_at, updated_at, raw_json, last_sync_at,
+			last_status, next_execution
+		FROM bookings 
+		WHERE status = 'success' 
+		AND (next_execution IS NULL OR next_execution <= datetime('now'))
+		ORDER BY date ASC, start_time ASC`)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting bookings for execution: %v", err)
+	}
+	defer rows.Close()
+
+	return s.scanBookings(rows)
+}
+
+// UpdateBookingExecution updates the last_status and next_execution for a booking
+func (s *SQLiteDB) UpdateBookingExecution(bookingID string, lastStatus string, nextExecution *time.Time) error {
+	var query string
+	var args []interface{}
+
+	if nextExecution != nil {
+		query = `
+			UPDATE bookings 
+			SET last_status = ?, next_execution = ?, updated_at = CURRENT_TIMESTAMP 
+			WHERE booking_id = ?`
+		args = []interface{}{lastStatus, nextExecution.Format("2006-01-02 15:04:05"), bookingID}
+	} else {
+		query = `
+			UPDATE bookings 
+			SET last_status = ?, next_execution = NULL, updated_at = CURRENT_TIMESTAMP 
+			WHERE booking_id = ?`
+		args = []interface{}{lastStatus, bookingID}
+	}
+
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("error updating booking execution: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no booking found with ID: %s", bookingID)
+	}
+
+	log.Printf("📅 BOOKING: Updated execution for booking %s - status: %s, next_execution: %v", 
+		bookingID, lastStatus, nextExecution)
+
+	return nil
+}
+
+// CalculateNextExecutionTime calculates next execution time based on failed video count
+// Uses same logic as shouldSkipBookingRetry
+func (s *SQLiteDB) CalculateNextExecutionTime(bookingID string) *time.Time {
+	// Query failed videos for this booking
+	failedVideos, err := s.GetVideosByBookingID(bookingID)
+	if err != nil {
+		log.Printf("Error getting videos for booking %s: %v", bookingID, err)
+		// If we can't check, schedule for immediate execution
+		now := time.Now()
+		return &now
+	}
+
+	// Filter only failed videos
+	var failedVideosList []VideoMetadata
+	var mostRecentFailedTime time.Time
+	for _, video := range failedVideos {
+		if video.Status == StatusFailed {
+			failedVideosList = append(failedVideosList, video)
+			// Use CreatedAt as the failure time
+			if video.CreatedAt.After(mostRecentFailedTime) {
+				mostRecentFailedTime = video.CreatedAt
+			}
+		}
+	}
+
+	failedCount := len(failedVideosList)
+	if failedCount == 0 {
+		// No previous failures, execute immediately
+		now := time.Now()
+		return &now
+	}
+
+	if failedCount > 5 {
+		// More than 5 failures, don't schedule (return nil for permanent skip)
+		return nil
+	}
+
+	if mostRecentFailedTime.IsZero() {
+		// No last failed time recorded, execute immediately
+		now := time.Now()
+		return &now
+	}
+
+	var requiredWaitTime time.Duration
+	switch failedCount {
+	case 1:
+		requiredWaitTime = 5 * time.Minute
+	case 2:
+		requiredWaitTime = 15 * time.Minute
+	case 3:
+		requiredWaitTime = 30 * time.Minute
+	case 4:
+		requiredWaitTime = 60 * time.Minute
+	case 5:
+		requiredWaitTime = 120 * time.Minute
+	default:
+		// Should not reach here due to check above
+		return nil
+	}
+
+	// Calculate next execution time = last failure + wait time
+	nextExecution := mostRecentFailedTime.Add(requiredWaitTime)
+	return &nextExecution
+}
+
+// GetStoragePathForBookingDate retrieves the active disk path for a specific booking date
+func (s *SQLiteDB) GetStoragePathForBookingDate(bookingDate string) (string, error) {
+	// Parse booking date to get the correct format
+	parsedDate, err := time.Parse("2006-01-02", bookingDate)
+	if err != nil {
+		return "", fmt.Errorf("invalid booking date format: %v", err)
+	}
+
+	// Get segmentdir record for this date
+	segmentDirs, err := s.GetSegmentDirsByDate(parsedDate)
+	if err != nil {
+		return "", fmt.Errorf("error getting segment dirs for date %s: %v", bookingDate, err)
+	}
+
+	if len(segmentDirs) == 0 {
+		// No segmentdir record for this date, use current active disk
+		activeDisk, err := s.GetActiveDisk()
+		if err != nil {
+			return "", fmt.Errorf("no segmentdir record for date %s and failed to get active disk: %v", bookingDate, err)
+		}
+		if activeDisk == nil {
+			return "", fmt.Errorf("no segmentdir record for date %s and no active disk found", bookingDate)
+		}
+		log.Printf("📁 BOOKING: No segmentdir for date %s, using current active disk: %s", bookingDate, activeDisk.Path)
+		return activeDisk.Path, nil
+	}
+
+	// Use the most recent segmentdir record for this date
+	diskPath := segmentDirs[0].DiskSegment
+	log.Printf("📁 BOOKING: Using disk path from segmentdir for date %s: %s", bookingDate, diskPath)
+	return diskPath, nil
+}
+
+// GetLastStatusFromVideos retrieves the last status from videos associated with a booking
+func (s *SQLiteDB) GetLastStatusFromVideos(bookingID string) (string, error) {
+	var lastStatus string
+	err := s.db.QueryRow(`
+		SELECT status 
+		FROM videos 
+		WHERE booking_id = ? 
+		ORDER BY created_at DESC 
+		LIMIT 1`, bookingID).Scan(&lastStatus)
+	
+	if err == sql.ErrNoRows {
+		return "", nil // No videos found
+	}
+	if err != nil {
+		return "", fmt.Errorf("error getting last status for booking %s: %v", bookingID, err)
+	}
+	
+	return lastStatus, nil
+}
+
+// LogDiskSwitch is a helper function to manually log disk switches
+// This can be called from external packages when disk switching occurs
+func (s *SQLiteDB) LogDiskSwitch(diskPath string) error {
+	segmentDir := SegmentDir{
+		Date:        time.Now(),
+		DiskSegment: diskPath,
+	}
+	return s.CreateSegmentDir(segmentDir)
+}
+
+// CreateOrUpdateSegmentDirForToday creates or updates segment directory record for today
+// Implements logic: 1 tanggal 1 record
+func (s *SQLiteDB) CreateOrUpdateSegmentDirForToday(diskPath string) error {
+	today := time.Now()
+	todayStr := today.Format("2006-01-02")
+	
+	// Check if record exists for today and get current disk path
+	var existingID int
+	var currentDiskPath string
+	err := s.db.QueryRow(`
+		SELECT id, disk_segment FROM segmentdir 
+		WHERE DATE(date) = DATE(?) 
+		LIMIT 1
+	`, todayStr).Scan(&existingID, &currentDiskPath)
+	
+	if err == sql.ErrNoRows {
+		// No record for today, create new one
+		segmentDir := SegmentDir{
+			Date:        today,
+			DiskSegment: diskPath,
+		}
+		err = s.CreateSegmentDir(segmentDir)
+		if err != nil {
+			return fmt.Errorf("error creating segment dir record for today: %v", err)
+		}
+		log.Printf("📁 SEGMENTDIR: Created new record for today - disk: %s", diskPath)
+	} else if err != nil {
+		return fmt.Errorf("error checking existing segment dir record: %v", err)
+	} else {
+		// Record exists for today, check if disk path changed
+		if currentDiskPath != diskPath {
+			log.Printf("📁 SEGMENTDIR: Disk change detected for today: %s -> %s", currentDiskPath, diskPath)
+			
+			// Move HLS segments from current disk to new disk for today
+			err = s.moveHLSSegments(currentDiskPath, diskPath)
+			if err != nil {
+				log.Printf("⚠️ SEGMENT_MOVER: Error moving HLS segments: %v", err)
+				// Don't return error, just log it and continue with update
+			} else {
+				log.Printf("✅ SEGMENT_MOVER: Successfully moved HLS segments from %s to %s", currentDiskPath, diskPath)
+			}
+		}
+		
+		// Update the record
+		_, err = s.db.Exec(`
+			UPDATE segmentdir 
+			SET disk_segment = ?, created_at = CURRENT_TIMESTAMP 
+			WHERE id = ?
+		`, diskPath, existingID)
+		if err != nil {
+			return fmt.Errorf("error updating segment dir record for today: %v", err)
+		}
+		log.Printf("📁 SEGMENTDIR: Updated today's record - disk: %s", diskPath)
+	}
+	
+	return nil
+}
+
+// moveHLSSegments moves HLS segments from source disk to target disk
+func (s *SQLiteDB) moveHLSSegments(sourcePath, targetPath string) error {
+	log.Printf("🔄 SEGMENT_MOVER: Moving HLS segments from %s to %s", sourcePath, targetPath)
+	
+	// We'll implement the file moving logic here to avoid circular imports
+	// This is a simplified version - for production, consider moving to a separate service
+	
+	today := time.Now().Format("060102") // YYMMDD format untuk match dengan direktori tanggal
+	
+	// Find all camera directories in source: recordings/{cameraName}/
+	recordingsPattern := filepath.Join(sourcePath, "recordings", "*")
+	cameraDirs, err := filepath.Glob(recordingsPattern)
+	if err != nil {
+		return fmt.Errorf("error finding camera directories: %v", err)
+	}
+	
+	totalMoved := 0
+	
+	for _, cameraDir := range cameraDirs {
+		cameraName := filepath.Base(cameraDir)
+		
+		// Skip if not a directory
+		if info, err := os.Stat(cameraDir); err != nil || !info.IsDir() {
+			continue
+		}
+		
+		// Look for HLS directory: recordings/{cameraName}/hls/{YYMMDD}/
+		hlsDir := filepath.Join(cameraDir, "hls")
+		todayDir := filepath.Join(hlsDir, today)
+		if _, err := os.Stat(todayDir); os.IsNotExist(err) {
+			log.Printf("🔄 SEGMENT_MOVER: No directory for today (%s) found for camera %s", today, cameraName)
+			continue
+		}
+		
+		// Find all segment files in today's directory: segment_HHMMSS.ts
+		segmentPattern := filepath.Join(todayDir, "segment_*.ts")
+		segmentFiles, err := filepath.Glob(segmentPattern)
+		if err != nil {
+			log.Printf("❌ SEGMENT_MOVER: Error finding segments for camera %s: %v", cameraName, err)
+			continue
+		}
+		
+		if len(segmentFiles) == 0 {
+			log.Printf("🔄 SEGMENT_MOVER: No segments found for camera %s on %s", cameraName, today)
+			continue
+		}
+		
+		// Create target directory structure: recordings/{cameraName}/hls/{YYMMDD}/
+		targetTodayDir := filepath.Join(targetPath, "recordings", cameraName, "hls", today)
+		err = os.MkdirAll(targetTodayDir, 0755)
+		if err != nil {
+			log.Printf("❌ SEGMENT_MOVER: Error creating target directory %s: %v", targetTodayDir, err)
+			continue
+		}
+		
+		// Move each segment file
+		movedCount := 0
+		for _, segmentFile := range segmentFiles {
+			fileName := filepath.Base(segmentFile)
+			targetFile := filepath.Join(targetTodayDir, fileName)
+			
+			// Copy file to target
+			err = s.copyFileInternal(segmentFile, targetFile)
+			if err != nil {
+				log.Printf("❌ SEGMENT_MOVER: Error copying %s to %s: %v", segmentFile, targetFile, err)
+				continue
+			}
+			
+			// Remove original file after successful copy
+			err = os.Remove(segmentFile)
+			if err != nil {
+				log.Printf("⚠️ SEGMENT_MOVER: Error removing original file %s: %v", segmentFile, err)
+			}
+			
+			movedCount++
+		}
+		
+		// Also move playlist files
+		playlistFiles := []string{"playlist.m3u8"}
+		for _, playlistFile := range playlistFiles {
+			sourcePl := filepath.Join(todayDir, playlistFile)
+			targetPl := filepath.Join(targetTodayDir, playlistFile)
+			
+			if _, err := os.Stat(sourcePl); err == nil {
+				err = s.copyFileInternal(sourcePl, targetPl)
+				if err != nil {
+					log.Printf("⚠️ SEGMENT_MOVER: Error copying playlist %s: %v", playlistFile, err)
+				} else {
+					os.Remove(sourcePl)
+					log.Printf("✅ SEGMENT_MOVER: Moved playlist %s for camera %s", playlistFile, cameraName)
+				}
+			}
+		}
+		
+		if movedCount > 0 {
+			log.Printf("✅ SEGMENT_MOVER: Moved %d segments for camera %s on %s", movedCount, cameraName, today)
+			totalMoved += movedCount
+		}
+	}
+	
+	log.Printf("🔄 SEGMENT_MOVER: Completed - Moved %d segments total", totalMoved)
+	return nil
+}
+
+// copyFileInternal copies a file from source to destination (internal helper)
+func (s *SQLiteDB) copyFileInternal(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+	
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+	
+	// Copy file contents
+	_, err = destFile.ReadFrom(sourceFile)
+	if err != nil {
+		return err
+	}
+	
+	// Copy file permissions
+	sourceInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	
+	return os.Chmod(dst, sourceInfo.Mode())
 }

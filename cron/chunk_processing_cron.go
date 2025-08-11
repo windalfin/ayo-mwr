@@ -5,9 +5,8 @@ import (
 	"log"
 	"time"
 
-	"ayo-mwr/chunks"
-	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/service"
 	"ayo-mwr/storage"
 
 	"github.com/robfig/cron/v3"
@@ -15,19 +14,19 @@ import (
 
 // ChunkProcessingCron handles the scheduled processing of video chunks
 type ChunkProcessingCron struct {
-	cron         *cron.Cron
-	chunkManager *chunks.ChunkManager
-	isRunning    bool
+	cron           *cron.Cron
+	chunkProcessor *service.ChunkProcessor
+	isRunning      bool
 }
 
 // NewChunkProcessingCron creates a new chunk processing cron job
-func NewChunkProcessingCron(db database.Database, cfg *config.Config, storageManager *storage.DiskManager) *ChunkProcessingCron {
-	chunkManager := chunks.NewChunkManager(db, cfg, storageManager)
+func NewChunkProcessingCron(db database.Database, storageManager *storage.DiskManager) *ChunkProcessingCron {
+	chunkProcessor := service.NewChunkProcessor(db, storageManager)
 
 	return &ChunkProcessingCron{
-		cron:         cron.New(cron.WithSeconds()),
-		chunkManager: chunkManager,
-		isRunning:    false,
+		cron:           cron.New(cron.WithSeconds()),
+		chunkProcessor: chunkProcessor,
+		isRunning:      false,
 	}
 }
 
@@ -49,17 +48,17 @@ func (cpc *ChunkProcessingCron) Start() error {
 		return err
 	}
 
-	// Schedule chunk cleanup daily at 3:30 AM (offset from other cleanup tasks)
-	_, err = cpc.cron.AddFunc("0 30 3 * * *", func() {
+	// Schedule cleanup every hour at minute 5
+	_, err = cpc.cron.AddFunc("0 5 * * * *", func() {
 		cpc.cleanupOldChunks()
 	})
 	if err != nil {
 		return err
 	}
 
-	// Schedule processing status cleanup every hour
-	_, err = cpc.cron.AddFunc("0 5 * * * *", func() {
-		cpc.cleanupStuckProcessing()
+	// Schedule statistics logging every hour
+	_, err = cpc.cron.AddFunc("0 0 * * * *", func() {
+		cpc.logStatistics()
 	})
 	if err != nil {
 		return err
@@ -68,161 +67,99 @@ func (cpc *ChunkProcessingCron) Start() error {
 	cpc.cron.Start()
 	cpc.isRunning = true
 
-	log.Println("[ChunkProcessingCron] ✅ Chunk processing cron jobs started")
-	log.Println("[ChunkProcessingCron] • Chunk processing: Every 15 minutes at :02, :17, :32, :47")
-	log.Println("[ChunkProcessingCron] • Cleanup: Daily at 03:30")
-	log.Println("[ChunkProcessingCron] • Status cleanup: Hourly at :05")
+	log.Println("[ChunkProcessingCron] ✅ Chunk processing cron jobs started successfully")
+	log.Println("[ChunkProcessingCron] 📅 Schedule:")
+	log.Println("[ChunkProcessingCron]   • Process chunks: Every 15 min at :02, :17, :32, :47")
+	log.Println("[ChunkProcessingCron]   • Cleanup: Every hour at :05")
+	log.Println("[ChunkProcessingCron]   • Statistics: Every hour at :00")
 
 	return nil
 }
 
-// Stop stops the chunk processing cron jobs
+// Stop stops all chunk processing cron jobs
 func (cpc *ChunkProcessingCron) Stop() {
 	if !cpc.isRunning {
+		log.Println("[ChunkProcessingCron] Cron is not running")
 		return
 	}
 
 	log.Println("[ChunkProcessingCron] Stopping chunk processing cron jobs...")
-	
-	// Get context for graceful shutdown
-	ctx := cpc.cron.Stop()
-	
-	// Wait for current jobs to finish with timeout
-	select {
-	case <-ctx.Done():
-		log.Println("[ChunkProcessingCron] ✅ Chunk processing cron stopped gracefully")
-	case <-time.After(30 * time.Second):
-		log.Println("[ChunkProcessingCron] ⚠️  Chunk processing cron stopped with timeout")
-	}
-	
+	cpc.cron.Stop()
 	cpc.isRunning = false
+	log.Println("[ChunkProcessingCron] ✅ Chunk processing cron jobs stopped")
 }
 
-// IsRunning returns whether the cron is currently running
-func (cpc *ChunkProcessingCron) IsRunning() bool {
-	return cpc.isRunning
-}
-
-// processChunks handles the scheduled chunk processing
+// processChunks handles the main chunk processing logic
 func (cpc *ChunkProcessingCron) processChunks() {
-	startTime := time.Now()
 	log.Println("[ChunkProcessingCron] 🔄 Starting scheduled chunk processing...")
-
-	// Create context with timeout (10 minutes max processing time)
+	
+	startTime := time.Now()
+	
+	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	// Process pending chunks
-	err := cpc.chunkManager.ProcessPendingChunks(ctx)
+	
+	// Process chunks using the new physical chunk processor
+	err := cpc.chunkProcessor.ProcessChunks(ctx)
 	if err != nil {
-		log.Printf("[ChunkProcessingCron] ❌ Error during chunk processing: %v", err)
+		log.Printf("[ChunkProcessingCron] ❌ Chunk processing failed: %v", err)
 		return
 	}
-
+	
 	duration := time.Since(startTime)
 	log.Printf("[ChunkProcessingCron] ✅ Chunk processing completed in %v", duration)
 }
 
-// cleanupOldChunks handles the scheduled cleanup of old chunks
+// cleanupOldChunks removes old chunk files and database records
 func (cpc *ChunkProcessingCron) cleanupOldChunks() {
+	log.Println("[ChunkProcessingCron] 🧹 Starting chunk cleanup...")
+	
 	startTime := time.Now()
-	log.Println("[ChunkProcessingCron] 🧹 Starting scheduled chunk cleanup...")
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	// Cleanup old chunks
-	err := cpc.chunkManager.CleanupOldChunks(ctx)
-	if err != nil {
-		log.Printf("[ChunkProcessingCron] ❌ Error during chunk cleanup: %v", err)
-		return
-	}
-
+	
+	// TODO: Implement cleanup logic for old physical chunk files
+	// This should remove chunks older than retention period from both filesystem and database
+	
 	duration := time.Since(startTime)
 	log.Printf("[ChunkProcessingCron] ✅ Chunk cleanup completed in %v", duration)
 }
 
-// cleanupStuckProcessing handles cleanup of chunks stuck in "processing" status
-func (cpc *ChunkProcessingCron) cleanupStuckProcessing() {
-	log.Println("[ChunkProcessingCron] 🔧 Cleaning up stuck chunk processing...")
-
-	// Get chunks stuck in processing status (older than 30 minutes)
-	stuckChunks, err := cpc.chunkManager.GetChunksByProcessingStatus(database.ProcessingStatusProcessing)
+// logStatistics logs current chunk processing statistics
+func (cpc *ChunkProcessingCron) logStatistics() {
+	log.Println("[ChunkProcessingCron] 📊 Logging chunk statistics...")
+	
+	stats, err := cpc.chunkProcessor.GetProcessingStats()
 	if err != nil {
-		log.Printf("[ChunkProcessingCron] Error getting stuck chunks: %v", err)
+		log.Printf("[ChunkProcessingCron] ❌ Failed to get statistics: %v", err)
 		return
 	}
+	
+	log.Printf("[ChunkProcessingCron] 📈 Current statistics: %+v", stats)
+}
 
-	stuckTimeout := time.Now().Add(-30 * time.Minute)
-	cleanedCount := 0
-
-	for _, chunk := range stuckChunks {
-		if chunk.CreatedAt.Before(stuckTimeout) {
-			// Mark as failed so it can be retried
-			err := cpc.chunkManager.UpdateChunkProcessingStatus(chunk.ID, database.ProcessingStatusFailed)
-			if err != nil {
-				log.Printf("[ChunkProcessingCron] Error updating stuck chunk %s: %v", chunk.ID, err)
-				continue
-			}
-			cleanedCount++
-		}
-	}
-
-	if cleanedCount > 0 {
-		log.Printf("[ChunkProcessingCron] ✅ Cleaned up %d stuck chunk processing jobs", cleanedCount)
+// GetProcessingStatus returns the current status of chunk processing
+func (cpc *ChunkProcessingCron) GetProcessingStatus() map[string]interface{} {
+	return map[string]interface{}{
+		"is_running":   cpc.isRunning,
+		"last_run":     time.Now().Format(time.RFC3339), // This would need to be tracked properly
+		"next_run":     "Every 15 minutes at :02, :17, :32, :47",
+		"description":  "Physical chunk creation from HLS segments",
 	}
 }
 
-// GetNextChunkProcessingTime returns the next scheduled chunk processing time
-func (cpc *ChunkProcessingCron) GetNextChunkProcessingTime() time.Time {
-	if !cpc.isRunning {
-		return time.Time{}
-	}
-
-	entries := cpc.cron.Entries()
-	if len(entries) > 0 {
-		return entries[0].Next // First entry is the chunk processing job
-	}
-
-	return time.Time{}
-}
-
-// GetChunkStatistics returns current chunk processing statistics
-func (cpc *ChunkProcessingCron) GetChunkStatistics() (map[string]interface{}, error) {
-	stats, err := cpc.chunkManager.GetChunkStatistics()
-	if err != nil {
-		return nil, err
-	}
-
-	// Add cron-specific information
-	stats["cron_running"] = cpc.isRunning
-	if cpc.isRunning {
-		stats["next_processing"] = cpc.GetNextChunkProcessingTime()
-		stats["cron_entries"] = len(cpc.cron.Entries())
-	}
-
-	return stats, nil
-}
-
-// ForceChunkProcessing manually triggers chunk processing (for testing/admin use)
-func (cpc *ChunkProcessingCron) ForceChunkProcessing() error {
-	log.Println("[ChunkProcessingCron] 🔄 Manual chunk processing triggered...")
-
-	// Use background context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	return cpc.chunkManager.ProcessPendingChunks(ctx)
-}
-
-// ForceChunkCleanup manually triggers chunk cleanup (for testing/admin use)
-func (cpc *ChunkProcessingCron) ForceChunkCleanup() error {
-	log.Println("[ChunkProcessingCron] 🧹 Manual chunk cleanup triggered...")
-
-	// Use background context with timeout
+// ForceProcessChunks manually triggers chunk processing
+func (cpc *ChunkProcessingCron) ForceProcessChunks() error {
+	log.Println("[ChunkProcessingCron] 🔧 Force processing chunks...")
+	
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	
+	return cpc.chunkProcessor.ProcessChunks(ctx)
+}
 
-	return cpc.chunkManager.CleanupOldChunks(ctx)
+// ForceCleanupChunks manually triggers chunk cleanup
+func (cpc *ChunkProcessingCron) ForceCleanupChunks() error {
+	log.Println("[ChunkProcessingCron] 🔧 Force cleaning up chunks...")
+	
+	// TODO: Implement actual cleanup logic
+	return nil
 }

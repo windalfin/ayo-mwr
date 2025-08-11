@@ -24,6 +24,7 @@ type Server struct {
 	r2Storage           *storage.R2Storage
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
+	chunkHandlers       *ChunkHandlers
 	dashboardFS         embed.FS
 
 	// Mutex untuk prevent concurrent uploads
@@ -34,6 +35,10 @@ type Server struct {
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
 	// Initialize video request handler
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
+	
+	// Initialize chunk configuration service and handlers
+	chunkConfigService := config.NewChunkConfigService(db)
+	chunkHandlers := NewChunkHandlers(chunkConfigService, db)
 
 	return &Server{
 		config:              cfg,
@@ -41,6 +46,7 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		r2Storage:           r2Storage,
 		uploadService:       uploadService,
 		videoRequestHandler: videoRequestHandler,
+		chunkHandlers:       chunkHandlers,
 		dashboardFS:         dashboardFS,
 		activeUploads:       make(map[string]bool),
 	}
@@ -177,6 +183,14 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 					   // Disk manager configuration endpoints
 			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
 			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
+
+			// Chunk processing endpoints
+			admin.GET("/chunk-config", s.chunkHandlers.GetChunkConfig)
+			admin.PUT("/chunk-config", s.chunkHandlers.UpdateChunkConfig)
+			admin.GET("/chunk-statistics", s.chunkHandlers.GetChunkStatistics)
+			admin.POST("/chunk-processing/enable", s.chunkHandlers.EnableChunkProcessing)
+			admin.POST("/chunk-processing/force", s.chunkHandlers.ForceChunkProcessing)
+			admin.POST("/chunk-cleanup/force", s.chunkHandlers.ForceChunkCleanup)
 
 			// Watermark endpoints
 			admin.POST("/force-update-watermark", s.forceUpdateWatermark)

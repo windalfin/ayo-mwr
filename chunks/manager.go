@@ -21,37 +21,32 @@ type ChunkManager struct {
 	db                 database.Database
 	config            *config.Config
 	storageManager    *storage.DiskManager
-	chunkConfig       *ChunkProcessingConfig
+	chunkConfig       *config.ChunkProcessingConfig
 	mu                sync.RWMutex
 	isProcessing      map[string]bool // Track cameras currently being processed
 	processingTimeout time.Duration
 }
 
-// ChunkProcessingConfig represents configuration for chunk processing
-type ChunkProcessingConfig struct {
-	Enabled                  bool  `json:"enabled"`                  // Whether chunk processing is enabled
-	ChunkDurationMinutes     int   `json:"chunkDurationMinutes"`     // Duration of each chunk in minutes (default: 15)
-	MinSegmentsForChunk      int   `json:"minSegmentsForChunk"`      // Minimum segments required to create a chunk
-	RetentionDays            int   `json:"retentionDays"`            // How long to keep chunks
-	ProcessingTimeoutMinutes int   `json:"processingTimeoutMinutes"` // Timeout for chunk processing
-	MaxConcurrentProcessing  int   `json:"maxConcurrentProcessing"`  // Maximum concurrent chunk processing jobs
-}
-
-// DefaultChunkConfig returns the default chunk processing configuration
-func DefaultChunkConfig() *ChunkProcessingConfig {
-	return &ChunkProcessingConfig{
-		Enabled:                  true,
-		ChunkDurationMinutes:     15,
-		MinSegmentsForChunk:      10, // At least 40 seconds of video
-		RetentionDays:            7,
-		ProcessingTimeoutMinutes: 10,
-		MaxConcurrentProcessing:  2,
-	}
-}
-
 // NewChunkManager creates a new chunk manager instance
 func NewChunkManager(db database.Database, cfg *config.Config, storageManager *storage.DiskManager) *ChunkManager {
-	chunkConfig := DefaultChunkConfig()
+	// Load chunk configuration from database with fallback to defaults
+	chunkConfigService := config.NewChunkConfigService(db)
+	chunkConfig, err := chunkConfigService.GetChunkConfig()
+	if err != nil {
+		log.Printf("[ChunkManager] Warning: Failed to load chunk config from database, using defaults: %v", err)
+		// Create a basic default config as fallback
+		chunkConfig = &config.ChunkProcessingConfig{
+			Enabled:                  true,
+			ChunkDurationMinutes:     15,
+			MinSegmentsForChunk:      10,
+			RetentionDays:            7,
+			ProcessingTimeoutMinutes: 10,
+			MaxConcurrentProcessing:  2,
+		}
+	}
+	
+	log.Printf("[ChunkManager] Initialized with config: enabled=%v, duration=%dm, retention=%dd", 
+		chunkConfig.Enabled, chunkConfig.ChunkDurationMinutes, chunkConfig.RetentionDays)
 	
 	return &ChunkManager{
 		db:                db,
@@ -466,7 +461,7 @@ func (cm *ChunkManager) GetChunkStatistics() (map[string]interface{}, error) {
 }
 
 // UpdateConfiguration updates the chunk processing configuration
-func (cm *ChunkManager) UpdateConfiguration(config *ChunkProcessingConfig) {
+func (cm *ChunkManager) UpdateConfiguration(config *config.ChunkProcessingConfig) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	

@@ -79,25 +79,35 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 			continue
 		}
 
-		// Handle path issues
-		cleanFilePath := chunk.FilePath
+		// Handle path issues - check if FilePath is already absolute or relative
+		var fullChunkPath string
 		log.Printf("[ChunkDiscovery] Raw data - Chunk %s: disk.Path='%s', chunk.FilePath='%s'",
 			chunk.ID, disk.Path, chunk.FilePath)
 
-		// Remove any form of videos/ prefix to get clean relative path
-		if strings.HasPrefix(cleanFilePath, "videos/") {
-			cleanFilePath = strings.TrimPrefix(cleanFilePath, "videos/")
-			log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed 'videos/' prefix, now='%s'",
-				chunk.ID, cleanFilePath)
-		} else if strings.HasPrefix(cleanFilePath, "./videos/") {
-			cleanFilePath = strings.TrimPrefix(cleanFilePath, "./videos/")
-			log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed './videos/' prefix, now='%s'",
-				chunk.ID, cleanFilePath)
-		}
+		if filepath.IsAbs(chunk.FilePath) {
+			// FilePath is already absolute, use it directly
+			fullChunkPath = chunk.FilePath
+			log.Printf("[ChunkDiscovery] Using absolute FilePath directly for chunk %s: '%s'",
+				chunk.ID, fullChunkPath)
+		} else {
+			// FilePath is relative, join with disk path
+			cleanFilePath := chunk.FilePath
+			
+			// Remove any form of videos/ prefix to get clean relative path
+			if strings.HasPrefix(cleanFilePath, "videos/") {
+				cleanFilePath = strings.TrimPrefix(cleanFilePath, "videos/")
+				log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed 'videos/' prefix, now='%s'",
+					chunk.ID, cleanFilePath)
+			} else if strings.HasPrefix(cleanFilePath, "./videos/") {
+				cleanFilePath = strings.TrimPrefix(cleanFilePath, "./videos/")
+				log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed './videos/' prefix, now='%s'",
+					chunk.ID, cleanFilePath)
+			}
 
-		fullChunkPath := filepath.Join(disk.Path, cleanFilePath)
-		log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'",
-			chunk.ID, fullChunkPath)
+			fullChunkPath = filepath.Join(disk.Path, cleanFilePath)
+			log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'",
+				chunk.ID, fullChunkPath)
+		}
 
 		source := SegmentSource{
 			ID:          chunk.ID,

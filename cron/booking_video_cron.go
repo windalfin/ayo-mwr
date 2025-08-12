@@ -44,6 +44,27 @@ func logProcessingStatus(cronID int, action string, maxConcurrent int) {
 
 // Semua helper function telah dipindahkan ke BookingVideoService
 
+// Helper functions for hybrid discovery integration
+func countChunks(segmentSources []service.SegmentSource) int {
+	count := 0
+	for _, source := range segmentSources {
+		if source.Type == "chunk" {
+			count++
+		}
+	}
+	return count
+}
+
+func countSegments(segmentSources []service.SegmentSource) int {
+	count := 0
+	for _, source := range segmentSources {
+		if source.Type == "segment" {
+			count++
+		}
+	}
+	return count
+}
+
 // =================== CONCURRENCY CONTROL SYSTEM ===================
 // Sistem ini memastikan hanya maksimal 2 proses booking yang berjalan bersamaan
 // bahkan jika ada multiple cron jobs yang dipicu:
@@ -667,23 +688,48 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				// Convert orderDetailID to string
 				orderDetailIDStr := strconv.Itoa(int(orderDetailID))
 
-				// Process video using optimized hybrid processor with retry logic
-				log.Printf("processBookings : Processing video with hybrid processor for %s", orderDetailIDStr)
+				// Use hybrid processor for optimized segment discovery
+				log.Printf("processBookings : Using hybrid discovery for %s", orderDetailIDStr)
+				
+				// Get the optimized segment sources (chunks + segments)
+				segmentSources, err := hybridProcessor.GetSegmentSources(camera.Name, startTime, endTime)
+				if err != nil {
+					log.Printf("processBookings : Error getting segment sources for booking %s on camera %s: %v", bookingID, camera.Name, err)
+					continue
+				}
+				
+				if len(segmentSources) == 0 {
+					log.Printf("processBookings : No video segments found for booking %s on camera %s", bookingID, camera.Name)
+					continue
+				}
+				
+				// Extract file paths from segment sources
+				var segments []string
+				for _, source := range segmentSources {
+					segments = append(segments, source.FilePath)
+				}
+				
+				log.Printf("processBookings : Found %d video sources (%d chunks, %d segments) for booking %s on camera %s", 
+					len(segments), countChunks(segmentSources), countSegments(segmentSources), bookingID, camera.Name)
+
+				// Process video segments using original service with retry logic
+				log.Printf("processBookings : Processing video with original pipeline for %s", orderDetailIDStr)
 
 				var uniqueID string
 				err = cleanRetryWithBackoff(func() error {
 					var err error
-					uniqueID, err = hybridProcessor.ProcessVideoSegmentsOptimized(
+					uniqueID, err = bookingService.ProcessVideoSegments(
 						camera,
 						bookingID,
 						orderDetailIDStr,
+						segments,
 						startTime,
 						endTime,
 						bookingData.RawJSON, // rawJSON from database
 						videoType,
 					)
 					return err
-				}, 3, fmt.Sprintf("Optimized Video Processing for %s-%s", bookingID, camera.Name))
+				}, 3, fmt.Sprintf("Video Processing for %s-%s", bookingID, camera.Name))
 
 				if err != nil {
 					log.Printf("processBookings : Error processing video with hybrid processor for booking %s on camera %s after retries: %v", bookingID, camera.Name, err)

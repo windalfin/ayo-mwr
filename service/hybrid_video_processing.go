@@ -66,6 +66,38 @@ func (hvp *HybridVideoProcessor) CheckVideoAvailability(cameraName string, start
 	return hasContent, nil
 }
 
+// GetSegmentSources gets optimized segment sources (chunks + segments) for the specified time range
+// This is used for Option 1: hybrid discovery with original processing pipeline
+func (hvp *HybridVideoProcessor) GetSegmentSources(cameraName string, startTime, endTime time.Time) ([]SegmentSource, error) {
+	log.Printf("[HybridProcessor] 🔍 Getting segment sources for camera %s from %s to %s", 
+		cameraName, startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+
+	// Use chunk discovery to find optimal segment sources
+	segmentSources, err := hvp.chunkDiscovery.FindOptimalSegmentSources(cameraName, startTime, endTime)
+	if err != nil {
+		log.Printf("[HybridProcessor] ❌ Error getting segment sources: %v", err)
+		return nil, err
+	}
+
+	if len(segmentSources) > 0 {
+		chunkCount := 0
+		segmentCount := 0
+		for _, source := range segmentSources {
+			if source.Type == "chunk" {
+				chunkCount++
+			} else {
+				segmentCount++
+			}
+		}
+		log.Printf("[HybridProcessor] ✅ Found %d segment sources: %d chunks + %d segments", 
+			len(segmentSources), chunkCount, segmentCount)
+	} else {
+		log.Printf("[HybridProcessor] ❌ No segment sources found for the specified time range")
+	}
+
+	return segmentSources, nil
+}
+
 // ProcessVideoSegmentsOptimized is the optimized version that uses chunks + segments
 // This replaces the original ProcessVideoSegments method for 60-70% performance improvement
 func (hvp *HybridVideoProcessor) ProcessVideoSegmentsOptimized(

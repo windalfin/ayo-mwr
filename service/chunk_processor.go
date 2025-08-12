@@ -221,6 +221,8 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 func (cp *ChunkProcessor) scanSegmentsInTimeRange(hlsPath string, startTime, endTime time.Time) ([]SegmentFile, error) {
 	// Pattern to match HLS segment files: segment_20250811_234500.ts
 	segmentPattern := regexp.MustCompile(`^segment_(\d{8})_(\d{6})\.ts$`)
+	// Additional pattern for numeric segments: HHMMSS.ts (e.g., 112003.ts)
+	numericPattern := regexp.MustCompile(`^(\d{6})\.ts$`)
 	
 	var segments []SegmentFile
 
@@ -230,21 +232,48 @@ func (cp *ChunkProcessor) scanSegmentsInTimeRange(hlsPath string, startTime, end
 		return nil, fmt.Errorf("failed to read directory %s: %v", hlsPath, err)
 	}
 
+	log.Printf("[ChunkProcessor] Scanning %d files in %s for segments between %s and %s", 
+		len(files), hlsPath, startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
 
-		// Check if this is a segment file
+		var segmentTime time.Time
+		var parseErr error
+
+		// Try to match segment_YYYYMMDD_HHMMSS.ts pattern first
 		matches := segmentPattern.FindStringSubmatch(file.Name())
-		if len(matches) != 3 {
-			continue // Not a segment file
+		if len(matches) == 3 {
+			// Parse timestamp from filename
+			segmentTime, parseErr = parseSegmentTimestamp(matches[1], matches[2])
+		} else {
+			// Try numeric pattern HHMMSS.ts
+			numMatches := numericPattern.FindStringSubmatch(file.Name())
+			if len(numMatches) == 2 {
+				// Parse HHMMSS format - assume it's for today's date
+				hourStr := numMatches[1][:2]
+				minuteStr := numMatches[1][2:4]
+				secondStr := numMatches[1][4:6]
+				
+				hour, _ := strconv.Atoi(hourStr)
+				minute, _ := strconv.Atoi(minuteStr)
+				second, _ := strconv.Atoi(secondStr)
+				
+				// Use the date from startTime for these numeric segments
+				segmentTime = time.Date(startTime.Year(), startTime.Month(), startTime.Day(),
+					hour, minute, second, 0, startTime.Location())
+				
+				log.Printf("[ChunkProcessor] Parsed numeric segment %s as %s", 
+					file.Name(), segmentTime.Format("15:04:05"))
+			} else {
+				continue // Not a recognized segment file
+			}
 		}
 
-		// Parse timestamp from filename
-		segmentTime, err := parseSegmentTimestamp(matches[1], matches[2])
-		if err != nil {
-			log.Printf("[ChunkProcessor] Warning: Could not parse timestamp for %s: %v", file.Name(), err)
+		if parseErr != nil {
+			log.Printf("[ChunkProcessor] Warning: Could not parse timestamp for %s: %v", file.Name(), parseErr)
 			continue
 		}
 
@@ -268,12 +297,15 @@ func (cp *ChunkProcessor) scanSegmentsInTimeRange(hlsPath string, startTime, end
 		}
 
 		segments = append(segments, segment)
+		log.Printf("[ChunkProcessor] Found segment: %s at %s", file.Name(), segmentTime.Format("15:04:05"))
 	}
 
 	// Sort segments by timestamp
 	sort.Slice(segments, func(i, j int) bool {
 		return segments[i].Timestamp.Before(segments[j].Timestamp)
 	})
+
+	log.Printf("[ChunkProcessor] Found %d segments in time range", len(segments))
 
 	return segments, nil
 }
@@ -635,7 +667,7 @@ func parseSegmentTimestamp(dateStr, timeStr string) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	return time.Date(year, time.Month(month), day, hour, minute, second, 0, time.UTC), nil
+	return time.Date(year, time.Month(month), day, hour, minute, second, 0, time.Local), nil
 }
 
 // GetProcessingStats returns statistics about chunk processing

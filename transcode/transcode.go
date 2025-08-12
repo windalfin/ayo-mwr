@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,26 +132,39 @@ func getPresetNames(presets []QualityPreset) []string {
 }
 
 // parseSegmentTimestamp extracts timestamp from HLS segment filename
-// Format: segment_YYYYMMDD_HHMMSS.ts
+// Supports formats: segment_YYYYMMDD_HHMMSS.ts and HHMMSS.ts
 func parseSegmentTimestamp(filename string) (time.Time, error) {
 	// Remove extension
 	nameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
 	
 	// Check if it starts with segment_
-	if !strings.HasPrefix(nameWithoutExt, "segment_") {
-		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
+	if strings.HasPrefix(nameWithoutExt, "segment_") {
+		// Format: segment_YYYYMMDD_HHMMSS
+		// Remove prefix
+		timestampStr := strings.TrimPrefix(nameWithoutExt, "segment_")
+		
+		// Parse timestamp (format: YYYYMMDD_HHMMSS)
+		timestamp, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse timestamp from %s: %v", filename, err)
+		}
+		
+		return timestamp, nil
+	} else if len(nameWithoutExt) == 6 {
+		// Try numeric format: HHMMSS (e.g., 112003.ts)
+		hour, err1 := strconv.Atoi(nameWithoutExt[:2])
+		minute, err2 := strconv.Atoi(nameWithoutExt[2:4])
+		second, err3 := strconv.Atoi(nameWithoutExt[4:6])
+		
+		if err1 == nil && err2 == nil && err3 == nil && hour < 24 && minute < 60 && second < 60 {
+			// For numeric segments without date, use today's date as default
+			now := time.Now()
+			return time.Date(now.Year(), now.Month(), now.Day(),
+				hour, minute, second, 0, time.Local), nil
+		}
 	}
 	
-	// Remove prefix
-	timestampStr := strings.TrimPrefix(nameWithoutExt, "segment_")
-	
-	// Parse timestamp (format: YYYYMMDD_HHMMSS)
-	timestamp, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse timestamp from %s: %v", filename, err)
-	}
-	
-	return timestamp, nil
+	return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
 }
 
 // findSegmentsInTimeRange finds HLS segments within the specified time range
@@ -174,9 +188,9 @@ func findSegmentsInTimeRange(hlsDir string, startTime, endTime time.Time) ([]str
 			continue
 		}
 		
-		// Only process .ts files with segment naming pattern
-		if filepath.Ext(entry.Name()) == ".ts" && strings.HasPrefix(entry.Name(), "segment_") {
-			// Parse timestamp from filename
+		// Only process .ts files
+		if filepath.Ext(entry.Name()) == ".ts" {
+			// Parse timestamp from filename (supports both segment_ and numeric formats)
 			timestamp, err := parseSegmentTimestamp(entry.Name())
 			if err != nil {
 				log.Printf("[1080P-OPT] WARNING: Failed to parse timestamp from %s: %v", entry.Name(), err)

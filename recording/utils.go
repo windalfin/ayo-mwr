@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,19 +75,34 @@ func FindSegmentsInRange(inputPath string, startTime, endTime time.Time) ([]stri
 		var ts time.Time
 
 		if fileExt == ".ts" {
-			// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
-			if !strings.HasPrefix(base, "segment_") {
-				continue // skip non-segment files
-			}
+			// Try different .ts filename formats
+			if strings.HasPrefix(base, "segment_") {
+				// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
+				// Remove prefix and suffix
+				timeStr := strings.TrimPrefix(base, "segment_")
+				timeStr = strings.TrimSuffix(timeStr, fileExt)
 
-			// Remove prefix and suffix
-			timeStr := strings.TrimPrefix(base, "segment_")
-			timeStr = strings.TrimSuffix(timeStr, fileExt)
-
-			// Parse timestamp
-			ts, err = time.ParseInLocation("20060102_150405", timeStr, time.Local)
-			if err != nil {
-				continue // skip invalid timestamp
+				// Parse timestamp
+				ts, err = time.ParseInLocation("20060102_150405", timeStr, time.Local)
+				if err != nil {
+					continue // skip invalid timestamp
+				}
+			} else if len(base) == 10 && base[6:] == ".ts" {
+				// Try numeric format: HHMMSS.ts (e.g., 112003.ts)
+				timeStr := base[:6]
+				hour, err1 := strconv.Atoi(timeStr[:2])
+				minute, err2 := strconv.Atoi(timeStr[2:4])
+				second, err3 := strconv.Atoi(timeStr[4:6])
+				
+				if err1 == nil && err2 == nil && err3 == nil && hour < 24 && minute < 60 && second < 60 {
+					// Use the date from startTime for these numeric segments
+					ts = time.Date(startTime.Year(), startTime.Month(), startTime.Day(),
+						hour, minute, second, 0, startTime.Location())
+				} else {
+					continue // skip invalid numeric format
+				}
+			} else {
+				continue // skip unrecognized .ts files
 			}
 		} else {
 			// Parse MP4/other formats: camera_name_YYYYMMDD_HHMMSS.ext
@@ -211,16 +227,32 @@ func parseTimestampFromFilename(filename string) (time.Time, error) {
 	}
 
 	if fileExt == ".ts" {
-		// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
-		if !strings.HasPrefix(filename, "segment_") {
-			return time.Time{}, fmt.Errorf("invalid .ts filename format: %s", filename)
+		// Try different .ts filename formats
+		if strings.HasPrefix(filename, "segment_") {
+			// Parse .ts filename format: segment_YYYYMMDD_HHMMSS.ts
+			// Remove prefix and suffix
+			timeStr := strings.TrimPrefix(filename, "segment_")
+			timeStr = strings.TrimSuffix(timeStr, fileExt)
+
+			return time.ParseInLocation("20060102_150405", timeStr, time.Local)
+		} else if len(filename) == 10 && filename[6:] == ".ts" {
+			// Try numeric format: HHMMSS.ts (e.g., 112003.ts)
+			timeStr := filename[:6]
+			hour, err1 := strconv.Atoi(timeStr[:2])
+			minute, err2 := strconv.Atoi(timeStr[2:4])
+			second, err3 := strconv.Atoi(timeStr[4:6])
+			
+			if err1 == nil && err2 == nil && err3 == nil && hour < 24 && minute < 60 && second < 60 {
+				// For numeric segments without date, use today's date as default
+				now := time.Now()
+				return time.Date(now.Year(), now.Month(), now.Day(),
+					hour, minute, second, 0, time.Local), nil
+			} else {
+				return time.Time{}, fmt.Errorf("invalid numeric .ts format: %s", filename)
+			}
+		} else {
+			return time.Time{}, fmt.Errorf("unrecognized .ts filename format: %s", filename)
 		}
-
-		// Remove prefix and suffix
-		timeStr := strings.TrimPrefix(filename, "segment_")
-		timeStr = strings.TrimSuffix(timeStr, fileExt)
-
-		return time.ParseInLocation("20060102_150405", timeStr, time.Local)
 	} else {
 		// Parse MP4/other formats: camera_name_YYYYMMDD_HHMMSS.ext
 		parts := strings.Split(filename, "_")

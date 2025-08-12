@@ -398,12 +398,24 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 
 // applyWatermarkIfAvailable applies watermark to the processed video
 func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID string, camera config.CameraConfig, tmpDir string) (string, error) {
-	log.Printf("[HybridProcessor] 🎨 Applying watermark to video (camera: %s, resolution: %s)", camera.Name, camera.Resolution)
+	log.Printf("[HybridProcessor] 🎨 Starting watermark application for video: %s (camera: %s, resolution: %s)", 
+		filepath.Base(inputPath), camera.Name, camera.Resolution)
+	
+	// Check if input file exists and has content
+	if info, err := os.Stat(inputPath); err != nil {
+		log.Printf("[HybridProcessor] ❌ Input video file doesn't exist: %s", inputPath)
+		return inputPath, nil
+	} else {
+		log.Printf("[HybridProcessor] Input video size: %.2f MB", float64(info.Size())/(1024*1024))
+	}
 	
 	// Get venue code from database configuration
 	venueCode := ""
 	if venueConfig, err := hvp.db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
 		venueCode = venueConfig.Value
+		log.Printf("[HybridProcessor] Found venue code: %s", venueCode)
+	} else {
+		log.Printf("[HybridProcessor] ❌ Failed to get venue code: %v", err)
 	}
 	
 	if venueCode == "" {
@@ -412,9 +424,23 @@ func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID s
 	}
 	
 	// Get watermark file path using the recording package function
+	log.Printf("[HybridProcessor] Getting watermark for venue: %s", venueCode)
 	watermarkPath, err := recording.GetWatermark(venueCode)
 	if err != nil {
-		log.Printf("[HybridProcessor] ⚠️ Failed to get watermark: %v, continuing without watermark", err)
+		log.Printf("[HybridProcessor] ❌ Failed to get watermark: %v, continuing without watermark", err)
+		return inputPath, nil
+	}
+	
+	if watermarkPath == "" {
+		log.Printf("[HybridProcessor] ⚠️ Empty watermark path returned, skipping watermark")
+		return inputPath, nil
+	}
+	
+	log.Printf("[HybridProcessor] Watermark path: %s", watermarkPath)
+	
+	// Check if watermark file exists
+	if _, err := os.Stat(watermarkPath); err != nil {
+		log.Printf("[HybridProcessor] ❌ Watermark file doesn't exist: %s (error: %v)", watermarkPath, err)
 		return inputPath, nil
 	}
 	
@@ -423,19 +449,32 @@ func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID s
 	log.Printf("[HybridProcessor] Watermark settings - Position: %d, Margin: %d, Opacity: %.2f", position, margin, opacity)
 	
 	// Create output path for watermarked video
-	watermarkedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_watermarked.ts", uniqueID))
+	watermarkedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_watermarked.mp4", uniqueID))
+	log.Printf("[HybridProcessor] Watermarked output path: %s", watermarkedPath)
 	
 	// Apply watermark using the recording package function
+	log.Printf("[HybridProcessor] Calling AddWatermarkWithPosition...")
 	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, watermarkedPath, position, margin, opacity, camera.Resolution)
 	if err != nil {
-		log.Printf("[HybridProcessor] ❌ Failed to apply watermark: %v, using original video", err)
+		log.Printf("[HybridProcessor] ❌ AddWatermarkWithPosition failed: %v, using original video", err)
 		return inputPath, nil
 	}
 	
-	log.Printf("[HybridProcessor] ✅ Watermark applied successfully")
+	// Verify watermarked file was created and has content
+	if info, err := os.Stat(watermarkedPath); err != nil {
+		log.Printf("[HybridProcessor] ❌ Watermarked file was not created: %s (error: %v)", watermarkedPath, err)
+		return inputPath, nil
+	} else if info.Size() == 0 {
+		log.Printf("[HybridProcessor] ❌ Watermarked file is empty: %s", watermarkedPath)
+		return inputPath, nil
+	} else {
+		log.Printf("[HybridProcessor] ✅ Watermark applied successfully! Output: %s (%.2f MB)", 
+			filepath.Base(watermarkedPath), float64(info.Size())/(1024*1024))
+	}
 	
 	// Clean up the original file to save space
 	if inputPath != watermarkedPath {
+		log.Printf("[HybridProcessor] Cleaning up original file: %s", filepath.Base(inputPath))
 		os.Remove(inputPath)
 	}
 	

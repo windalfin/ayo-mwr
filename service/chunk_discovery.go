@@ -71,10 +71,21 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 
 	var sources []SegmentSource
 	for _, chunk := range chunkInfos {
+		// Get full file path by combining disk path with chunk path
+		disk, err := cds.db.GetStorageDisk(chunk.StorageDiskID)
+		if err != nil {
+			log.Printf("[ChunkDiscovery] Warning: Could not get disk %s for chunk %s: %v", chunk.StorageDiskID, chunk.ID, err)
+			continue
+		}
+
+		fullChunkPath := filepath.Join(disk.Path, chunk.FilePath)
+		log.Printf("[ChunkDiscovery] Chunk %s: disk.Path=%s, chunk.FilePath=%s, fullPath=%s", 
+			chunk.ID, disk.Path, chunk.FilePath, fullChunkPath)
+
 		source := SegmentSource{
 			ID:          chunk.ID,
 			Type:        "chunk",
-			FilePath:    chunk.FilePath,
+			FilePath:    fullChunkPath,
 			StartTime:   chunk.StartTime,
 			EndTime:     chunk.EndTime,
 			Duration:    chunk.EndTime.Sub(chunk.StartTime),

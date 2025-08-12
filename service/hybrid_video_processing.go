@@ -245,26 +245,39 @@ func (hvp *HybridVideoProcessor) processMultipleSources(sources []SegmentSource,
 	defer os.Remove(concatListPath)
 
 	// Process each source and add to concat list
+	log.Printf("[HybridProcessor] Processing %d sources:", len(sources))
 	for i, source := range sources {
+		log.Printf("[HybridProcessor] Source %d: Type=%s, ID=%s, FilePath=%s", i, source.Type, source.ID, source.FilePath)
 		var sourcePath string
 		
 		if source.Type == "chunk" {
 			// Extract relevant portion from chunk
-			sourcePath, err = hvp.extractFromChunk(source, startTime, endTime, uniqueID, i, tmpDir)
+			var extractErr error
+			sourcePath, extractErr = hvp.extractFromChunk(source, startTime, endTime, uniqueID, i, tmpDir)
+			if extractErr != nil {
+				log.Printf("[HybridProcessor] Warning: Error processing chunk source %s: %v", source.ID, extractErr)
+				continue
+			}
 		} else {
 			// Use segment directly (already in correct format)
 			sourcePath = source.FilePath
 		}
-		
-		if err != nil {
-			log.Printf("[HybridProcessor] Warning: Error processing source %s: %v", source.ID, err)
-			continue
-		}
 
 		// Add to concat list
-		fmt.Fprintf(concatFile, "file '%s'\n", strings.ReplaceAll(sourcePath, "'", "'\\''"))
+		escapedPath := strings.ReplaceAll(sourcePath, "'", "'\\''")
+		fmt.Fprintf(concatFile, "file '%s'\n", escapedPath)
+		log.Printf("[HybridProcessor] Added to concat list: %s", escapedPath)
 	}
 	concatFile.Close()
+
+	// Check if we have any files to concatenate
+	fileInfo, err := os.Stat(concatListPath)
+	if err != nil {
+		return "", fmt.Errorf("error checking concat list: %v", err)
+	}
+	if fileInfo.Size() == 0 {
+		return "", fmt.Errorf("no valid sources found for concatenation - all sources failed to process")
+	}
 
 	// Concatenate all sources
 	concatenatedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_concatenated.ts", uniqueID))

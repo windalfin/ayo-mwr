@@ -326,6 +326,14 @@ func StartBookingVideoCron(cfg *config.Config) {
 
 		// Initialize hybrid video processor for optimized chunk-based processing
 		hybridProcessor := service.NewHybridVideoProcessor(db, cfg, storageManager)
+		
+		// Set AYO client for proper watermark authentication
+		if ayoClient, err := api.NewAyoIndoClient(); err == nil {
+			hybridProcessor.SetAyoClient(ayoClient)
+			log.Printf("📊 BOOKING-CRON: Hybrid processor configured with authenticated AYO client")
+		} else {
+			log.Printf("⚠️ BOOKING-CRON: Failed to create AYO client, hybrid processor will use legacy watermark method: %v", err)
+		}
 
 		// Initialize semaphore dengan konfigurasi dinamis
 		updateBookingConcurrency(cfg.BookingWorkerConcurrency)

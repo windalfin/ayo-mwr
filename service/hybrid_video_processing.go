@@ -22,6 +22,7 @@ type HybridVideoProcessor struct {
 	config           *config.Config
 	storageManager   *storage.DiskManager
 	chunkDiscovery   *ChunkDiscoveryService
+	ayoClient        interface{} // Will be *api.AyoIndoClient but we avoid import cycle
 }
 
 // NewHybridVideoProcessor creates a new hybrid video processor
@@ -31,7 +32,13 @@ func NewHybridVideoProcessor(db database.Database, cfg *config.Config, storageMa
 		config:         cfg,
 		storageManager: storageManager,
 		chunkDiscovery: NewChunkDiscoveryService(db, storageManager),
+		ayoClient:      nil, // Will be set by SetAyoClient
 	}
+}
+
+// SetAyoClient sets the AYO client for watermark operations (avoids import cycle)
+func (hvp *HybridVideoProcessor) SetAyoClient(client interface{}) {
+	hvp.ayoClient = client
 }
 
 // CheckVideoAvailability checks if video content is available for the specified time range
@@ -423,9 +430,28 @@ func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID s
 		return inputPath, nil
 	}
 	
-	// Get watermark file path using the recording package function
-	log.Printf("[HybridProcessor] Getting watermark for venue: %s", venueCode)
-	watermarkPath, err := recording.GetWatermark(venueCode)
+	// Get watermark using AYO client if available, fallback to legacy method
+	var watermarkPath string
+	var err error
+	
+	if hvp.ayoClient != nil {
+		log.Printf("[HybridProcessor] Getting watermark using AYO client for resolution: %s", camera.Resolution)
+		// Use reflection to call GetWatermark method on the interface
+		if client, ok := hvp.ayoClient.(interface{ GetWatermark(string) (string, error) }); ok {
+			resolution := camera.Resolution
+			if resolution == "" {
+				resolution = "1080"
+			}
+			watermarkPath, err = client.GetWatermark(resolution)
+		} else {
+			log.Printf("[HybridProcessor] ⚠️ AYO client doesn't support GetWatermark method, using legacy method")
+			watermarkPath, err = recording.GetWatermark(venueCode)
+		}
+	} else {
+		log.Printf("[HybridProcessor] Getting watermark using legacy method for venue: %s", venueCode)
+		watermarkPath, err = recording.GetWatermark(venueCode)
+	}
+	
 	if err != nil {
 		log.Printf("[HybridProcessor] ❌ Failed to get watermark: %v, continuing without watermark", err)
 		return inputPath, nil

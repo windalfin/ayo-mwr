@@ -86,7 +86,7 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 
 		log.Printf("[ChunkProcessor] Processing %s on disk %s...", camera, activeDisk.Path)
 		
-		chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, activeDisk.ID)
+		chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, activeDisk.ID, absActiveDiskPath)
 		if err != nil {
 			log.Printf("[ChunkProcessor] Error processing camera %s: %v", camera, err)
 			continue
@@ -107,7 +107,7 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 }
 
 // processCameraChunks processes segments for a specific camera and creates physical chunks
-func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, hlsPath, chunksPath, diskID string) (int, error) {
+func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, hlsPath, chunksPath, diskID, diskPath string) (int, error) {
 	// Get the timestamp of the last processed segment from database
 	lastProcessedTime, err := cp.getLastProcessedSegmentTime(cameraName)
 	if err != nil {
@@ -184,14 +184,14 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 	}
 
 	// Create physical chunk file
-	chunkPath, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath)
+	chunkPath, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath, diskPath)
 	if err != nil {
 		log.Printf("[ChunkProcessor] %s: Failed to create physical chunk: %v", cameraName, err)
 		return 0, err
 	}
 
 	// Record chunk in database
-	err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID)
+	err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID, diskPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			log.Printf("[ChunkProcessor] %s: Chunk %s already exists in database", cameraName, chunkID)
@@ -436,7 +436,7 @@ func (cp *ChunkProcessor) roundDownToChunkBoundary(t time.Time, chunkDuration ti
 }
 
 // createPhysicalChunk creates an actual TS file from segments
-func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string) (string, error) {
+func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string, diskPath string) (string, error) {
 	// Generate chunk filename
 	chunkFilename := fmt.Sprintf("%s_%s_chunk.ts", cameraName, group.StartTime.Format("20060102_1504"))
 	chunkPath := filepath.Join(chunksPath, chunkFilename)
@@ -540,7 +540,7 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 }
 
 // recordChunkInDatabase records the physical chunk in the database
-func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, group ChunkGroup, diskID string) error {
+func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, group ChunkGroup, diskID, diskPath string) error {
 	// Get file info
 	chunkInfo, err := os.Stat(chunkPath)
 	if err != nil {
@@ -548,7 +548,10 @@ func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, gr
 	}
 
 	chunkID := fmt.Sprintf("%s_%s_chunk", cameraName, group.StartTime.Format("20060102_1504"))
-	relativePath := strings.TrimPrefix(chunkPath, filepath.Dir(filepath.Dir(filepath.Dir(chunkPath)))+"/") // Remove disk path prefix
+	// Calculate relative path by removing the disk path prefix
+	relativePath := strings.TrimPrefix(chunkPath, diskPath+"/")
+	log.Printf("[ChunkProcessor] Chunk path calculation: chunkPath=%s, diskPath=%s, relativePath=%s", 
+		chunkPath, diskPath, relativePath)
 	
 	duration := len(group.Segments) * 4 // Each segment is 4 seconds
 	

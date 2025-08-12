@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ayo-mwr/database"
@@ -78,9 +79,13 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 			continue
 		}
 
+		// Simple path construction with detailed debugging
+		log.Printf("[ChunkDiscovery] Raw data - Chunk %s: disk.Path='%s', chunk.FilePath='%s'", 
+			chunk.ID, disk.Path, chunk.FilePath)
+		
 		fullChunkPath := filepath.Join(disk.Path, chunk.FilePath)
-		log.Printf("[ChunkDiscovery] Chunk %s: disk.Path=%s, chunk.FilePath=%s, fullPath=%s", 
-			chunk.ID, disk.Path, chunk.FilePath, fullChunkPath)
+		log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'", 
+			chunk.ID, fullChunkPath)
 
 		source := SegmentSource{
 			ID:          chunk.ID,

@@ -371,4 +371,4 @@ func (hvp *HybridVideoProcessor) GetProcessingStats(cameraName string, startTime
 	return hvp.chunkDiscovery.GetSegmentDiscoveryStats(cameraName, startTime, endTime)
 }
 
-// Note: sanitizeID function is already defined in booking_video.go
+// Note: sanitizeID function is defined in booking_video.go

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"ayo-mwr/config"
 	"ayo-mwr/database"
 	"ayo-mwr/offline"
-	"ayo-mwr/recording"
 	"ayo-mwr/service"
 	"ayo-mwr/storage"
 
@@ -302,6 +300,12 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Initialize booking video service
 		bookingVideoService := service.NewBookingVideoService(db, ayoClient, r2Client, cfg)
 
+		// Initialize storage manager for hybrid processing
+		storageManager := storage.NewDiskManager(db)
+
+		// Initialize hybrid video processor for optimized chunk-based processing
+		hybridProcessor := service.NewHybridVideoProcessor(db, cfg, storageManager)
+
 		// Initialize semaphore dengan konfigurasi dinamis
 		updateBookingConcurrency(cfg.BookingWorkerConcurrency)
 		log.Printf("📊 BOOKING-CRON: Sistem antrian dimulai - maksimal %d proses booking bersamaan", cfg.BookingWorkerConcurrency)
@@ -310,7 +314,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		time.Sleep(10 * time.Second)
 
 		// Run immediately once at startup
-		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
+		processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, hybridProcessor)
 
 		// Start the booking video cron
 		schedule := cron.New()
@@ -318,7 +322,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 		// Schedule the task every minute for testing
 		// In production, you'd use a more reasonable interval like "@every 30m"
 		_, err = schedule.AddFunc("@every 2m", func() {
-			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService)
+			processBookings(cfg, db, ayoClient, r2Client, bookingVideoService, queueManager, uploadService, hybridProcessor)
 		})
 		if err != nil {
 			log.Fatalf("Error scheduling booking video cron: %v", err)
@@ -333,7 +337,7 @@ func StartBookingVideoCron(cfg *config.Config) {
 }
 
 // processBookings handles fetching bookings from database and processing them
-func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService) {
+func processBookings(cfg *config.Config, db database.Database, ayoClient *api.AyoIndoClient, r2Client *storage.R2Storage, bookingService *service.BookingVideoService, queueManager *offline.QueueManager, uploadService *service.UploadService, hybridProcessor *service.HybridVideoProcessor) {
 	// Reload configuration from database before processing
 	// This ensures we have the latest venue code and secret key
 	if err := ayoClient.ReloadConfigFromDatabase(); err != nil {
@@ -645,60 +649,63 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				}
 
 				log.Printf("processBookings : Checking camera %s for booking %s", camera.Name, bookingID)
-				BaseDir := filepath.Join(cfg.StoragePath, "recordings", camera.Name)
-				// Find video segments directory for this camera
-				videoDirectory := filepath.Join(BaseDir, "hls")
 
-				// Check if directory exists
-				if _, err := os.Stat(videoDirectory); os.IsNotExist(err) {
-					log.Printf("processBookings : No video directory found for camera %s", camera.Name)
-					continue
-				}
-				log.Printf("processBookings : videoDirectory %s", videoDirectory)
-				// Find segments for this camera in the time range
-				segments, err := recording.FindSegmentsInRange(videoDirectory, startTime, endTime)
-				if err != nil || len(segments) == 0 {
-					log.Printf("processBookings : No video segments found for booking %s on camera %s: %v", bookingID, camera.Name, err)
+				// Use hybrid video processor to check video availability (chunks first, then segments)
+				hasVideo, err := hybridProcessor.CheckVideoAvailability(camera.Name, startTime, endTime)
+				if err != nil {
+					log.Printf("processBookings : Error checking video availability for booking %s on camera %s: %v", bookingID, camera.Name, err)
 					continue
 				}
 
-				log.Printf("processBookings : Found %d video segments for booking %s on camera %s", len(segments), bookingID, camera.Name)
+				if !hasVideo {
+					log.Printf("processBookings : No video content found for booking %s on camera %s in the specified time range", bookingID, camera.Name)
+					continue
+				}
+
+				log.Printf("processBookings : Video content available for booking %s on camera %s", bookingID, camera.Name)
 
 				// Convert orderDetailID to string
 				orderDetailIDStr := strconv.Itoa(int(orderDetailID))
 
-				// Process video segments using service with retry logic
-				log.Printf("processBookings : orderDetailIDStr %s", orderDetailIDStr)
+				// Process video using optimized hybrid processor with retry logic
+				log.Printf("processBookings : Processing video with hybrid processor for %s", orderDetailIDStr)
 
 				var uniqueID string
 				err = cleanRetryWithBackoff(func() error {
 					var err error
-					uniqueID, err = bookingService.ProcessVideoSegments(
+					uniqueID, err = hybridProcessor.ProcessVideoSegmentsOptimized(
 						camera,
 						bookingID,
 						orderDetailIDStr,
-						segments,
 						startTime,
 						endTime,
 						bookingData.RawJSON, // rawJSON from database
 						videoType,
 					)
 					return err
-				}, 3, fmt.Sprintf("Video Processing for %s-%s", bookingID, camera.Name))
+				}, 3, fmt.Sprintf("Optimized Video Processing for %s-%s", bookingID, camera.Name))
 
 				if err != nil {
-					log.Printf("processBookings : Error processing video segments for booking %s on camera %s after retries: %v", bookingID, camera.Name, err)
+					log.Printf("processBookings : Error processing video with hybrid processor for booking %s on camera %s after retries: %v", bookingID, camera.Name, err)
 					// Update status to failed
-					db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Video processing failed: %v", err))
+					if uniqueID != "" {
+						db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Hybrid video processing failed: %v", err))
+					}
 					continue
 				}
 				log.Printf("processBookings : uniqueID %s", uniqueID)
 
-				// Ambil path file watermarked yang akan digunakan
-				watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".ts")
-				log.Printf("processBookings : watermarkedVideoPath %s", watermarkedVideoPath)
+				// Get the video metadata to find the processed video path
+				video, err := db.GetVideo(uniqueID)
+				if err != nil {
+					log.Printf("processBookings : Error getting video metadata for %s: %v", uniqueID, err)
+					continue
+				}
+				watermarkedVideoPath := video.LocalPath
+				log.Printf("processBookings : Using processed video path %s", watermarkedVideoPath)
 
-				// Get paths to processed files
+				// Get paths to processed files (using camera base directory)
+				BaseDir := filepath.Join(cfg.StoragePath, "recordings", camera.Name)
 				previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
 				thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
@@ -771,10 +778,9 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 						continue
 					}
 
-					// Get video to calculate duration for future notification
-					video, err := db.GetVideo(uniqueID)
+					// Use video metadata we already retrieved to calculate duration for future notification
 					var duration float64 = 60.0 // Default 60 seconds
-					if err == nil && video != nil {
+					if video != nil {
 						duration = video.Duration
 					}
 
@@ -803,10 +809,9 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 				log.Printf("processBookings : thumbnailURL %s", thumbnailURL)
 
 				// Notify AYO API of successful upload with retry logic
-				// Get video to calculate duration
-				video, err := db.GetVideo(uniqueID)
+				// Use video metadata we already retrieved to calculate duration
 				var duration float64 = 60.0 // Default 60 seconds
-				if err == nil && video != nil {
+				if video != nil {
 					duration = video.Duration
 				}
 

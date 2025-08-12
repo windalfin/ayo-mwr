@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"ayo-mwr/database"
-	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 )
 
@@ -104,80 +104,163 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 		// Start from 1 hour ago if no record found
 		lastProcessedTime = time.Now().Add(-1 * time.Hour)
 	}
+	
+	// Safety check: if lastProcessedTime is zero/default, set to 1 hour ago
+	if lastProcessedTime.IsZero() || lastProcessedTime.Year() < 2020 {
+		log.Printf("[ChunkProcessor] %s: Invalid last processed time, starting from 1 hour ago", cameraName)
+		lastProcessedTime = time.Now().Add(-1 * time.Hour)
+	}
 
-	log.Printf("[ChunkProcessor] %s: Last processed segment: %s", cameraName, lastProcessedTime.Format("2006-01-02 15:04:05"))
+	// Determine the time window for processing
+	// We want to process only the most recent complete 15-minute chunk
+	now := time.Now()
+	chunkDuration := 15 * time.Minute
+	
+	// Round down current time to chunk boundary
+	currentChunkStart := cp.roundDownToChunkBoundary(now, chunkDuration)
+	
+	// We'll process the previous complete chunk (not the current incomplete one)
+	targetChunkStart := currentChunkStart.Add(-chunkDuration)
+	targetChunkEnd := currentChunkStart
+	
+	// Skip if this chunk period is before our last processed time
+	if targetChunkEnd.Before(lastProcessedTime) || targetChunkEnd.Equal(lastProcessedTime) {
+		log.Printf("[ChunkProcessor] %s: No new complete chunks to process (last: %s, target: %s)", 
+			cameraName, lastProcessedTime.Format("15:04:05"), targetChunkEnd.Format("15:04:05"))
+		return 0, nil
+	}
 
-	// Scan for new segments after the last processed time
-	newSegments, err := cp.scanNewSegments(hlsPath, lastProcessedTime)
+	log.Printf("[ChunkProcessor] %s: Processing chunk window %s to %s", 
+		cameraName, targetChunkStart.Format("15:04:05"), targetChunkEnd.Format("15:04:05"))
+
+	// Check if chunk already exists in database
+	chunkID := fmt.Sprintf("%s_%s_chunk", cameraName, targetChunkStart.Format("20060102_1504"))
+	existingChunks, err := cp.db.FindChunksInTimeRange(cameraName, targetChunkStart, targetChunkEnd)
+	if err == nil && len(existingChunks) > 0 {
+		for _, chunk := range existingChunks {
+			if chunk.ID == chunkID {
+				log.Printf("[ChunkProcessor] %s: Chunk %s already exists in database, skipping", cameraName, chunkID)
+				// Update last processed time even if chunk exists
+				cp.updateLastProcessedSegmentTime(cameraName, targetChunkEnd)
+				return 0, nil
+			}
+		}
+	}
+
+	// Scan for segments only within the target chunk window
+	segments, err := cp.scanSegmentsInTimeRange(hlsPath, targetChunkStart, targetChunkEnd)
 	if err != nil {
 		return 0, fmt.Errorf("failed to scan segments: %v", err)
 	}
 
-	if len(newSegments) == 0 {
-		log.Printf("[ChunkProcessor] %s: No new segments found", cameraName)
+	if len(segments) < 10 {
+		log.Printf("[ChunkProcessor] %s: Insufficient segments (%d) for chunk %s, skipping", 
+			cameraName, len(segments), chunkID)
 		return 0, nil
 	}
 
-	log.Printf("[ChunkProcessor] %s: Found %d new segments", cameraName, len(newSegments))
+	log.Printf("[ChunkProcessor] %s: Found %d segments for chunk %s", cameraName, len(segments), chunkID)
 
-	// Group segments into 15-minute chunks
-	chunkGroups := cp.groupSegmentsIntoChunks(newSegments, 15*time.Minute)
-	
-	chunksCreated := 0
-	var latestSegmentTime time.Time
+	// Create the chunk group for this specific time window
+	group := ChunkGroup{
+		StartTime: targetChunkStart,
+		EndTime:   targetChunkEnd,
+		Segments:  segments,
+	}
 
-	for _, group := range chunkGroups {
-		select {
-		case <-ctx.Done():
-			return chunksCreated, ctx.Err()
-		default:
-		}
+	// Create physical chunk file
+	chunkPath, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath)
+	if err != nil {
+		log.Printf("[ChunkProcessor] %s: Failed to create physical chunk: %v", cameraName, err)
+		return 0, err
+	}
 
-		// Only process complete chunks (minimum 10 segments = 40 seconds of content)
-		if len(group.Segments) < 10 {
-			log.Printf("[ChunkProcessor] %s: Incomplete chunk with %d segments, skipping", 
-				cameraName, len(group.Segments))
-			continue
-		}
-
-		// Create physical chunk file
-		chunkPath, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath)
-		if err != nil {
-			log.Printf("[ChunkProcessor] %s: Failed to create physical chunk: %v", cameraName, err)
-			continue
-		}
-
-		// Record chunk in database
-		err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID)
-		if err != nil {
-			log.Printf("[ChunkProcessor] %s: Failed to record chunk in database: %v", cameraName, err)
-			// Delete the physical file if database recording failed
+	// Record chunk in database
+	err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			log.Printf("[ChunkProcessor] %s: Chunk %s already exists in database", cameraName, chunkID)
+			// Remove the duplicate physical file
 			os.Remove(chunkPath)
+			return 0, nil
+		}
+		log.Printf("[ChunkProcessor] %s: Failed to record chunk in database: %v", cameraName, err)
+		// Delete the physical file if database recording failed
+		os.Remove(chunkPath)
+		return 0, err
+	}
+
+	// Update the last processed segment time to the end of this chunk
+	err = cp.updateLastProcessedSegmentTime(cameraName, targetChunkEnd)
+	if err != nil {
+		log.Printf("[ChunkProcessor] Warning: Failed to update last processed time for %s: %v", cameraName, err)
+	}
+
+	log.Printf("[ChunkProcessor] ✅ %s: Created chunk %s with %d segments", 
+		cameraName, filepath.Base(chunkPath), len(segments))
+
+	return 1, nil
+}
+
+// scanSegmentsInTimeRange scans for segment files within a specific time range
+func (cp *ChunkProcessor) scanSegmentsInTimeRange(hlsPath string, startTime, endTime time.Time) ([]SegmentFile, error) {
+	// Pattern to match HLS segment files: segment_20250811_234500.ts
+	segmentPattern := regexp.MustCompile(`^segment_(\d{8})_(\d{6})\.ts$`)
+	
+	var segments []SegmentFile
+
+	// Read directory contents
+	files, err := os.ReadDir(hlsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory %s: %v", hlsPath, err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
 			continue
 		}
 
-		chunksCreated++
-		
-		// Track the latest segment time for next iteration
-		for _, segment := range group.Segments {
-			if segment.Timestamp.After(latestSegmentTime) {
-				latestSegmentTime = segment.Timestamp
-			}
+		// Check if this is a segment file
+		matches := segmentPattern.FindStringSubmatch(file.Name())
+		if len(matches) != 3 {
+			continue // Not a segment file
 		}
 
-		log.Printf("[ChunkProcessor] ✅ %s: Created chunk %s with %d segments", 
-			cameraName, filepath.Base(chunkPath), len(group.Segments))
-	}
-
-	// Update the last processed segment time
-	if !latestSegmentTime.IsZero() {
-		err = cp.updateLastProcessedSegmentTime(cameraName, latestSegmentTime)
+		// Parse timestamp from filename
+		segmentTime, err := parseSegmentTimestamp(matches[1], matches[2])
 		if err != nil {
-			log.Printf("[ChunkProcessor] Warning: Failed to update last processed time for %s: %v", cameraName, err)
+			log.Printf("[ChunkProcessor] Warning: Could not parse timestamp for %s: %v", file.Name(), err)
+			continue
 		}
+
+		// Only include segments within the time range
+		if segmentTime.Before(startTime) || segmentTime.After(endTime) || segmentTime.Equal(endTime) {
+			continue
+		}
+
+		// Get file info
+		fileInfo, err := file.Info()
+		if err != nil {
+			log.Printf("[ChunkProcessor] Warning: Could not get file info for %s: %v", file.Name(), err)
+			continue
+		}
+
+		segment := SegmentFile{
+			FilePath:  filepath.Join(hlsPath, file.Name()),
+			FileName:  file.Name(),
+			Timestamp: segmentTime,
+			SizeBytes: fileInfo.Size(),
+		}
+
+		segments = append(segments, segment)
 	}
 
-	return chunksCreated, nil
+	// Sort segments by timestamp
+	sort.Slice(segments, func(i, j int) bool {
+		return segments[i].Timestamp.Before(segments[j].Timestamp)
+	})
+
+	return segments, nil
 }
 
 // scanNewSegments scans for segment files newer than the given timestamp
@@ -305,20 +388,26 @@ func (cp *ChunkProcessor) roundDownToChunkBoundary(t time.Time, chunkDuration ti
 	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), roundedMinute, 0, 0, t.Location())
 }
 
-// createPhysicalChunk creates an actual 15-minute MP4 file from segments
+// createPhysicalChunk creates an actual 15-minute TS file from segments
 func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string) (string, error) {
 	// Generate chunk filename
-	chunkFilename := fmt.Sprintf("%s_%s_chunk.mp4", cameraName, group.StartTime.Format("20060102_1504"))
+	chunkFilename := fmt.Sprintf("%s_%s_chunk.ts", cameraName, group.StartTime.Format("20060102_1504"))
 	chunkPath := filepath.Join(chunksPath, chunkFilename)
 	
 	// Check if chunk already exists
 	if _, err := os.Stat(chunkPath); err == nil {
-		log.Printf("[ChunkProcessor] Chunk already exists: %s", chunkFilename)
-		return chunkPath, nil
+		log.Printf("[ChunkProcessor] Chunk file already exists: %s", chunkFilename)
+		// Verify it has content
+		info, _ := os.Stat(chunkPath)
+		if info.Size() > 0 {
+			return chunkPath, nil
+		}
+		// Remove empty file
+		os.Remove(chunkPath)
 	}
 
 	// Create segment list file for FFmpeg concatenation
-	segmentListPath := filepath.Join(chunksPath, fmt.Sprintf("%s_segments.txt", chunkFilename[:len(chunkFilename)-4]))
+	segmentListPath := filepath.Join(chunksPath, fmt.Sprintf("%s_segments.txt", chunkFilename[:len(chunkFilename)-3]))
 	
 	// Write segment list
 	segmentListFile, err := os.Create(segmentListPath)
@@ -327,7 +416,7 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	}
 
 	for _, segment := range group.Segments {
-		// Use relative path or absolute path depending on FFmpeg requirements
+		// Use absolute path for FFmpeg
 		fmt.Fprintf(segmentListFile, "file '%s'\n", segment.FilePath)
 	}
 	segmentListFile.Close()
@@ -335,18 +424,23 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	// Ensure cleanup of segment list file
 	defer os.Remove(segmentListPath)
 
-	// Use recording package to merge segments into chunk
+	// Use FFmpeg directly to concatenate TS segments
 	log.Printf("[ChunkProcessor] Creating chunk %s from %d segments...", chunkFilename, len(group.Segments))
 	
-	// Create a temporary directory for the merge operation
-	tempDir := filepath.Join(chunksPath, "temp")
-	os.MkdirAll(tempDir, 0755)
-	defer os.RemoveAll(tempDir)
-
-	// Use the recording.MergeSessionVideos function to create the chunk
-	err = recording.MergeSessionVideos(filepath.Dir(group.Segments[0].FilePath), group.StartTime, group.EndTime, chunkPath, "1920x1080")
+	// Build FFmpeg command to concatenate TS files
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", segmentListPath,
+		"-c", "copy", // Copy streams without re-encoding
+		"-y", // Overwrite output file if exists
+		chunkPath,
+	)
+	
+	// Execute FFmpeg
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to merge segments into chunk: %v", err)
+		return "", fmt.Errorf("failed to concatenate segments: %v, output: %s", err, string(output))
 	}
 
 	// Verify the chunk file was created and has content
@@ -405,7 +499,17 @@ func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, gr
 
 // getLastProcessedSegmentTime retrieves the timestamp of the last processed segment for a camera
 func (cp *ChunkProcessor) getLastProcessedSegmentTime(cameraName string) (time.Time, error) {
-	// Get the latest chunk for this camera
+	// First check system config for last processed time
+	configKey := fmt.Sprintf("last_processed_segment_%s", cameraName)
+	config, err := cp.db.GetSystemConfig(configKey)
+	if err == nil && config.Value != "" {
+		lastTime, err := time.Parse(time.RFC3339, config.Value)
+		if err == nil {
+			return lastTime, nil
+		}
+	}
+
+	// Fallback: Get the latest chunk for this camera
 	endTime := time.Now()
 	startTime := endTime.Add(-30 * 24 * time.Hour) // Look back 30 days
 	
@@ -415,8 +519,8 @@ func (cp *ChunkProcessor) getLastProcessedSegmentTime(cameraName string) (time.T
 	}
 
 	if len(chunks) == 0 {
-		// No chunks found, return zero time to start from beginning
-		return time.Time{}, nil
+		// No chunks found, start from 1 hour ago to avoid processing huge backlog
+		return time.Now().Add(-1 * time.Hour), nil
 	}
 
 	// Find the latest chunk end time

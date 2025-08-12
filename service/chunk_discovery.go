@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ayo-mwr/database"
@@ -78,11 +79,23 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 			continue
 		}
 
-		// Simple path construction with detailed debugging
+		// Handle path issues
+		cleanFilePath := chunk.FilePath
 		log.Printf("[ChunkDiscovery] Raw data - Chunk %s: disk.Path='%s', chunk.FilePath='%s'",
 			chunk.ID, disk.Path, chunk.FilePath)
 
-		fullChunkPath := filepath.Join(disk.Path, chunk.FilePath)
+		// Remove any form of videos/ prefix to get clean relative path
+		if strings.HasPrefix(cleanFilePath, "videos/") {
+			cleanFilePath = strings.TrimPrefix(cleanFilePath, "videos/")
+			log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed 'videos/' prefix, now='%s'",
+				chunk.ID, cleanFilePath)
+		} else if strings.HasPrefix(cleanFilePath, "./videos/") {
+			cleanFilePath = strings.TrimPrefix(cleanFilePath, "./videos/")
+			log.Printf("[ChunkDiscovery] Cleaned FilePath - Chunk %s: removed './videos/' prefix, now='%s'",
+				chunk.ID, cleanFilePath)
+		}
+
+		fullChunkPath := filepath.Join(disk.Path, cleanFilePath)
 		log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'",
 			chunk.ID, fullChunkPath)
 

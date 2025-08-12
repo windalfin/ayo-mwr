@@ -39,9 +39,9 @@ func (cpc *ChunkProcessingCron) Start() error {
 
 	log.Println("[ChunkProcessingCron] Starting chunk processing cron jobs...")
 
-	// Schedule chunk processing every 15 minutes at :02, :17, :32, :47
-	// This gives a 2-minute buffer after each 15-minute boundary to ensure segments are available
-	_, err := cpc.cron.AddFunc("0 2,17,32,47 * * * *", func() {
+	// Schedule chunk processing every 10 minutes at :02, :12, :22, :32, :42, :52
+	// This gives a 2-minute buffer after each 10-minute boundary to ensure segments are available
+	_, err := cpc.cron.AddFunc("0 2,12,22,32,42,52 * * * *", func() {
 		cpc.processChunks()
 	})
 	if err != nil {
@@ -69,7 +69,7 @@ func (cpc *ChunkProcessingCron) Start() error {
 
 	log.Println("[ChunkProcessingCron] ✅ Chunk processing cron jobs started successfully")
 	log.Println("[ChunkProcessingCron] 📅 Schedule:")
-	log.Println("[ChunkProcessingCron]   • Process chunks: Every 15 min at :02, :17, :32, :47")
+	log.Println("[ChunkProcessingCron]   • Process chunks: Every 10 min at :02, :12, :22, :32, :42, :52")
 	log.Println("[ChunkProcessingCron]   • Cleanup: Every hour at :05")
 	log.Println("[ChunkProcessingCron]   • Statistics: Every hour at :00")
 
@@ -141,7 +141,7 @@ func (cpc *ChunkProcessingCron) GetProcessingStatus() map[string]interface{} {
 	return map[string]interface{}{
 		"is_running":   cpc.isRunning,
 		"last_run":     time.Now().Format(time.RFC3339), // This would need to be tracked properly
-		"next_run":     "Every 15 minutes at :02, :17, :32, :47",
+		"next_run":     "Every 10 minutes at :02, :12, :22, :32, :42, :52",
 		"description":  "Physical chunk creation from HLS segments",
 	}
 }

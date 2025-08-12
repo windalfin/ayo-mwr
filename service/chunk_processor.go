@@ -39,7 +39,7 @@ type SegmentFile struct {
 	SizeBytes   int64
 }
 
-// ProcessChunks scans for new segments and creates 15-minute physical chunks
+// ProcessChunks scans for new segments and creates 10-minute physical chunks
 func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 	log.Println("[ChunkProcessor] Starting chunk processing...")
 	
@@ -61,9 +61,16 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 	cameras := []string{"CAMERA_1", "CAMERA_2", "CAMERA_3", "CAMERA_4"}
 	
 	for _, camera := range cameras {
-		// Build paths using the active disk path from storage_disks table
-		hlsPath := filepath.Join(activeDisk.Path, "recordings", camera, "hls")
-		chunksPath := filepath.Join(activeDisk.Path, "recordings", camera, "chunks")
+		// Build absolute paths using the active disk path from storage_disks table
+		// Convert activeDisk.Path to absolute path first
+		absActiveDiskPath, err := filepath.Abs(activeDisk.Path)
+		if err != nil {
+			log.Printf("[ChunkProcessor] Failed to get absolute path for disk %s: %v", activeDisk.Path, err)
+			continue
+		}
+		
+		hlsPath := filepath.Join(absActiveDiskPath, "recordings", camera, "hls")
+		chunksPath := filepath.Join(absActiveDiskPath, "recordings", camera, "chunks")
 		
 		// Check if HLS directory exists
 		if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
@@ -116,9 +123,9 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 	}
 
 	// Determine the time window for processing
-	// We want to process only the most recent complete 15-minute chunk
+	// We want to process only the most recent complete 10-minute chunk
 	now := time.Now()
-	chunkDuration := 15 * time.Minute
+	chunkDuration := 10 * time.Minute
 	
 	// Round down current time to chunk boundary
 	currentChunkStart := cp.roundDownToChunkBoundary(now, chunkDuration)
@@ -159,6 +166,8 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 		return 0, fmt.Errorf("failed to scan segments: %v", err)
 	}
 
+	// For 10-minute chunks, we expect around 150 segments (10 min * 60 sec / 4 sec per segment)
+	// But we'll accept chunks with at least 10 segments for testing
 	if len(segments) < 10 {
 		log.Printf("[ChunkProcessor] %s: Insufficient segments (%d) for chunk %s, skipping", 
 			cameraName, len(segments), chunkID)
@@ -337,7 +346,7 @@ type ChunkGroup struct {
 	Segments  []SegmentFile
 }
 
-// groupSegmentsIntoChunks groups segments into 15-minute chunks
+// groupSegmentsIntoChunks groups segments into chunks of specified duration
 func (cp *ChunkProcessor) groupSegmentsIntoChunks(segments []SegmentFile, chunkDuration time.Duration) []ChunkGroup {
 	if len(segments) == 0 {
 		return nil
@@ -386,7 +395,7 @@ func (cp *ChunkProcessor) groupSegmentsIntoChunks(segments []SegmentFile, chunkD
 	return groups
 }
 
-// roundDownToChunkBoundary rounds time down to chunk boundary (15-minute intervals)
+// roundDownToChunkBoundary rounds time down to chunk boundary (e.g., 10-minute intervals)
 func (cp *ChunkProcessor) roundDownToChunkBoundary(t time.Time, chunkDuration time.Duration) time.Time {
 	minutes := int(chunkDuration.Minutes())
 	roundedMinute := (t.Minute() / minutes) * minutes
@@ -394,7 +403,7 @@ func (cp *ChunkProcessor) roundDownToChunkBoundary(t time.Time, chunkDuration ti
 	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), roundedMinute, 0, 0, t.Location())
 }
 
-// createPhysicalChunk creates an actual 15-minute TS file from segments
+// createPhysicalChunk creates an actual TS file from segments
 func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string) (string, error) {
 	// Generate chunk filename
 	chunkFilename := fmt.Sprintf("%s_%s_chunk.ts", cameraName, group.StartTime.Format("20060102_1504"))
@@ -421,7 +430,13 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 		return "", fmt.Errorf("failed to create segment list file: %v", err)
 	}
 
-	// Write segment paths for FFmpeg (they should already be absolute)
+	// Write segment paths for FFmpeg (they should now be absolute)
+	log.Printf("[ChunkProcessor] Writing %d segments to list file", len(group.Segments))
+	if len(group.Segments) > 0 {
+		log.Printf("[ChunkProcessor] First segment path: %s", group.Segments[0].FilePath)
+		log.Printf("[ChunkProcessor] Last segment path: %s", group.Segments[len(group.Segments)-1].FilePath)
+	}
+	
 	for _, segment := range group.Segments {
 		fmt.Fprintf(segmentListFile, "file '%s'\n", segment.FilePath)
 	}
@@ -444,12 +459,35 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	)
 	
 	// Execute FFmpeg
+	log.Printf("[ChunkProcessor] Running FFmpeg with segment list: %s", segmentListPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Debug: Show segment list content when FFmpeg fails
 		if content, readErr := os.ReadFile(segmentListPath); readErr == nil {
-			log.Printf("[ChunkProcessor] FFmpeg failed. Segment list content:\n%s", string(content))
+			log.Printf("[ChunkProcessor] FFmpeg failed. Segment list content (first 10 lines):")
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if i >= 10 {
+					log.Printf("[ChunkProcessor] ... and %d more lines", len(lines)-10)
+					break
+				}
+				if line != "" {
+					log.Printf("[ChunkProcessor] %d: %s", i+1, line)
+				}
+			}
+		} else {
+			log.Printf("[ChunkProcessor] Could not read segment list file: %v", readErr)
 		}
+		
+		// Also check if the first segment file actually exists
+		if len(group.Segments) > 0 {
+			if _, statErr := os.Stat(group.Segments[0].FilePath); statErr != nil {
+				log.Printf("[ChunkProcessor] First segment file does not exist: %s", group.Segments[0].FilePath)
+			} else {
+				log.Printf("[ChunkProcessor] First segment file exists: %s", group.Segments[0].FilePath)
+			}
+		}
+		
 		return "", fmt.Errorf("failed to concatenate segments: %v, output: %s", err, string(output))
 	}
 

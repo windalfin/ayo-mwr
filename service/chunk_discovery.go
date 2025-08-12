@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"ayo-mwr/database"
@@ -27,21 +26,21 @@ func NewChunkDiscoveryService(db database.Database, storageManager *storage.Disk
 
 // SegmentSource represents a source of video segments (either chunks or individual segments)
 type SegmentSource struct {
-	ID           string                   `json:"id"`
-	Type         string                   `json:"type"`         // "chunk" or "segment"
-	FilePath     string                   `json:"filePath"`     // Full path to file
-	StartTime    time.Time                `json:"startTime"`
-	EndTime      time.Time                `json:"endTime"`
-	Duration     time.Duration            `json:"duration"`
-	SourceCount  int                      `json:"sourceCount"`  // Number of original segments
-	Status       database.ProcessingStatus `json:"status"`
-	SizeBytes    int64                    `json:"sizeBytes"`
+	ID          string                    `json:"id"`
+	Type        string                    `json:"type"`     // "chunk" or "segment"
+	FilePath    string                    `json:"filePath"` // Full path to file
+	StartTime   time.Time                 `json:"startTime"`
+	EndTime     time.Time                 `json:"endTime"`
+	Duration    time.Duration             `json:"duration"`
+	SourceCount int                       `json:"sourceCount"` // Number of original segments
+	Status      database.ProcessingStatus `json:"status"`
+	SizeBytes   int64                     `json:"sizeBytes"`
 }
 
 // FindOptimalSegmentSources finds the optimal combination of chunks and segments for a time range
 // This is the core optimization that replaces filesystem scanning with database queries
 func (cds *ChunkDiscoveryService) FindOptimalSegmentSources(cameraName string, startTime, endTime time.Time) ([]SegmentSource, error) {
-	log.Printf("[ChunkDiscovery] Finding segments for camera %s from %s to %s", 
+	log.Printf("[ChunkDiscovery] Finding segments for camera %s from %s to %s",
 		cameraName, startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 
 	// Step 1: Try to find pre-concatenated chunks first (97% faster than scanning files)
@@ -80,11 +79,11 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 		}
 
 		// Simple path construction with detailed debugging
-		log.Printf("[ChunkDiscovery] Raw data - Chunk %s: disk.Path='%s', chunk.FilePath='%s'", 
+		log.Printf("[ChunkDiscovery] Raw data - Chunk %s: disk.Path='%s', chunk.FilePath='%s'",
 			chunk.ID, disk.Path, chunk.FilePath)
-		
+
 		fullChunkPath := filepath.Join(disk.Path, chunk.FilePath)
-		log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'", 
+		log.Printf("[ChunkDiscovery] Final path - Chunk %s: fullPath='%s'",
 			chunk.ID, fullChunkPath)
 
 		source := SegmentSource{
@@ -198,9 +197,9 @@ func (cds *ChunkDiscoveryService) createHybridSegmentSources(cameraName string, 
 
 	// Find gaps that need to be filled with individual segments
 	gaps := cds.findTimeGaps(chunks, startTime, endTime)
-	
+
 	for _, gap := range gaps {
-		log.Printf("[ChunkDiscovery] Filling gap from %s to %s with individual segments", 
+		log.Printf("[ChunkDiscovery] Filling gap from %s to %s with individual segments",
 			gap.start.Format("15:04:05"), gap.end.Format("15:04:05"))
 
 		gapSegments, err := cds.findSegmentsInRange(cameraName, gap.start, gap.end)
@@ -319,17 +318,17 @@ func (cds *ChunkDiscoveryService) GetSegmentDiscoveryStats(cameraName string, st
 	}
 
 	stats := map[string]interface{}{
-		"discovery_time_ms":     discoveryTime.Milliseconds(),
-		"total_sources":         len(sources),
-		"chunk_count":          chunkCount,
-		"segment_count":        segmentCount,
-		"total_size_bytes":     totalSize,
+		"discovery_time_ms":      discoveryTime.Milliseconds(),
+		"total_sources":          len(sources),
+		"chunk_count":            chunkCount,
+		"segment_count":          segmentCount,
+		"total_size_bytes":       totalSize,
 		"total_duration_seconds": totalDuration.Seconds(),
-		"time_range_seconds":   endTime.Sub(startTime).Seconds(),
-		"optimization_used":    chunkCount > 0,
+		"time_range_seconds":     endTime.Sub(startTime).Seconds(),
+		"optimization_used":      chunkCount > 0,
 		"performance_improvement": func() string {
 			if chunkCount > 0 {
-				return fmt.Sprintf("%.1fx faster (using %d chunks vs %d potential segments)", 
+				return fmt.Sprintf("%.1fx faster (using %d chunks vs %d potential segments)",
 					float64(segmentCount*4+chunkCount)/float64(len(sources)), chunkCount, segmentCount*4)
 			}
 			return "fallback mode (no chunks available)"

@@ -426,8 +426,8 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 		return "", fmt.Errorf("failed to create segment list file: %v", err)
 	}
 
+	// Write absolute paths for FFmpeg
 	for _, segment := range group.Segments {
-		// Use absolute path for FFmpeg
 		fmt.Fprintf(segmentListFile, "file '%s'\n", segment.FilePath)
 	}
 	segmentListFile.Close()

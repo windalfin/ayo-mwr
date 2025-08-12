@@ -332,6 +332,17 @@ func (hvp *HybridVideoProcessor) processMultipleSources(sources []SegmentSource,
 
 // extractFromChunk extracts a specific time range from a pre-concatenated chunk
 func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTime, endTime time.Time, uniqueID string, index int, tmpDir string) (string, error) {
+	log.Printf("[HybridProcessor] Extracting from chunk %s: file=%s", source.ID, source.FilePath)
+	
+	// Check if chunk file exists first
+	if _, err := os.Stat(source.FilePath); err != nil {
+		return "", fmt.Errorf("chunk file does not exist: %s (error: %v)", source.FilePath, err)
+	}
+	
+	// Log chunk and extraction time details
+	log.Printf("[HybridProcessor] Chunk time: %s to %s", source.StartTime.Format("15:04:05"), source.EndTime.Format("15:04:05"))
+	log.Printf("[HybridProcessor] Requested time: %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+	
 	// Calculate extraction parameters
 	var extractStart, extractDuration float64
 	
@@ -343,6 +354,13 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 		extractDuration = endTime.Sub(startTime.Add(time.Duration(extractStart)*time.Second)).Seconds()
 	} else {
 		extractDuration = source.EndTime.Sub(startTime.Add(time.Duration(extractStart)*time.Second)).Seconds()
+	}
+
+	log.Printf("[HybridProcessor] Extraction params: start=%.3fs, duration=%.3fs", extractStart, extractDuration)
+	
+	// Validate extraction parameters
+	if extractDuration <= 0 {
+		return "", fmt.Errorf("invalid extraction duration: %.3fs (start=%.3fs)", extractDuration, extractStart)
 	}
 
 	extractedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_chunk_extract_%d.ts", uniqueID, index))
@@ -357,8 +375,22 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 		extractedPath,
 	)
 
+	log.Printf("[HybridProcessor] Running FFmpeg: %s", strings.Join(cmd.Args, " "))
+	
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("error extracting from chunk %s: %v\nFFmpeg output: %s", source.ID, err, string(output))
+		log.Printf("[HybridProcessor] FFmpeg failed for chunk %s", source.ID)
+		log.Printf("[HybridProcessor] FFmpeg command: %s", strings.Join(cmd.Args, " "))
+		log.Printf("[HybridProcessor] FFmpeg output: %s", string(output))
+		return "", fmt.Errorf("error extracting from chunk %s: %v", source.ID, err)
+	}
+	
+	// Verify extracted file was created and has content
+	if info, err := os.Stat(extractedPath); err != nil {
+		return "", fmt.Errorf("extracted file was not created: %s", extractedPath)
+	} else if info.Size() == 0 {
+		return "", fmt.Errorf("extracted file is empty: %s", extractedPath)
+	} else {
+		log.Printf("[HybridProcessor] ✅ Extracted %s (%.2f MB)", filepath.Base(extractedPath), float64(info.Size())/(1024*1024))
 	}
 
 	return extractedPath, nil

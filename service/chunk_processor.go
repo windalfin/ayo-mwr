@@ -55,22 +55,15 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 		return fmt.Errorf("no active disk available for chunk processing")
 	}
 
-	log.Printf("[ChunkProcessor] Using active disk: %s", activeDisk.Path)
+	log.Printf("[ChunkProcessor] Using active disk: %s (ID: %s)", activeDisk.Path, activeDisk.ID)
 
 	// Process each camera on the active disk
 	cameras := []string{"CAMERA_1", "CAMERA_2", "CAMERA_3", "CAMERA_4"}
 	
 	for _, camera := range cameras {
-		// Get recording path for this camera
-		recordingDir, diskID, err := cp.storageManager.GetRecordingPath(camera)
-		if err != nil {
-			log.Printf("[ChunkProcessor] Failed to get recording path for %s: %v", camera, err)
-			continue
-		}
-		
-		// Build HLS and chunks paths
-		hlsPath := filepath.Join(recordingDir, "hls")
-		chunksPath := filepath.Join(recordingDir, "chunks")
+		// Build paths using the active disk path from storage_disks table
+		hlsPath := filepath.Join(activeDisk.Path, "recordings", camera, "hls")
+		chunksPath := filepath.Join(activeDisk.Path, "recordings", camera, "chunks")
 		
 		// Check if HLS directory exists
 		if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
@@ -86,7 +79,7 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 
 		log.Printf("[ChunkProcessor] Processing %s on disk %s...", camera, activeDisk.Path)
 		
-		chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, diskID)
+		chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, activeDisk.ID)
 		if err != nil {
 			log.Printf("[ChunkProcessor] Error processing camera %s: %v", camera, err)
 			continue
@@ -143,6 +136,8 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 
 	log.Printf("[ChunkProcessor] %s: Processing chunk window %s to %s", 
 		cameraName, targetChunkStart.Format("15:04:05"), targetChunkEnd.Format("15:04:05"))
+	log.Printf("[ChunkProcessor] %s: HLS path: %s", cameraName, hlsPath)
+	log.Printf("[ChunkProcessor] %s: Chunks path: %s", cameraName, chunksPath)
 
 	// Check if chunk already exists in database
 	chunkID := fmt.Sprintf("%s_%s_chunk", cameraName, targetChunkStart.Format("20060102_1504"))
@@ -426,7 +421,7 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 		return "", fmt.Errorf("failed to create segment list file: %v", err)
 	}
 
-	// Write absolute paths for FFmpeg
+	// Write segment paths for FFmpeg (they should already be absolute)
 	for _, segment := range group.Segments {
 		fmt.Fprintf(segmentListFile, "file '%s'\n", segment.FilePath)
 	}
@@ -451,6 +446,10 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	// Execute FFmpeg
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Debug: Show segment list content when FFmpeg fails
+		if content, readErr := os.ReadFile(segmentListPath); readErr == nil {
+			log.Printf("[ChunkProcessor] FFmpeg failed. Segment list content:\n%s", string(content))
+		}
 		return "", fmt.Errorf("failed to concatenate segments: %v, output: %s", err, string(output))
 	}
 

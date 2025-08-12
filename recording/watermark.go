@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"ayo-mwr/database"
 )
@@ -284,25 +286,32 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 	
 	log.Printf("AddWatermarkWithPosition : Using watermark: %s with opacity %.2f", watermarkImg, opacity)
 	
-	// Komando ffmpeg dengan parameter yang menjaga kualitas video tetap original
-	cmd := exec.Command(
-		"ffmpeg", "-y",
+	// Komando ffmpeg dengan parameter optimized untuk kecepatan
+	args := []string{
+		"-y",
 		"-v", "warning", // Show more detailed output
 		"-i", inputVideo,
 		"-i", watermarkImg,
 		"-filter_complex", filter,
 		"-c:v", "libx264",           // Codec video H.264
-		"-crf", "23",                // CRF optimal untuk balance kualitas vs ukuran file (0-51, semakin rendah semakin bagus)
-		"-preset", "fast",          // Preset encoding yang balance antara kecepatan dan kompresi
+		"-crf", "28",                // Higher CRF for much faster encoding (slightly lower quality but much faster)
+		"-preset", "ultrafast",      // Ultra fast preset for maximum encoding speed
 		"-profile:v", "high",        // Profil high untuk kualitas maksimal
 		"-pix_fmt", "yuv420p",       // Format pixel standar untuk kompatibilitas maksimal
 		"-c:a", "copy",              // Copy audio tanpa mengubah kualitas
 		"-map_metadata", "0",        // Pertahankan metadata dari video asli
 		"-movflags", "+faststart",   // Optimasi file untuk streaming
+		"-threads", "0",             // Use all available CPU threads for faster encoding
 		outputVideo,
-	)
+	}
 	
-	log.Printf("AddWatermarkWithPosition : Executing ffmpeg with high quality settings for watermark overlay")
+	// Create context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	
+	log.Printf("AddWatermarkWithPosition : Executing ffmpeg with optimized settings for watermark overlay (5min timeout)")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("AddWatermarkWithPosition : ffmpeg error: %v, output: %s", err, string(output))

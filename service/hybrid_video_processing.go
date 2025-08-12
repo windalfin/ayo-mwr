@@ -34,6 +34,38 @@ func NewHybridVideoProcessor(db database.Database, cfg *config.Config, storageMa
 	}
 }
 
+// CheckVideoAvailability checks if video content is available for the specified time range
+// Returns true if chunks or segments are available, false otherwise
+func (hvp *HybridVideoProcessor) CheckVideoAvailability(cameraName string, startTime, endTime time.Time) (bool, error) {
+	log.Printf("[HybridProcessor] 🔍 Checking video availability for camera %s from %s to %s", 
+		cameraName, startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+
+	// Use chunk discovery to check if we have any video content for this time range
+	segmentSources, err := hvp.chunkDiscovery.FindOptimalSegmentSources(cameraName, startTime, endTime)
+	if err != nil {
+		log.Printf("[HybridProcessor] ❌ Error checking video availability: %v", err)
+		return false, err
+	}
+
+	hasContent := len(segmentSources) > 0
+	if hasContent {
+		chunkCount := 0
+		segmentCount := 0
+		for _, source := range segmentSources {
+			if source.Type == "chunk" {
+				chunkCount++
+			} else {
+				segmentCount++
+			}
+		}
+		log.Printf("[HybridProcessor] ✅ Video content available: %d chunks + %d segments", chunkCount, segmentCount)
+	} else {
+		log.Printf("[HybridProcessor] ❌ No video content found for the specified time range")
+	}
+
+	return hasContent, nil
+}
+
 // ProcessVideoSegmentsOptimized is the optimized version that uses chunks + segments
 // This replaces the original ProcessVideoSegments method for 60-70% performance improvement
 func (hvp *HybridVideoProcessor) ProcessVideoSegmentsOptimized(

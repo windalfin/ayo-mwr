@@ -230,8 +230,8 @@ func main() {
 	// Initialize upload service with AYO API client
 	uploadService := service.NewUploadService(db, r2Storage, &cfg, apiClient)
 
-	// Initialize and start API server
-	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
+	// Initialize and start API server with chunk optimization
+	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS, diskManager)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler via signaling package

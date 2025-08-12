@@ -32,9 +32,9 @@ type Server struct {
 	activeUploads map[string]bool // key: cameraName, value: isUploading
 }
 
-func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
-	// Initialize video request handler
-	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
+func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS, diskManager *storage.DiskManager) *Server {
+	// Initialize video request handler with chunk optimization
+	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService, diskManager)
 
 	// Initialize chunk configuration service and handlers
 	chunkConfigService := config.NewChunkConfigService(db)

@@ -542,28 +542,12 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 		return "", false, fmt.Errorf("chunk file is empty")
 	}
 
-	log.Printf("[ChunkProcessor] ✅ Chunk created: %s (%.2f MB)", chunkFilename, float64(chunkInfo.Size())/1024/1024)
+	log.Printf("[ChunkProcessor] ✅ Chunk created: %s (%.2f MB) - NO WATERMARK", chunkFilename, float64(chunkInfo.Size())/1024/1024)
+	log.Printf("[ChunkProcessor] ⚡ PERFORMANCE OPTIMIZATION: Skipping watermark during chunk creation")
+	log.Printf("[ChunkProcessor] 📝 Watermarks will be applied during video request processing instead")
 	
-	// Apply watermark to the chunk for performance optimization
-	watermarkedChunkPath, isWatermarked, err := cp.applyWatermarkToChunk(ctx, chunkPath, cameraName)
-	if err != nil {
-		log.Printf("[ChunkProcessor] ⚠️ Failed to apply watermark to chunk %s: %v, using original chunk", chunkFilename, err)
-		return chunkPath, false, nil
-	}
-	
-	// Use watermarked chunk if successful, otherwise use original
-	finalChunkPath := chunkPath
-	if isWatermarked {
-		finalChunkPath = watermarkedChunkPath
-		// Remove original unwatermarked chunk to save space
-		if chunkPath != watermarkedChunkPath {
-			os.Remove(chunkPath)
-		}
-		log.Printf("[ChunkProcessor] ✅ Watermark applied to chunk: %s", filepath.Base(watermarkedChunkPath))
-	}
-	
-	// Store the watermark status for database recording
-	return finalChunkPath, isWatermarked, nil
+	// Return original chunk without watermark
+	return chunkPath, false, nil
 }
 
 // applyWatermarkToChunk applies watermark to a chunk for performance optimization
@@ -671,7 +655,7 @@ func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, gr
 		return fmt.Errorf("failed to create chunk record: %v", err)
 	}
 
-	log.Printf("[ChunkProcessor] 📝 Chunk recorded in database: %s", chunkID)
+	log.Printf("[ChunkProcessor] 📝 Chunk recorded in database: %s (is_watermarked=%t)", chunkID, isWatermarked)
 	return nil
 }
 

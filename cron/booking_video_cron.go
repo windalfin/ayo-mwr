@@ -703,33 +703,56 @@ func processBookings(cfg *config.Config, db database.Database, ayoClient *api.Ay
 					continue
 				}
 				
-				// Extract file paths from segment sources
-				var segments []string
-				for _, source := range segmentSources {
-					segments = append(segments, source.FilePath)
-				}
+				chunkCount := countChunks(segmentSources)
+				segmentCount := countSegments(segmentSources)
 				
 				log.Printf("processBookings : Found %d video sources (%d chunks, %d segments) for booking %s on camera %s", 
-					len(segments), countChunks(segmentSources), countSegments(segmentSources), bookingID, camera.Name)
-
-				// Process video segments using original service with retry logic
-				log.Printf("processBookings : Processing video with original pipeline for %s", orderDetailIDStr)
+					len(segmentSources), chunkCount, segmentCount, bookingID, camera.Name)
 
 				var uniqueID string
-				err = cleanRetryWithBackoff(func() error {
-					var err error
-					uniqueID, err = bookingService.ProcessVideoSegments(
-						camera,
-						bookingID,
-						orderDetailIDStr,
-						segments,
-						startTime,
-						endTime,
-						bookingData.RawJSON, // rawJSON from database
-						videoType,
-					)
-					return err
-				}, 3, fmt.Sprintf("Video Processing for %s-%s", bookingID, camera.Name))
+
+				if chunkCount > 0 {
+					// Use hybrid processor when we have chunks (optimized pipeline)
+					log.Printf("processBookings : Using optimized hybrid processor for %s (%d chunks)", orderDetailIDStr, chunkCount)
+					
+					err = cleanRetryWithBackoff(func() error {
+						var err error
+						uniqueID, err = hybridProcessor.ProcessVideoSegmentsOptimized(
+							camera,
+							bookingID,
+							orderDetailIDStr,
+							startTime,
+							endTime,
+							bookingData.RawJSON, // rawJSON from database
+							videoType,
+						)
+						return err
+					}, 3, fmt.Sprintf("Hybrid Video Processing for %s-%s", bookingID, camera.Name))
+				} else {
+					// Use original service when we only have individual segments
+					log.Printf("processBookings : Using original pipeline for %s (%d segments)", orderDetailIDStr, segmentCount)
+					
+					// Extract file paths from segment sources
+					var segments []string
+					for _, source := range segmentSources {
+						segments = append(segments, source.FilePath)
+					}
+					
+					err = cleanRetryWithBackoff(func() error {
+						var err error
+						uniqueID, err = bookingService.ProcessVideoSegments(
+							camera,
+							bookingID,
+							orderDetailIDStr,
+							segments,
+							startTime,
+							endTime,
+							bookingData.RawJSON, // rawJSON from database
+							videoType,
+						)
+						return err
+					}, 3, fmt.Sprintf("Original Video Processing for %s-%s", bookingID, camera.Name))
+				}
 
 				if err != nil {
 					log.Printf("processBookings : Error processing video with hybrid processor for booking %s on camera %s after retries: %v", bookingID, camera.Name, err)

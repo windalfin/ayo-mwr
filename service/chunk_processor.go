@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ayo-mwr/database"
+	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 )
 
@@ -184,14 +185,14 @@ func (cp *ChunkProcessor) processCameraChunks(ctx context.Context, cameraName, h
 	}
 
 	// Create physical chunk file
-	chunkPath, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath, diskPath)
+	chunkPath, isWatermarked, err := cp.createPhysicalChunk(ctx, cameraName, group, chunksPath, diskPath)
 	if err != nil {
 		log.Printf("[ChunkProcessor] %s: Failed to create physical chunk: %v", cameraName, err)
 		return 0, err
 	}
 
 	// Record chunk in database
-	err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID, diskPath)
+	err = cp.recordChunkInDatabase(cameraName, chunkPath, group, diskID, diskPath, isWatermarked)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			log.Printf("[ChunkProcessor] %s: Chunk %s already exists in database", cameraName, chunkID)
@@ -436,7 +437,7 @@ func (cp *ChunkProcessor) roundDownToChunkBoundary(t time.Time, chunkDuration ti
 }
 
 // createPhysicalChunk creates an actual TS file from segments
-func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string, diskPath string) (string, error) {
+func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName string, group ChunkGroup, chunksPath string, diskPath string) (string, bool, error) {
 	// Generate chunk filename
 	chunkFilename := fmt.Sprintf("%s_%s_chunk.ts", cameraName, group.StartTime.Format("20060102_1504"))
 	chunkPath := filepath.Join(chunksPath, chunkFilename)
@@ -447,7 +448,7 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 		// Verify it has content
 		info, _ := os.Stat(chunkPath)
 		if info.Size() > 0 {
-			return chunkPath, nil
+			return chunkPath, false, nil // Existing chunk, assume not watermarked
 		}
 		// Remove empty file
 		os.Remove(chunkPath)
@@ -459,7 +460,7 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	// Write segment list
 	segmentListFile, err := os.Create(segmentListPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create segment list file: %v", err)
+		return "", false, fmt.Errorf("failed to create segment list file: %v", err)
 	}
 
 	// Write segment paths for FFmpeg (they should now be absolute)
@@ -520,27 +521,98 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 			}
 		}
 		
-		return "", fmt.Errorf("failed to concatenate segments: %v, output: %s", err, string(output))
+		return "", false, fmt.Errorf("failed to concatenate segments: %v, output: %s", err, string(output))
 	}
 
 	// Verify the chunk file was created and has content
 	chunkInfo, err := os.Stat(chunkPath)
 	if err != nil {
-		return "", fmt.Errorf("chunk file was not created: %v", err)
+		return "", false, fmt.Errorf("chunk file was not created: %v", err)
 	}
 
 	if chunkInfo.Size() == 0 {
 		os.Remove(chunkPath)
-		return "", fmt.Errorf("chunk file is empty")
+		return "", false, fmt.Errorf("chunk file is empty")
 	}
 
 	log.Printf("[ChunkProcessor] ✅ Chunk created: %s (%.2f MB)", chunkFilename, float64(chunkInfo.Size())/1024/1024)
 	
-	return chunkPath, nil
+	// Apply watermark to the chunk for performance optimization
+	watermarkedChunkPath, isWatermarked, err := cp.applyWatermarkToChunk(ctx, chunkPath, cameraName)
+	if err != nil {
+		log.Printf("[ChunkProcessor] ⚠️ Failed to apply watermark to chunk %s: %v, using original chunk", chunkFilename, err)
+		return chunkPath, false, nil
+	}
+	
+	// Use watermarked chunk if successful, otherwise use original
+	finalChunkPath := chunkPath
+	if isWatermarked {
+		finalChunkPath = watermarkedChunkPath
+		// Remove original unwatermarked chunk to save space
+		if chunkPath != watermarkedChunkPath {
+			os.Remove(chunkPath)
+		}
+		log.Printf("[ChunkProcessor] ✅ Watermark applied to chunk: %s", filepath.Base(watermarkedChunkPath))
+	}
+	
+	// Store the watermark status for database recording
+	return finalChunkPath, isWatermarked, nil
+}
+
+// applyWatermarkToChunk applies watermark to a chunk for performance optimization
+func (cp *ChunkProcessor) applyWatermarkToChunk(ctx context.Context, chunkPath, cameraName string) (string, bool, error) {
+	log.Printf("[ChunkProcessor] 🎨 Applying watermark to chunk: %s", filepath.Base(chunkPath))
+	
+	// Get venue code from system config
+	venueConfig, err := cp.db.GetSystemConfig("venue_code")
+	if err != nil || venueConfig.Value == "" {
+		log.Printf("[ChunkProcessor] ⚠️ No venue code configured, skipping watermark")
+		return chunkPath, false, nil
+	}
+	venueCode := venueConfig.Value
+	
+	// Get watermark file path
+	watermarkPath, err := recording.GetWatermark(venueCode)
+	if err != nil {
+		log.Printf("[ChunkProcessor] ⚠️ Failed to get watermark: %v, skipping watermark", err)
+		return chunkPath, false, nil
+	}
+	
+	if watermarkPath == "" {
+		log.Printf("[ChunkProcessor] ⚠️ Empty watermark path, skipping watermark")
+		return chunkPath, false, nil
+	}
+	
+	// Get watermark settings
+	position, margin, opacity := recording.GetWatermarkSettings()
+	
+	// Create watermarked output path (convert TS to MP4 with watermark)
+	baseDir := filepath.Dir(chunkPath)
+	baseName := strings.TrimSuffix(filepath.Base(chunkPath), ".ts")
+	watermarkedChunkPath := filepath.Join(baseDir, baseName+"_watermarked.mp4")
+	
+	// Apply watermark - assume 1080p resolution for chunks
+	log.Printf("[ChunkProcessor] 🎨 Applying watermark to chunk with position=%d, margin=%d, opacity=%.2f", position, margin, opacity)
+	err = recording.AddWatermarkWithPosition(chunkPath, watermarkPath, watermarkedChunkPath, position, margin, opacity, "1080")
+	if err != nil {
+		log.Printf("[ChunkProcessor] ❌ Failed to apply watermark: %v", err)
+		return chunkPath, false, err
+	}
+	
+	// Verify watermarked file was created
+	if info, err := os.Stat(watermarkedChunkPath); err != nil {
+		log.Printf("[ChunkProcessor] ❌ Watermarked chunk file was not created: %v", err)
+		return chunkPath, false, err
+	} else {
+		log.Printf("[ChunkProcessor] ✅ Watermarked chunk created: %s (%.2f MB)", 
+			filepath.Base(watermarkedChunkPath), float64(info.Size())/(1024*1024))
+	}
+	
+	return watermarkedChunkPath, true, nil
 }
 
 // recordChunkInDatabase records the physical chunk in the database
-func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, group ChunkGroup, diskID, diskPath string) error {
+func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, group ChunkGroup, diskID, diskPath string, isWatermarked bool) error {
 	// Get file info
 	chunkInfo, err := os.Stat(chunkPath)
 	if err != nil {
@@ -569,6 +641,7 @@ func (cp *ChunkProcessor) recordChunkInDatabase(cameraName, chunkPath string, gr
 		SourceSegmentsCount:  len(group.Segments),
 		ChunkDurationSeconds: &duration,
 		ProcessingStatus:     database.ProcessingStatusReady,
+		IsWatermarked:        isWatermarked,
 	}
 
 	err = cp.db.CreateRecordingSegment(chunk)

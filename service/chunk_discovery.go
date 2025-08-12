@@ -27,15 +27,16 @@ func NewChunkDiscoveryService(db database.Database, storageManager *storage.Disk
 
 // SegmentSource represents a source of video segments (either chunks or individual segments)
 type SegmentSource struct {
-	ID          string                    `json:"id"`
-	Type        string                    `json:"type"`     // "chunk" or "segment"
-	FilePath    string                    `json:"filePath"` // Full path to file
-	StartTime   time.Time                 `json:"startTime"`
-	EndTime     time.Time                 `json:"endTime"`
-	Duration    time.Duration             `json:"duration"`
-	SourceCount int                       `json:"sourceCount"` // Number of original segments
-	Status      database.ProcessingStatus `json:"status"`
-	SizeBytes   int64                     `json:"sizeBytes"`
+	ID            string                    `json:"id"`
+	Type          string                    `json:"type"`     // "chunk" or "segment"
+	FilePath      string                    `json:"filePath"` // Full path to file
+	StartTime     time.Time                 `json:"startTime"`
+	EndTime       time.Time                 `json:"endTime"`
+	Duration      time.Duration             `json:"duration"`
+	SourceCount   int                       `json:"sourceCount"` // Number of original segments
+	Status        database.ProcessingStatus `json:"status"`
+	SizeBytes     int64                     `json:"sizeBytes"`
+	IsWatermarked bool                      `json:"isWatermarked"` // Whether this source has watermark applied
 }
 
 // FindOptimalSegmentSources finds the optimal combination of chunks and segments for a time range
@@ -110,15 +111,16 @@ func (cds *ChunkDiscoveryService) findChunksInRange(cameraName string, startTime
 		}
 
 		source := SegmentSource{
-			ID:          chunk.ID,
-			Type:        "chunk",
-			FilePath:    fullChunkPath,
-			StartTime:   chunk.StartTime,
-			EndTime:     chunk.EndTime,
-			Duration:    chunk.EndTime.Sub(chunk.StartTime),
-			SourceCount: chunk.SourceSegmentsCount,
-			Status:      chunk.ProcessingStatus,
-			SizeBytes:   chunk.FileSizeBytes,
+			ID:            chunk.ID,
+			Type:          "chunk",
+			FilePath:      fullChunkPath,
+			StartTime:     chunk.StartTime,
+			EndTime:       chunk.EndTime,
+			Duration:      chunk.EndTime.Sub(chunk.StartTime),
+			SourceCount:   chunk.SourceSegmentsCount,
+			Status:        chunk.ProcessingStatus,
+			SizeBytes:     chunk.FileSizeBytes,
+			IsWatermarked: chunk.IsWatermarked,
 		}
 		sources = append(sources, source)
 	}
@@ -152,15 +154,16 @@ func (cds *ChunkDiscoveryService) findSegmentsInRange(cameraName string, startTi
 		}
 
 		source := SegmentSource{
-			ID:          segment.ID,
-			Type:        "segment",
-			FilePath:    filepath.Join(disk.Path, segment.MP4Path),
-			StartTime:   segment.SegmentStart,
-			EndTime:     segment.SegmentEnd,
-			Duration:    segment.SegmentEnd.Sub(segment.SegmentStart),
-			SourceCount: 1,
-			Status:      segment.ProcessingStatus,
-			SizeBytes:   segment.FileSizeBytes,
+			ID:            segment.ID,
+			Type:          "segment",
+			FilePath:      filepath.Join(disk.Path, segment.MP4Path),
+			StartTime:     segment.SegmentStart,
+			EndTime:       segment.SegmentEnd,
+			Duration:      segment.SegmentEnd.Sub(segment.SegmentStart),
+			SourceCount:   1,
+			Status:        segment.ProcessingStatus,
+			SizeBytes:     segment.FileSizeBytes,
+			IsWatermarked: segment.IsWatermarked,
 		}
 		sources = append(sources, source)
 	}

@@ -122,6 +122,7 @@ type RecordingSegment struct {
 	SourceSegmentsCount  int              `json:"sourceSegmentsCount"` // Number of source segments (1 for segments, 225 for 15min chunks)
 	ChunkDurationSeconds *int             `json:"chunkDurationSeconds"` // Duration in seconds (null for individual segments)
 	ProcessingStatus     ProcessingStatus `json:"processingStatus"`     // Processing status
+	IsWatermarked        bool             `json:"isWatermarked"`        // Whether this chunk/segment has watermark applied
 }
 
 // ChunkInfo represents metadata about a pre-concatenated chunk
@@ -136,6 +137,7 @@ type ChunkInfo struct {
 	FileSizeBytes        int64            `json:"fileSizeBytes"`
 	ProcessingStatus     ProcessingStatus `json:"processingStatus"`
 	StorageDiskID        string           `json:"storageDiskId"`
+	IsWatermarked        bool             `json:"isWatermarked"`        // Whether this chunk has watermark applied
 }
 
 // PendingTask represents a task waiting to be executed

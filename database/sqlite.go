@@ -196,6 +196,7 @@ func initTables(db *sql.DB) error {
 		{"source_segments_count", "ALTER TABLE recording_segments ADD COLUMN source_segments_count INTEGER DEFAULT 1"},
 		{"chunk_duration_seconds", "ALTER TABLE recording_segments ADD COLUMN chunk_duration_seconds INTEGER"},
 		{"processing_status", "ALTER TABLE recording_segments ADD COLUMN processing_status TEXT DEFAULT 'ready'"},
+		{"is_watermarked", "ALTER TABLE recording_segments ADD COLUMN is_watermarked BOOLEAN DEFAULT FALSE"},
 	}
 
 	for _, migration := range migrations {
@@ -1647,11 +1648,11 @@ func (s *SQLiteDB) CreateRecordingSegment(segment RecordingSegment) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recording_segments (
 			id, camera_name, storage_disk_id, mp4_path, segment_start, segment_end, file_size_bytes, created_at,
-			chunk_type, source_segments_count, chunk_duration_seconds, processing_status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chunk_type, source_segments_count, chunk_duration_seconds, processing_status, is_watermarked
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		segment.ID, segment.CameraName, segment.StorageDiskID, segment.MP4Path,
 		segment.SegmentStart, segment.SegmentEnd, segment.FileSizeBytes, segment.CreatedAt,
-		segment.ChunkType, segment.SourceSegmentsCount, segment.ChunkDurationSeconds, segment.ProcessingStatus,
+		segment.ChunkType, segment.SourceSegmentsCount, segment.ChunkDurationSeconds, segment.ProcessingStatus, segment.IsWatermarked,
 	)
 	return err
 }
@@ -1664,7 +1665,8 @@ func (s *SQLiteDB) GetRecordingSegments(cameraName string, start, end time.Time)
 			   COALESCE(rs.chunk_type, 'segment') as chunk_type,
 			   COALESCE(rs.source_segments_count, 1) as source_segments_count,
 			   rs.chunk_duration_seconds,
-			   COALESCE(rs.processing_status, 'ready') as processing_status
+			   COALESCE(rs.processing_status, 'ready') as processing_status,
+			   COALESCE(rs.is_watermarked, FALSE) as is_watermarked
 		FROM recording_segments rs
 		WHERE rs.camera_name = ? 
 		  AND rs.segment_start <= ? 
@@ -1684,7 +1686,7 @@ func (s *SQLiteDB) GetRecordingSegments(cameraName string, start, end time.Time)
 		err := rows.Scan(
 			&segment.ID, &segment.CameraName, &segment.StorageDiskID, &segment.MP4Path,
 			&segment.SegmentStart, &segment.SegmentEnd, &segment.FileSizeBytes, &segment.CreatedAt,
-			&segment.ChunkType, &segment.SourceSegmentsCount, &chunkDuration, &segment.ProcessingStatus,
+			&segment.ChunkType, &segment.SourceSegmentsCount, &chunkDuration, &segment.ProcessingStatus, &segment.IsWatermarked,
 		)
 		if err != nil {
 			return nil, err
@@ -2370,7 +2372,7 @@ func (s *SQLiteDB) FindChunksInTimeRange(cameraName string, start, end time.Time
 		SELECT rs.id, rs.camera_name, rs.segment_start, rs.segment_end, 
 			   rs.mp4_path, rs.source_segments_count, rs.chunk_duration_seconds,
 			   rs.file_size_bytes, rs.processing_status, rs.storage_disk_id,
-			   sd.path as disk_path
+			   sd.path as disk_path, COALESCE(rs.is_watermarked, FALSE) as is_watermarked
 		FROM recording_segments rs
 		JOIN storage_disks sd ON rs.storage_disk_id = sd.id
 		WHERE rs.camera_name = ? 
@@ -2396,7 +2398,7 @@ func (s *SQLiteDB) FindChunksInTimeRange(cameraName string, start, end time.Time
 			&chunk.ID, &chunk.CameraName, &chunk.StartTime, &chunk.EndTime,
 			&relativePath, &chunk.SourceSegmentsCount, &chunkDuration,
 			&chunk.FileSizeBytes, &chunk.ProcessingStatus, &chunk.StorageDiskID,
-			&diskPath,
+			&diskPath, &chunk.IsWatermarked,
 		)
 		if err != nil {
 			return nil, err

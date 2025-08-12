@@ -226,6 +226,24 @@ func (hvp *HybridVideoProcessor) processVideoSources(sources []SegmentSource, un
 		return "", fmt.Errorf("error creating temp directory: %v", err)
 	}
 
+	// Check if all sources are already watermarked to avoid double watermarking
+	allWatermarked := true
+	watermarkedCount := 0
+	for _, source := range sources {
+		if source.Type == "chunk" && source.IsWatermarked {
+			watermarkedCount++
+		} else if source.Type == "chunk" && !source.IsWatermarked {
+			allWatermarked = false
+		}
+		// Note: Individual segments are not pre-watermarked in current implementation
+	}
+	
+	if allWatermarked && watermarkedCount > 0 {
+		log.Printf("[HybridProcessor] ✅ All chunks already watermarked (%d chunks), watermark step will be skipped", watermarkedCount)
+	} else if watermarkedCount > 0 {
+		log.Printf("[HybridProcessor] ⚠️ Mixed watermark status: %d watermarked chunks, %d total sources", watermarkedCount, len(sources))
+	}
+
 	// If we have only one source and it's a chunk that covers the full range, use it directly
 	if len(sources) == 1 && sources[0].Type == "chunk" && hvp.sourceCoversRange(sources[0], startTime, endTime) {
 		return hvp.processSimpleChunk(sources[0], uniqueID, camera, startTime, endTime, tmpDir)
@@ -266,8 +284,8 @@ func (hvp *HybridVideoProcessor) processSimpleChunk(source SegmentSource, unique
 		return "", fmt.Errorf("error extracting from chunk: %v\nFFmpeg output: %s", err, string(output))
 	}
 
-	// Apply watermark if available
-	return hvp.applyWatermarkIfAvailable(extractedPath, uniqueID, camera, tmpDir)
+	// Apply watermark if available (only if source is not already watermarked)
+	return hvp.applyWatermarkIfAvailable(extractedPath, uniqueID, camera, tmpDir, source.IsWatermarked)
 }
 
 // processMultipleSources processes multiple chunks and segments
@@ -333,8 +351,17 @@ func (hvp *HybridVideoProcessor) processMultipleSources(sources []SegmentSource,
 		return "", fmt.Errorf("error concatenating sources: %v\nFFmpeg output: %s", err, string(output))
 	}
 
-	// Apply watermark if available
-	return hvp.applyWatermarkIfAvailable(concatenatedPath, uniqueID, camera, tmpDir)
+	// Check if any sources are already watermarked
+	hasWatermarkedSource := false
+	for _, source := range sources {
+		if source.Type == "chunk" && source.IsWatermarked {
+			hasWatermarkedSource = true
+			break
+		}
+	}
+	
+	// Apply watermark if available (skip if we already have watermarked content)
+	return hvp.applyWatermarkIfAvailable(concatenatedPath, uniqueID, camera, tmpDir, hasWatermarkedSource)
 }
 
 // extractFromChunk extracts a specific time range from a pre-concatenated chunk
@@ -404,9 +431,15 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 }
 
 // applyWatermarkIfAvailable applies watermark to the processed video
-func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID string, camera config.CameraConfig, tmpDir string) (string, error) {
+func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID string, camera config.CameraConfig, tmpDir string, alreadyWatermarked bool) (string, error) {
 	log.Printf("[HybridProcessor] 🎨 Starting watermark application for video: %s (camera: %s, resolution: %s)", 
 		filepath.Base(inputPath), camera.Name, camera.Resolution)
+	
+	// Check if content is already watermarked
+	if alreadyWatermarked {
+		log.Printf("[HybridProcessor] ✅ Content already watermarked, skipping watermark application")
+		return inputPath, nil
+	}
 	
 	// Check if input file exists and has content
 	if info, err := os.Stat(inputPath); err != nil {

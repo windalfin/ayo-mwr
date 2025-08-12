@@ -22,6 +22,7 @@ import (
 type ChunkProcessor struct {
 	db             database.Database
 	storageManager *storage.DiskManager
+	ayoClient      interface{} // Will be *api.AyoIndoClient but we avoid import cycle
 }
 
 // NewChunkProcessor creates a new chunk processor
@@ -29,7 +30,13 @@ func NewChunkProcessor(db database.Database, storageManager *storage.DiskManager
 	return &ChunkProcessor{
 		db:             db,
 		storageManager: storageManager,
+		ayoClient:      nil, // Will be set by SetAyoClient
 	}
+}
+
+// SetAyoClient sets the AYO client for watermark operations (avoids import cycle)
+func (cp *ChunkProcessor) SetAyoClient(client interface{}) {
+	cp.ayoClient = client
 }
 
 // SegmentFile represents a segment file found on disk
@@ -571,8 +578,23 @@ func (cp *ChunkProcessor) applyWatermarkToChunk(ctx context.Context, chunkPath, 
 	}
 	venueCode := venueConfig.Value
 	
-	// Get watermark file path
-	watermarkPath, err := recording.GetWatermark(venueCode)
+	// Get watermark using AYO client if available, fallback to legacy method
+	var watermarkPath string
+	
+	if cp.ayoClient != nil {
+		log.Printf("[ChunkProcessor] Getting watermark using AYO client for resolution: 1080")
+		// Use reflection to call GetWatermark method on the interface
+		if client, ok := cp.ayoClient.(interface{ GetWatermark(string) (string, error) }); ok {
+			watermarkPath, err = client.GetWatermark("1080") // Assume 1080p for chunks
+		} else {
+			log.Printf("[ChunkProcessor] ⚠️ AYO client doesn't support GetWatermark method, using legacy method")
+			watermarkPath, err = recording.GetWatermark(venueCode)
+		}
+	} else {
+		log.Printf("[ChunkProcessor] Getting watermark using legacy method for venue: %s", venueCode)
+		watermarkPath, err = recording.GetWatermark(venueCode)
+	}
+	
 	if err != nil {
 		log.Printf("[ChunkProcessor] ⚠️ Failed to get watermark: %v, skipping watermark", err)
 		return chunkPath, false, nil

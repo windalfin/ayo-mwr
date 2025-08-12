@@ -30,6 +30,11 @@ func NewChunkProcessingCron(db database.Database, storageManager *storage.DiskMa
 	}
 }
 
+// SetAyoClient sets the AYO client for authenticated watermark operations
+func (cpc *ChunkProcessingCron) SetAyoClient(client interface{}) {
+	cpc.chunkProcessor.SetAyoClient(client)
+}
+
 // Start begins the chunk processing cron jobs
 func (cpc *ChunkProcessingCron) Start() error {
 	if cpc.isRunning {

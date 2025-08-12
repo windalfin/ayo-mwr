@@ -117,6 +117,14 @@ func NewBookingVideoRequestHandler(cfg *config.Config, db database.Database, r2S
 
 	// Initialize hybrid video processor for chunk optimization
 	hybridProcessor := service.NewHybridVideoProcessor(db, cfg, storageManager)
+	
+	// Set AYO client for authenticated watermark operations
+	if ayoClient != nil {
+		hybridProcessor.SetAyoClient(ayoClient)
+		log.Printf("🎨 HYBRID PROCESSOR: ✅ AYO client set for watermark authentication")
+	} else {
+		log.Printf("⚠️ HYBRID PROCESSOR: No AYO client available, watermarks may fail")
+	}
 
 	log.Printf("📦 OFFLINE QUEUE: ✅ Offline queue system started successfully")
 	log.Printf("🌐 CONNECTIVITY: System will automatically handle online/offline transitions")

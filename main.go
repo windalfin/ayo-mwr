@@ -200,6 +200,9 @@ func main() {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
 		apiClient = nil // Explicitly set to nil for clarity
 	} else {
+		// Set AYO client for chunk processor watermarking
+		chunkCron.SetAyoClient(apiClient)
+		log.Println("Set AYO client for chunk processor watermarking")
 		// Start video cleanup cron job (every 24 hours)
 		// delay 10 seconds before first run
 		// time.Sleep(15 * time.Second)

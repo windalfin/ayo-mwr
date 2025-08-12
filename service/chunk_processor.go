@@ -46,45 +46,56 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 	startTime := time.Now()
 	totalChunksCreated := 0
 
-	// Get all storage disks
-	disks, err := cp.db.GetStorageDisks()
+	// Get the active disk from database
+	activeDisk, err := cp.db.GetActiveDisk()
 	if err != nil {
-		return fmt.Errorf("failed to get storage disks: %v", err)
+		return fmt.Errorf("failed to get active disk: %v", err)
+	}
+	if activeDisk == nil {
+		return fmt.Errorf("no active disk available for chunk processing")
 	}
 
-	// Process each camera on each disk
+	log.Printf("[ChunkProcessor] Using active disk: %s", activeDisk.Path)
+
+	// Process each camera on the active disk
 	cameras := []string{"CAMERA_1", "CAMERA_2", "CAMERA_3", "CAMERA_4"}
 	
-	for _, disk := range disks {
-		for _, camera := range cameras {
-			hlsPath := filepath.Join(disk.Path, "recordings", camera, "hls")
-			chunksPath := filepath.Join(disk.Path, "recordings", camera, "chunks")
-			
-			// Check if HLS directory exists
-			if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
-				log.Printf("[ChunkProcessor] HLS directory not found: %s", hlsPath)
-				continue
-			}
+	for _, camera := range cameras {
+		// Get recording path for this camera
+		recordingDir, diskID, err := cp.storageManager.GetRecordingPath(camera)
+		if err != nil {
+			log.Printf("[ChunkProcessor] Failed to get recording path for %s: %v", camera, err)
+			continue
+		}
+		
+		// Build HLS and chunks paths
+		hlsPath := filepath.Join(recordingDir, "hls")
+		chunksPath := filepath.Join(recordingDir, "chunks")
+		
+		// Check if HLS directory exists
+		if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
+			log.Printf("[ChunkProcessor] HLS directory not found: %s", hlsPath)
+			continue
+		}
 
-			// Create chunks directory if it doesn't exist
-			if err := os.MkdirAll(chunksPath, 0755); err != nil {
-				log.Printf("[ChunkProcessor] Failed to create chunks directory %s: %v", chunksPath, err)
-				continue
-			}
+		// Create chunks directory if it doesn't exist
+		if err := os.MkdirAll(chunksPath, 0755); err != nil {
+			log.Printf("[ChunkProcessor] Failed to create chunks directory %s: %v", chunksPath, err)
+			continue
+		}
 
-			log.Printf("[ChunkProcessor] Processing %s...", camera)
-			
-			chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, disk.ID)
-			if err != nil {
-				log.Printf("[ChunkProcessor] Error processing camera %s: %v", camera, err)
-				continue
-			}
+		log.Printf("[ChunkProcessor] Processing %s on disk %s...", camera, activeDisk.Path)
+		
+		chunksCreated, err := cp.processCameraChunks(ctx, camera, hlsPath, chunksPath, diskID)
+		if err != nil {
+			log.Printf("[ChunkProcessor] Error processing camera %s: %v", camera, err)
+			continue
+		}
 
-			totalChunksCreated += chunksCreated
-			
-			if chunksCreated > 0 {
-				log.Printf("[ChunkProcessor] Camera %s: %d chunks created", camera, chunksCreated)
-			}
+		totalChunksCreated += chunksCreated
+		
+		if chunksCreated > 0 {
+			log.Printf("[ChunkProcessor] Camera %s: %d chunks created", camera, chunksCreated)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -2403,8 +2404,8 @@ func (s *SQLiteDB) FindChunksInTimeRange(cameraName string, start, end time.Time
 		if chunkDuration.Valid {
 			chunk.DurationSeconds = int(chunkDuration.Int64)
 		}
-		// Construct full path
-		chunk.FilePath = diskPath + "/" + relativePath
+		// Construct full path using filepath.Join for proper path handling
+		chunk.FilePath = filepath.Join(diskPath, relativePath)
 		chunks = append(chunks, chunk)
 	}
 

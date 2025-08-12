@@ -132,6 +132,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	   api := r.Group("/api")
 	   {
 			   // Public API endpoints (for external integrations and onboarding)
+			   api.GET("/health", s.handleHealthCheck)
 			   api.POST("/upload", s.handleUpload)
 			   api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
 			   api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)

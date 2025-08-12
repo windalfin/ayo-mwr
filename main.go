@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -211,7 +214,7 @@ func main() {
 		Endpoint:  cfg.R2Endpoint,
 		BaseURL:   cfg.R2BaseURL, // Menggunakan R2_BASE_URL dari environment
 	}
-	r2Storage, err := storage.NewR2Storage(r2Config)
+	r2Storage, err := storage.NewR2StorageWithConcurrency(r2Config, cfg.UploadWorkerConcurrency)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize R2 storage: %v", err)
 	}
@@ -231,10 +234,55 @@ func main() {
 	fmt.Println("[MAIN] Arduino setup complete, starting RTSP stream recording")
 	log.Println("Starting 24/7 RTSP stream recording")
 
-	// Start capturing from all cameras
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup graceful shutdown handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	var wg sync.WaitGroup
+
+	// Start capturing from all cameras with context
 	fmt.Println("[MAIN] Starting camera workers")
-	recording.StartAllCameras(&cfg)
-	// Keep main alive
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		recording.StartAllCamerasWithContext(ctx, &cfg)
+	}()
+
+	// Wait for shutdown signal
+	go func() {
+		sig := <-sigChan
+		fmt.Printf("[MAIN] Received signal: %v. Starting graceful shutdown...\n", sig)
+		log.Printf("Received signal: %v. Starting graceful shutdown...", sig)
+		
+		// Cancel context to signal all goroutines to stop
+		cancel()
+		
+		// Give services time to shutdown gracefully
+		shutdownTimer := time.NewTimer(30 * time.Second)
+		shutdownComplete := make(chan struct{})
+		
+		go func() {
+			wg.Wait()
+			close(shutdownComplete)
+		}()
+		
+		select {
+		case <-shutdownComplete:
+			fmt.Println("[MAIN] Graceful shutdown completed successfully")
+			log.Println("Graceful shutdown completed successfully")
+		case <-shutdownTimer.C:
+			fmt.Println("[MAIN] Shutdown timeout reached, forcing exit")
+			log.Println("Shutdown timeout reached, forcing exit")
+		}
+		
+		os.Exit(0)
+	}()
+
+	// Keep main alive until shutdown signal
 	select {}
 
 }

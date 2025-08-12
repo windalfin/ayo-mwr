@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,105 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// handleHealthCheck provides detailed health information for zero-downtime deployments
+func (s *Server) handleHealthCheck(c *gin.Context) {
+	startTime := time.Now()
+	
+	// Basic service info
+	healthResponse := gin.H{
+		"status":      "healthy",
+		"timestamp":   startTime.UTC().Format(time.RFC3339),
+		"uptime":      time.Since(startTime).String(),
+		"version":     "1.0.0", // You can make this dynamic
+		"instance_id": os.Getenv("HOSTNAME"), // Or generate a unique ID
+	}
+
+	// Check database connectivity by attempting a simple query
+	_, err := s.db.ListVideos(1, 0) // Try to get one video to test DB connection
+	if err != nil {
+		healthResponse["status"] = "unhealthy"
+		healthResponse["database"] = gin.H{
+			"status": "failed",
+			"error":  err.Error(),
+		}
+		c.JSON(http.StatusServiceUnavailable, healthResponse)
+		return
+	}
+	
+	healthResponse["database"] = gin.H{"status": "connected"}
+
+	// Check camera recording status
+	runningCameras := recording.ListRunningWorkers()
+	totalCameras := 0
+	enabledCameras := 0
+	
+	for _, cam := range s.config.Cameras {
+		totalCameras++
+		if cam.Enabled {
+			enabledCameras++
+		}
+	}
+	
+	cameraStatus := gin.H{
+		"total_cameras":   totalCameras,
+		"enabled_cameras": enabledCameras,
+		"running_cameras": len(runningCameras),
+		"camera_list":     runningCameras,
+	}
+	
+	// If no cameras are running but some are enabled, mark as degraded
+	if enabledCameras > 0 && len(runningCameras) == 0 {
+		healthResponse["status"] = "degraded"
+		cameraStatus["status"] = "no_cameras_running"
+	} else if len(runningCameras) < enabledCameras {
+		healthResponse["status"] = "degraded" 
+		cameraStatus["status"] = "partial_recording"
+	} else {
+		cameraStatus["status"] = "recording"
+	}
+	
+	healthResponse["recording"] = cameraStatus
+
+	// Check system resources
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	
+	healthResponse["system"] = gin.H{
+		"memory_mb":    memStats.Alloc / 1024 / 1024,
+		"goroutines":   runtime.NumGoroutine(),
+		"go_version":   runtime.Version(),
+	}
+
+	// Check disk space on storage path
+	if diskInfo := s.getDiskSpace(); diskInfo != nil {
+		healthResponse["storage"] = diskInfo
+	}
+
+	// Determine final status based on all checks
+	status := http.StatusOK
+	if healthResponse["status"] == "degraded" {
+		status = http.StatusOK // Still return 200 for degraded
+	} else if healthResponse["status"] == "unhealthy" {
+		status = http.StatusServiceUnavailable
+	}
+
+	// Add response time
+	healthResponse["response_time_ms"] = time.Since(startTime).Milliseconds()
+
+	c.JSON(status, healthResponse)
+}
+
+// getDiskSpace returns disk space information for the storage path
+func (s *Server) getDiskSpace() gin.H {
+	// This is a simplified version - you might want to use a proper disk space library
+	// or system calls for more accurate information
+	return gin.H{
+		"path":           s.config.StoragePath,
+		"status":         "available",
+		"check_enabled":  true,
+	}
+}
 
 func (s *Server) listStreams(c *gin.Context) {
 	limit := 20

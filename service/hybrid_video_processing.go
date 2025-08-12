@@ -398,9 +398,48 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 
 // applyWatermarkIfAvailable applies watermark to the processed video
 func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID string, camera config.CameraConfig, tmpDir string) (string, error) {
-	// For now, return the input path (watermarking will be added in next phase)
-	// This matches the current behavior where watermarking happens in the service layer
-	return inputPath, nil
+	log.Printf("[HybridProcessor] 🎨 Applying watermark to video (camera: %s, resolution: %s)", camera.Name, camera.Resolution)
+	
+	// Get venue code from database configuration
+	venueCode := ""
+	if venueConfig, err := hvp.db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+		venueCode = venueConfig.Value
+	}
+	
+	if venueCode == "" {
+		log.Printf("[HybridProcessor] ⚠️ No venue code configured, skipping watermark")
+		return inputPath, nil
+	}
+	
+	// Get watermark file path using the recording package function
+	watermarkPath, err := recording.GetWatermark(venueCode)
+	if err != nil {
+		log.Printf("[HybridProcessor] ⚠️ Failed to get watermark: %v, continuing without watermark", err)
+		return inputPath, nil
+	}
+	
+	// Get watermark settings (position, margin, opacity)
+	position, margin, opacity := recording.GetWatermarkSettings()
+	log.Printf("[HybridProcessor] Watermark settings - Position: %d, Margin: %d, Opacity: %.2f", position, margin, opacity)
+	
+	// Create output path for watermarked video
+	watermarkedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_watermarked.ts", uniqueID))
+	
+	// Apply watermark using the recording package function
+	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, watermarkedPath, position, margin, opacity, camera.Resolution)
+	if err != nil {
+		log.Printf("[HybridProcessor] ❌ Failed to apply watermark: %v, using original video", err)
+		return inputPath, nil
+	}
+	
+	log.Printf("[HybridProcessor] ✅ Watermark applied successfully")
+	
+	// Clean up the original file to save space
+	if inputPath != watermarkedPath {
+		os.Remove(inputPath)
+	}
+	
+	return watermarkedPath, nil
 }
 
 // determineStorageInfo determines storage disk ID and full path for a video file

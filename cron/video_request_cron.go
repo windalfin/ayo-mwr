@@ -606,32 +606,44 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 					// Create temporary MP4 file path for conversion
 					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
 
-					// Convert TS to MP4 first (remux operation)
-					if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
-						log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
-						db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-						return
-					}
-					log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful", cronID)
-
-					// Apply watermark if available
+					// Convert TS to MP4 with or without watermark in single step
 					if watermarkPath != "" {
-						// Create watermarked version
-						watermarkedPath := filepath.Join(filepath.Dir(convertedMP4Path), fmt.Sprintf("%s_watermarked.mp4", uniqueID))
-						if err := recording.AddWatermarkWithPosition(convertedMP4Path, watermarkPath, watermarkedPath, position, margin, opacity, "1080"); err != nil {
-							log.Printf("⚠️ WARNING: Failed to add watermark: %v", err)
-							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Using video without watermark", cronID)
-							// Continue with non-watermarked version
-						} else {
-							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Watermark applied successfully", cronID)
-							// Replace convertedMP4Path with watermarked version
-							if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
-								log.Printf("⚠️ WARNING: Failed to remove original converted file: %v", removeErr)
+						// Convert with watermark in single step (more efficient)
+						var positionStr string
+						switch position {
+						case recording.TopLeft:
+							positionStr = "top_left"
+						case recording.TopRight:
+							positionStr = "top_right"
+						case recording.BottomLeft:
+							positionStr = "bottom_left"
+						case recording.BottomRight:
+							positionStr = "bottom_right"
+						default:
+							positionStr = "top_right"
+						}
+						
+						if err := transcode.ConvertTSToMP4WithWatermark(matchingVideo.LocalPath, convertedMP4Path, watermarkPath, positionStr, margin); err != nil {
+							log.Printf("❌ ERROR: Failed to convert TS to MP4 with watermark: %v", err)
+							log.Printf("⚠️ Falling back to conversion without watermark")
+							// Fallback to conversion without watermark
+							if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
+								log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
+								db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+								return
 							}
-							convertedMP4Path = watermarkedPath
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion with watermark successful (single step)", cronID)
 						}
 					} else {
-						log.Printf("✅ VIDEO-REQUEST-CRON-%d: No watermark applied (no watermark path)", cronID)
+						// Convert without watermark
+						if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
+							log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
+							db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+							return
+						}
+						log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
 					}
 
 					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)

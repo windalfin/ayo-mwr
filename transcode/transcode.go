@@ -704,6 +704,82 @@ func ConvertTSToMP4(inputPath, outputPath string) error {
 	return nil
 }
 
+// ConvertTSToMP4WithWatermark converts a TS file to MP4 with watermark in a single step
+// This is more efficient than remuxing then watermarking separately
+func ConvertTSToMP4WithWatermark(inputPath, outputPath, watermarkPath string, overlayPosition string, margin int) error {
+	// Create output directory if it doesn't exist
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Check if input file exists
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		return fmt.Errorf("input TS file does not exist: %s", inputPath)
+	}
+
+	// Check if watermark file exists
+	if _, err := os.Stat(watermarkPath); os.IsNotExist(err) {
+		return fmt.Errorf("watermark file does not exist: %s", watermarkPath)
+	}
+
+	log.Printf("[ConvertTSToMP4WithWatermark] Converting %s to MP4 with watermark in single step", filepath.Base(inputPath))
+
+	// Build overlay expression based on position
+	var overlayExpr string
+	switch overlayPosition {
+	case "top_left":
+		overlayExpr = fmt.Sprintf("%d:%d", margin, margin)
+	case "top_right":
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:%d", margin, margin)
+	case "bottom_left":
+		overlayExpr = fmt.Sprintf("%d:main_h-overlay_h-%d", margin, margin)
+	case "bottom_right":
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:%d", margin, margin) // Default to top_right
+	}
+
+	// Single-step TS to MP4 conversion with watermark overlay
+	cmd := exec.Command("ffmpeg",
+		"-i", inputPath,
+		"-i", watermarkPath,
+		"-filter_complex", fmt.Sprintf("overlay=%s", overlayExpr),
+		"-c:v", "libx264",           // H.264 video codec
+		"-crf", "28",                // Higher CRF for faster encoding
+		"-preset", "fast",           // Fast preset (balance of speed vs quality)
+		"-profile:v", "high",        // High profile for quality
+		"-pix_fmt", "yuv420p",       // Standard pixel format
+		"-color_range", "tv",        // TV color range
+		"-colorspace", "bt709",      // Standard colorspace
+		"-c:a", "copy",              // Copy audio without re-encoding
+		"-avoid_negative_ts", "make_zero",
+		"-fflags", "+genpts",
+		"-movflags", "+faststart",   // Optimize for streaming
+		"-max_muxing_queue_size", "1024",
+		"-threads", "4",             // Limited threads to prevent resource issues
+		"-y", // Overwrite output file if exists
+		outputPath)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	log.Printf("[ConvertTSToMP4WithWatermark] Running single-step conversion with watermark...")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to convert TS to MP4 with watermark: %v", err)
+	}
+
+	// Verify output file was created
+	if info, err := os.Stat(outputPath); err != nil {
+		return fmt.Errorf("output file was not created: %v", err)
+	} else {
+		log.Printf("[ConvertTSToMP4WithWatermark] ✅ Single-step conversion complete: %s (%.2f MB)", 
+			filepath.Base(outputPath), float64(info.Size())/(1024*1024))
+	}
+
+	return nil
+}
+
 // IsTSFile checks if the given file is a TS file based on extension
 func IsTSFile(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))

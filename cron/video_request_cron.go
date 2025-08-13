@@ -15,6 +15,7 @@ import (
 	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 	"ayo-mwr/transcode"
 
@@ -156,9 +157,9 @@ func StartVideoRequestCron(cfg *config.Config) {
 		if err != nil {
 			log.Printf("Error initializing AYO API client: %v", err)
 			return
-	}
+		}
 
-	// Initialize R2 storage client with database configuration
+		// Initialize R2 storage client with database configuration
 		r2Config := storage.R2Config{
 			AccessKey: cfg.R2AccessKey,
 			SecretKey: cfg.R2SecretKey,
@@ -559,17 +560,78 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				var convertedMP4Path string
 				var shouldDeleteConverted bool
 
+				// Get watermark settings from database using existing recording package functions
+				var watermarkPath string
+				position, margin, opacity := recording.GetWatermarkSettings()
+
+				// Get venue code for watermark
+				venueCode := ""
+				if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+					venueCode = venueConfig.Value
+					log.Printf("📋 VIDEO-REQUEST-CRON-%d: Found venue code: %s", cronID, venueCode)
+				}
+
+				if venueCode != "" {
+					// Get watermark using recording package
+					var err error
+					watermarkPath, err = recording.GetWatermark(venueCode)
+					if err != nil {
+						log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Failed to get watermark: %v", cronID, err)
+						// Continue without watermark
+						watermarkPath = ""
+					} else {
+						log.Printf("✅ VIDEO-REQUEST-CRON-%d: Got watermark path: %s", cronID, watermarkPath)
+					}
+				}
+
+				// Get watermark margin
+				if marginConfig, err := db.GetSystemConfig(database.ConfigWatermarkMargin); err == nil && marginConfig.Value != "" {
+					if val, err := strconv.Atoi(marginConfig.Value); err == nil {
+						margin = val
+					}
+				}
+
+				// Get watermark opacity
+				if opacityConfig, err := db.GetSystemConfig(database.ConfigWatermarkOpacity); err == nil && opacityConfig.Value != "" {
+					if val, err := strconv.ParseFloat(opacityConfig.Value, 64); err == nil {
+						opacity = val
+					}
+				}
+
+				log.Printf("🎨 VIDEO-REQUEST-CRON-%d: Watermark settings - Position: %d, Margin: %d, Opacity: %.2f", cronID, position, margin, opacity)
+
 				if transcode.IsTSFile(matchingVideo.LocalPath) {
 					log.Printf("📹 TS file detected: %s, converting to MP4...", matchingVideo.LocalPath)
 
 					// Create temporary MP4 file path for conversion
 					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
 
-					// Convert TS to MP4 without changing quality
+					// Convert TS to MP4 first (remux operation)
 					if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
 						log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
 						db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 						return
+					}
+					log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful", cronID)
+
+					// Apply watermark if available
+					if watermarkPath != "" {
+						// Create watermarked version
+						watermarkedPath := filepath.Join(filepath.Dir(convertedMP4Path), fmt.Sprintf("%s_watermarked.mp4", uniqueID))
+						if err := recording.AddWatermarkWithPosition(convertedMP4Path, watermarkPath, watermarkedPath, position, margin, opacity, "1080"); err != nil {
+							log.Printf("⚠️ WARNING: Failed to add watermark: %v", err)
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Using video without watermark", cronID)
+							// Continue with non-watermarked version
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Watermark applied successfully", cronID)
+							// Replace convertedMP4Path with watermarked version
+							if removeErr := os.Remove(convertedMP4Path); removeErr != nil {
+								log.Printf("⚠️ WARNING: Failed to remove original converted file: %v", removeErr)
+							}
+							convertedMP4Path = watermarkedPath
+						}
+					} else {
+						log.Printf("✅ VIDEO-REQUEST-CRON-%d: No watermark applied (no watermark path)", cronID)
 					}
 
 					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)

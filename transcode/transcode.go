@@ -689,6 +689,8 @@ func ConvertTSToMP4(inputPath, outputPath string) error {
 		"-c", "copy", // Copy streams without re-encoding
 		"-avoid_negative_ts", "make_zero", // Handle negative timestamps
 		"-fflags", "+genpts", // Generate presentation timestamps
+		"-movflags", "+faststart", // Optimize for streaming/playback
+		"-f", "mp4", // Explicitly specify MP4 format
 		"-y", // Overwrite output file if exists
 		outputPath)
 

@@ -70,16 +70,29 @@ func GetWatermark(venueCode string) (string, error) {
 	}
 	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
 
-	// Check if all files exist
+	// Check if any files exist first - prioritize using existing files
 	cwd, _ := os.Getwd()
 	log.Printf("Current working directory: %s", cwd)
+	log.Printf("Checking watermark files in folder: %s", folder)
+	
+	// First try to return any existing watermark file (prioritize 1080 > 720 > 480 > 360)
+	for _, res := range []string{"1080", "720", "480", "360"} {
+		fname := sizes[res]
+		path := filepath.Join(folder, fname)
+		if _, err := os.Stat(path); err == nil {
+			log.Printf("Found existing watermark: %s", path)
+			return path, nil
+		}
+	}
+	
+	// No existing files found, try to download
 	allExist := true
 	for res, fname := range sizes {
 		if _, err := os.Stat(filepath.Join(folder, fname)); os.IsNotExist(err) && wanted[res] {
 			allExist = false
 		}
 	}
-	log.Printf("Checking watermark files in folder: %s", folder)
+	log.Printf("No existing watermark files found, attempting download...")
 	log.Printf("Does watermark files exist: %t", allExist)
 
 	if !allExist {
@@ -139,15 +152,16 @@ func GetWatermark(venueCode string) (string, error) {
 		}
 	}
 
-	// Return 360p if available, else fallback to 480/720/1080
-	for _, res := range []string{"360", "480", "720", "1080"} {
+	// Try again to return any downloaded watermark file (prioritize 1080 > 720 > 480 > 360)
+	for _, res := range []string{"1080", "720", "480", "360"} {
 		fname := sizes[res]
 		path := filepath.Join(folder, fname)
 		if _, err := os.Stat(path); err == nil {
+			log.Printf("Using downloaded watermark: %s", path)
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("no watermark image found after download")
+	return "", fmt.Errorf("no watermark image found after download attempt")
 }
 
 // WatermarkPosition defines standard positions for watermark overlay

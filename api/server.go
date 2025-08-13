@@ -34,7 +34,7 @@ type Server struct {
 
 func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS, diskManager *storage.DiskManager) *Server {
 	// Initialize video request handler with chunk optimization
-	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService, diskManager)
+	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
 
 	// Initialize chunk configuration service and handlers
 	chunkConfigService := config.NewChunkConfigService(db)

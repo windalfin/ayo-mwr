@@ -61,20 +61,26 @@ type VideoMetadata struct {
 
 // CameraConfig represents camera configuration stored in the database
 type CameraConfig struct {
-	ButtonNo   string `json:"button_no"`
-	Name       string `json:"name"`
-	IP         string `json:"ip"`
-	Port       string `json:"port"`
-	Path       string `json:"path"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Enabled    bool   `json:"enabled"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	FrameRate  int    `json:"frame_rate"`
-	Field      string `json:"field"`
-	Resolution string `json:"resolution"`
-	AutoDelete int    `json:"auto_delete"`
+	ButtonNo        string `json:"button_no"`
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	Port            string `json:"port"`
+	Path            string `json:"path"`
+	Path720         string `json:"path_720"`
+	Path480         string `json:"path_480"`
+	Path360         string `json:"path_360"`
+	ActivePath720   bool   `json:"active_path_720"`
+	ActivePath480   bool   `json:"active_path_480"`
+	ActivePath360   bool   `json:"active_path_360"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	Enabled         bool   `json:"enabled"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	FrameRate       int    `json:"frame_rate"`
+	Field           string `json:"field"`
+	Resolution      string `json:"resolution"`
+	AutoDelete      int    `json:"auto_delete"`
 }
 
 // StorageDisk represents a storage disk for recording data

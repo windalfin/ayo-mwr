@@ -42,13 +42,13 @@ func (s *SQLiteDB) InsertCameras(cameras []CameraConfig) error {
 	if _, err := tx.Exec("DELETE FROM cameras"); err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO cameras (button_no, name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO cameras (button_no, name, ip, port, path, path_720, path_480, path_360, active_path_720, active_path_480, active_path_360, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, c := range cameras {
-		_, err := stmt.Exec(c.ButtonNo, c.Name, c.IP, c.Port, c.Path, c.Username, c.Password, c.Enabled, c.Width, c.Height, c.FrameRate, c.Field, c.Resolution, c.AutoDelete)
+		_, err := stmt.Exec(c.ButtonNo, c.Name, c.IP, c.Port, c.Path, c.Path720, c.Path480, c.Path360, c.ActivePath720, c.ActivePath480, c.ActivePath360, c.Username, c.Password, c.Enabled, c.Width, c.Height, c.FrameRate, c.Field, c.Resolution, c.AutoDelete)
 		if err != nil {
 			return err
 		}
@@ -58,7 +58,15 @@ func (s *SQLiteDB) InsertCameras(cameras []CameraConfig) error {
 
 // GetCameras loads all cameras from the DB
 func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
-	rows, err := s.db.Query(`SELECT button_no, name, ip, port, path, username, password, enabled, width, height, frame_rate, field, resolution, auto_delete FROM cameras`)
+	rows, err := s.db.Query(`SELECT button_no, name, ip, port, path, 
+		COALESCE(path_720, '') as path_720,
+		COALESCE(path_480, '') as path_480, 
+		COALESCE(path_360, '') as path_360,
+		COALESCE(active_path_720, 0) as active_path_720,
+		COALESCE(active_path_480, 0) as active_path_480,
+		COALESCE(active_path_360, 0) as active_path_360,
+		username, password, enabled, width, height, frame_rate, field, resolution, auto_delete 
+	FROM cameras`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +74,7 @@ func (s *SQLiteDB) GetCameras() ([]CameraConfig, error) {
 	var cameras []CameraConfig
 	for rows.Next() {
 		var c CameraConfig
-		err := rows.Scan(&c.ButtonNo, &c.Name, &c.IP, &c.Port, &c.Path, &c.Username, &c.Password, &c.Enabled, &c.Width, &c.Height, &c.FrameRate, &c.Field, &c.Resolution, &c.AutoDelete)
+		err := rows.Scan(&c.ButtonNo, &c.Name, &c.IP, &c.Port, &c.Path, &c.Path720, &c.Path480, &c.Path360, &c.ActivePath720, &c.ActivePath480, &c.ActivePath360, &c.Username, &c.Password, &c.Enabled, &c.Width, &c.Height, &c.FrameRate, &c.Field, &c.Resolution, &c.AutoDelete)
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +119,12 @@ func initTables(db *sql.DB) error {
 			ip TEXT,
 			port TEXT,
 			path TEXT,
+			path_720 TEXT,
+			path_480 TEXT,
+			path_360 TEXT,
+			active_path_720 BOOLEAN DEFAULT 0,
+			active_path_480 BOOLEAN DEFAULT 0,
+			active_path_360 BOOLEAN DEFAULT 0,
 			username TEXT,
 			password TEXT,
 			enabled BOOLEAN,
@@ -132,6 +146,49 @@ func initTables(db *sql.DB) error {
 		log.Printf("Info: Migration for button_no: %v (ignore if column exists)", migrationErr)
 	} else {
 		log.Printf("Success: Added button_no column to cameras table")
+	}
+
+	// Add new path columns for different resolutions
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN path_720 TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for path_720: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added path_720 column to cameras table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN path_480 TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for path_480: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added path_480 column to cameras table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN path_360 TEXT")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for path_360: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added path_360 column to cameras table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN active_path_720 BOOLEAN DEFAULT 0")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for active_path_720: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added active_path_720 column to cameras table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN active_path_480 BOOLEAN DEFAULT 0")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for active_path_480: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added active_path_480 column to cameras table")
+	}
+
+	_, migrationErr = db.Exec("ALTER TABLE cameras ADD COLUMN active_path_360 BOOLEAN DEFAULT 0")
+	if migrationErr != nil {
+		log.Printf("Info: Migration for active_path_360: %v (ignore if column exists)", migrationErr)
+	} else {
+		log.Printf("Success: Added active_path_360 column to cameras table")
 	}
 
 	// Create arduino_config table (single-row table, id always 1)

@@ -26,6 +26,14 @@ type CameraConfig struct {
 	Field      string `json:"field"`       // Camera field ID
 	Resolution string `json:"resolution"`  // Camera resolution
 	AutoDelete int    `json:"auto_delete"` // Auto delete video after x days
+	// New path fields for different resolutions
+	Path720 string `json:"path_720"` // RTSP path for 720p
+	Path480 string `json:"path_480"` // RTSP path for 480p
+	Path360 string `json:"path_360"` // RTSP path for 360p
+	// Active path fields for different resolutions
+	ActivePath720 bool `json:"active_path_720"` // Whether 720p path is active
+	ActivePath480 bool `json:"active_path_480"` // Whether 480p path is active
+	ActivePath360 bool `json:"active_path_360"` // Whether 360p path is active
 }
 
 // Config contains all configuration for the application
@@ -174,6 +182,10 @@ func LoadConfig() Config {
 							Field:      c.Field,
 							Resolution: c.Resolution,
 							AutoDelete: c.AutoDelete,
+							// New path fields
+							Path720: c.Path720, Path480: c.Path480, Path360: c.Path360,
+							// Active path fields
+							ActivePath720: c.ActivePath720, ActivePath480: c.ActivePath480, ActivePath360: c.ActivePath360,
 						}
 					}
 					if err := db.InsertCameras(dbCams); err != nil {
@@ -193,6 +205,10 @@ func LoadConfig() Config {
 				ButtonNo: c.ButtonNo,
 				Name:     c.Name, IP: c.IP, Port: c.Port, Path: c.Path, Username: c.Username, Password: c.Password,
 				Enabled: c.Enabled, Width: c.Width, Height: c.Height, FrameRate: c.FrameRate, Field: c.Field, Resolution: c.Resolution, AutoDelete: c.AutoDelete,
+				// New path fields
+				Path720: c.Path720, Path480: c.Path480, Path360: c.Path360,
+				// Active path fields
+				ActivePath720: c.ActivePath720, ActivePath480: c.ActivePath480, ActivePath360: c.ActivePath360,
 			}
 		}
 		log.Printf("Loaded %d cameras from SQLite", len(cfg.Cameras))

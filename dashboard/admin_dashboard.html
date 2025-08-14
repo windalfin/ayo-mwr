@@ -705,6 +705,36 @@
               <input type="text" id="camera-path" value="/video/mjpg.cgi">
             </div>
             <div class="form-group">
+              <label for="camera-path-720">Path 720p</label>
+              <input type="text" id="camera-path-720" placeholder="/streaming/channels/102/">
+            </div>
+            <div class="form-group">
+              <label for="camera-active-720">
+                <input type="checkbox" id="camera-active-720">
+                Active 720p
+              </label>
+            </div>
+            <div class="form-group">
+              <label for="camera-path-480">Path 480p</label>
+              <input type="text" id="camera-path-480" placeholder="/streaming/channels/103/">
+            </div>
+            <div class="form-group">
+              <label for="camera-active-480">
+                <input type="checkbox" id="camera-active-480">
+                Active 480p
+              </label>
+            </div>
+            <div class="form-group">
+              <label for="camera-path-360">Path 360p</label>
+              <input type="text" id="camera-path-360" placeholder="/streaming/channels/104/">
+            </div>
+            <div class="form-group">
+              <label for="camera-active-360">
+                <input type="checkbox" id="camera-active-360">
+                Active 360p
+              </label>
+            </div>
+            <div class="form-group">
               <label for="camera-username">Username</label>
               <input type="text" id="camera-username">
             </div>
@@ -1748,6 +1778,12 @@
         ip: document.getElementById('camera-ip').value,
         port: document.getElementById('camera-port').value,
         path: document.getElementById('camera-path').value,
+        path_720: document.getElementById('camera-path-720').value,
+        path_480: document.getElementById('camera-path-480').value,
+        path_360: document.getElementById('camera-path-360').value,
+        active_path_720: document.getElementById('camera-active-720').checked,
+        active_path_480: document.getElementById('camera-active-480').checked,
+        active_path_360: document.getElementById('camera-active-360').checked,
         username: document.getElementById('camera-username').value,
         // Only include password if it was changed (not empty)
         ...(document.getElementById('camera-password').value && { 
@@ -1801,6 +1837,12 @@
         document.getElementById('camera-ip').value = camera.ip || '';
         document.getElementById('camera-port').value = camera.port || '80';
         document.getElementById('camera-path').value = camera.path || '/video/mjpg.cgi';
+        document.getElementById('camera-path-720').value = camera.path_720 || '';
+        document.getElementById('camera-path-480').value = camera.path_480 || '';
+        document.getElementById('camera-path-360').value = camera.path_360 || '';
+        document.getElementById('camera-active-720').checked = camera.active_path_720 || false;
+        document.getElementById('camera-active-480').checked = camera.active_path_480 || false;
+        document.getElementById('camera-active-360').checked = camera.active_path_360 || false;
         document.getElementById('camera-username').value = camera.username || '';
         document.getElementById('camera-password').value = camera.password || ''; // Include password for editing
         document.getElementById('camera-field-id').value = camera.field || '';
@@ -1903,6 +1945,12 @@
           ip: camera.ip,
           port: camera.port,
           path: camera.path,
+          path_720: camera.path_720 || '',
+          path_480: camera.path_480 || '',
+          path_360: camera.path_360 || '',
+          active_path_720: camera.active_path_720 || false,
+          active_path_480: camera.active_path_480 || false,
+          active_path_360: camera.active_path_360 || false,
           username: camera.username,
           // Only include password if it was changed (not empty)
           ...(camera.password && { password: camera.password }),

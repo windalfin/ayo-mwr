@@ -349,14 +349,17 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			currentActive = activeVideoRequestProcesses
 			videoRequestProcessingMutex.Unlock()
 
+			var semaphoreReleased bool
 			defer func() {
-				// Release semaphore dan update counter
-				globalVideoRequestSemaphore.Release(1)
-				videoRequestProcessingMutex.Lock()
-				activeVideoRequestProcesses--
-				newActive := activeVideoRequestProcesses
-				videoRequestProcessingMutex.Unlock()
-				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/%d)", cronID, videoRequestID, newActive, maxConcurrent)
+				// Release semaphore dan update counter hanya jika belum di-release
+				if !semaphoreReleased {
+					globalVideoRequestSemaphore.Release(1)
+					videoRequestProcessingMutex.Lock()
+					activeVideoRequestProcesses--
+					newActive := activeVideoRequestProcesses
+					videoRequestProcessingMutex.Unlock()
+					log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/%d)", cronID, videoRequestID, newActive, maxConcurrent)
+				}
 			}()
 
 			// Calculate wait time
@@ -508,6 +511,15 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				hlsURL = fmt.Sprintf("%s/hls/%s/master.m3u8", baseURL, uniqueID)
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream created at: %s", cronID, hlsDir)
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream can be accessed at: %s", cronID, hlsURL)
+
+				// Release semaphore setelah HLS generation selesai - antrian selanjutnya bisa diproses
+				globalVideoRequestSemaphore.Release(1)
+				videoRequestProcessingMutex.Lock()
+				activeVideoRequestProcesses--
+				newActive := activeVideoRequestProcesses
+				videoRequestProcessingMutex.Unlock()
+				semaphoreReleased = true
+				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: HLS generation completed, queue slot released (aktif: %d/%d)", cronID, newActive, maxConcurrent)
 
 				// Upload HLS ke R2
 				_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)

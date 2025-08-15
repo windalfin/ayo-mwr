@@ -513,56 +513,8 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream created at: %s", cronID, hlsDir)
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream can be accessed at: %s", cronID, hlsURL)
 
-				// Release semaphore setelah HLS generation selesai - antrian selanjutnya bisa diproses
-				globalVideoRequestSemaphore.Release(1)
-				videoRequestProcessingMutex.Lock()
-				activeVideoRequestProcesses--
-				newActive := activeVideoRequestProcesses
-				videoRequestProcessingMutex.Unlock()
-				semaphoreReleased = true
-				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: HLS generation completed, queue slot released (aktif: %d/%d)", cronID, newActive, maxConcurrent)
-
-				// Upload HLS ke R2
-				_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)
-				if err != nil {
-					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Warning: Failed to upload HLS stream to R2: %v", cronID, err)
-					// Use existing R2 URL if upload fails
-					// r2HlsURL = matchingVideo.R2HLSURL
-					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-					return
-				} else {
-					r2HlsURL = r2HlsURLTemp
-					log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream uploaded to R2: %s", cronID, r2HlsURL)
-				}
-
-				// Update database with HLS path and URL information
-				// First update the R2 paths
-				err = db.UpdateVideoR2Paths(matchingVideo.ID, r2HLSPath, matchingVideo.R2MP4Path)
-				if err != nil {
-					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update HLS R2 paths in database: %v", cronID, err)
-					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-					return
-				}
-
-				// Then update the R2 URLs
-				err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, matchingVideo.R2MP4URL)
-				if err != nil {
-					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update HLS R2 URLs in database: %v", cronID, err)
-					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-					return
-				}
-
-				// Update the full video metadata to include local HLS path
-				matchingVideo.HLSPath = hlsDir
-				matchingVideo.HLSURL = hlsURL
-				matchingVideo.R2HLSURL = r2HlsURL
-				matchingVideo.R2HLSPath = r2HLSPath
-				err = db.UpdateVideo(*matchingVideo)
-				if err != nil {
-					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update video metadata in database: %v", cronID, err)
-					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-					return
-				}
+				// HLS generation selesai, lanjut ke MP4 processing (masih menggunakan slot antrian)
+				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS generation completed, proceeding to MP4 processing (aktif: %d/%d)", cronID, activeVideoRequestProcesses, maxConcurrent)
 			}
 
 			// Upload MP4 to R2 if local video exists
@@ -669,6 +621,57 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 
 				} else {
 					log.Printf("⚠️ WARNING: Unknown file format: %s", matchingVideo.LocalPath)
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				}
+
+				// Release semaphore setelah HLS generation dan MP4 processing selesai - antrian selanjutnya bisa diproses
+				globalVideoRequestSemaphore.Release(1)
+				videoRequestProcessingMutex.Lock()
+				activeVideoRequestProcesses--
+				newActive := activeVideoRequestProcesses
+				videoRequestProcessingMutex.Unlock()
+				semaphoreReleased = true
+				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: HLS generation and MP4 processing completed, queue slot released (aktif: %d/%d)", cronID, newActive, maxConcurrent)
+
+				// Upload HLS ke R2 (tanpa menggunakan slot antrian)
+				_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)
+				if err != nil {
+					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Warning: Failed to upload HLS stream to R2: %v", cronID, err)
+					// Use existing R2 URL if upload fails
+					// r2HlsURL = matchingVideo.R2HLSURL
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				} else {
+					r2HlsURL = r2HlsURLTemp
+					log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream uploaded to R2: %s", cronID, r2HlsURL)
+				}
+
+				// Update database with HLS path and URL information
+				// First update the R2 paths
+				err = db.UpdateVideoR2Paths(matchingVideo.ID, r2HLSPath, matchingVideo.R2MP4Path)
+				if err != nil {
+					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update HLS R2 paths in database: %v", cronID, err)
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				}
+
+				// Then update the R2 URLs
+				err = db.UpdateVideoR2URLs(matchingVideo.ID, r2HlsURL, matchingVideo.R2MP4URL)
+				if err != nil {
+					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update HLS R2 URLs in database: %v", cronID, err)
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				}
+
+				// Update the full video metadata to include local HLS path
+				matchingVideo.HLSPath = hlsDir
+				matchingVideo.HLSURL = hlsURL
+				matchingVideo.R2HLSURL = r2HlsURL
+				matchingVideo.R2HLSPath = r2HLSPath
+				err = db.UpdateVideo(*matchingVideo)
+				if err != nil {
+					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update video metadata in database: %v", cronID, err)
 					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 					return
 				}

@@ -36,7 +36,7 @@ func NewHybridVideoProcessor(db database.Database, cfg *config.Config, storageMa
 	}
 }
 
-// SetAyoClient sets the AYO client for watermark operations (avoids import cycle)
+// SetAyoClient sets the AYO client (avoids import cycle)
 func (hvp *HybridVideoProcessor) SetAyoClient(client interface{}) {
 	hvp.ayoClient = client
 }
@@ -226,23 +226,6 @@ func (hvp *HybridVideoProcessor) processVideoSources(sources []SegmentSource, un
 		return "", fmt.Errorf("error creating temp directory: %v", err)
 	}
 
-	// Check if all sources are already watermarked to avoid double watermarking
-	allWatermarked := true
-	watermarkedCount := 0
-	for _, source := range sources {
-		if source.Type == "chunk" && source.IsWatermarked {
-			watermarkedCount++
-		} else if source.Type == "chunk" && !source.IsWatermarked {
-			allWatermarked = false
-		}
-		// Note: Individual segments are not pre-watermarked in current implementation
-	}
-	
-	if allWatermarked && watermarkedCount > 0 {
-		log.Printf("[HybridProcessor] ✅ All chunks already watermarked (%d chunks), watermark step will be skipped", watermarkedCount)
-	} else if watermarkedCount > 0 {
-		log.Printf("[HybridProcessor] ⚠️ Mixed watermark status: %d watermarked chunks, %d total sources", watermarkedCount, len(sources))
-	}
 
 	// If we have only one source and it's a chunk that covers the full range, use it directly
 	if len(sources) == 1 && sources[0].Type == "chunk" && hvp.sourceCoversRange(sources[0], startTime, endTime) {
@@ -284,8 +267,8 @@ func (hvp *HybridVideoProcessor) processSimpleChunk(source SegmentSource, unique
 		return "", fmt.Errorf("error extracting from chunk: %v\nFFmpeg output: %s", err, string(output))
 	}
 
-	// Apply watermark if available (only if source is not already watermarked)
-	return hvp.applyWatermarkIfAvailable(extractedPath, uniqueID, camera, tmpDir, source.IsWatermarked)
+	// Return the extracted path directly (watermarking is already done in booking_video.go)
+	return extractedPath, nil
 }
 
 // processMultipleSources processes multiple chunks and segments
@@ -351,17 +334,8 @@ func (hvp *HybridVideoProcessor) processMultipleSources(sources []SegmentSource,
 		return "", fmt.Errorf("error concatenating sources: %v\nFFmpeg output: %s", err, string(output))
 	}
 
-	// Check if any sources are already watermarked
-	hasWatermarkedSource := false
-	for _, source := range sources {
-		if source.Type == "chunk" && source.IsWatermarked {
-			hasWatermarkedSource = true
-			break
-		}
-	}
-	
-	// Apply watermark if available (skip if we already have watermarked content)
-	return hvp.applyWatermarkIfAvailable(concatenatedPath, uniqueID, camera, tmpDir, hasWatermarkedSource)
+	// Return the concatenated path directly (watermarking is already done in booking_video.go)
+	return concatenatedPath, nil
 }
 
 // extractFromChunk extracts a specific time range from a pre-concatenated chunk
@@ -430,115 +404,6 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 	return extractedPath, nil
 }
 
-// applyWatermarkIfAvailable applies watermark to the processed video
-func (hvp *HybridVideoProcessor) applyWatermarkIfAvailable(inputPath, uniqueID string, camera config.CameraConfig, tmpDir string, alreadyWatermarked bool) (string, error) {
-	log.Printf("[HybridProcessor] 🎨 Starting watermark application for video: %s (camera: %s, resolution: %s)", 
-		filepath.Base(inputPath), camera.Name, camera.Resolution)
-	
-	// Check if content is already watermarked
-	if alreadyWatermarked {
-		log.Printf("[HybridProcessor] ✅ Content already watermarked, skipping watermark application")
-		return inputPath, nil
-	}
-	
-	// Check if input file exists and has content
-	if info, err := os.Stat(inputPath); err != nil {
-		log.Printf("[HybridProcessor] ❌ Input video file doesn't exist: %s", inputPath)
-		return inputPath, nil
-	} else {
-		log.Printf("[HybridProcessor] Input video size: %.2f MB", float64(info.Size())/(1024*1024))
-	}
-	
-	// Get venue code from database configuration
-	venueCode := ""
-	if venueConfig, err := hvp.db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
-		venueCode = venueConfig.Value
-		log.Printf("[HybridProcessor] Found venue code: %s", venueCode)
-	} else {
-		log.Printf("[HybridProcessor] ❌ Failed to get venue code: %v", err)
-	}
-	
-	if venueCode == "" {
-		log.Printf("[HybridProcessor] ⚠️ No venue code configured, skipping watermark")
-		return inputPath, nil
-	}
-	
-	// Get watermark using AYO client if available, fallback to legacy method
-	var watermarkPath string
-	var err error
-	
-	if hvp.ayoClient != nil {
-		log.Printf("[HybridProcessor] Getting watermark using AYO client for resolution: %s", camera.Resolution)
-		// Use reflection to call GetWatermark method on the interface
-		if client, ok := hvp.ayoClient.(interface{ GetWatermark(string) (string, error) }); ok {
-			resolution := camera.Resolution
-			if resolution == "" {
-				resolution = "1080"
-			}
-			watermarkPath, err = client.GetWatermark(resolution)
-		} else {
-			log.Printf("[HybridProcessor] ⚠️ AYO client doesn't support GetWatermark method, using legacy method")
-			watermarkPath, err = recording.GetWatermark(venueCode)
-		}
-	} else {
-		log.Printf("[HybridProcessor] Getting watermark using legacy method for venue: %s", venueCode)
-		watermarkPath, err = recording.GetWatermark(venueCode)
-	}
-	
-	if err != nil {
-		log.Printf("[HybridProcessor] ❌ Failed to get watermark: %v, continuing without watermark", err)
-		return inputPath, nil
-	}
-	
-	if watermarkPath == "" {
-		log.Printf("[HybridProcessor] ⚠️ Empty watermark path returned, skipping watermark")
-		return inputPath, nil
-	}
-	
-	log.Printf("[HybridProcessor] Watermark path: %s", watermarkPath)
-	
-	// Check if watermark file exists
-	if _, err := os.Stat(watermarkPath); err != nil {
-		log.Printf("[HybridProcessor] ❌ Watermark file doesn't exist: %s (error: %v)", watermarkPath, err)
-		return inputPath, nil
-	}
-	
-	// Get watermark settings (position, margin, opacity)
-	position, margin, opacity := recording.GetWatermarkSettings()
-	log.Printf("[HybridProcessor] Watermark settings - Position: %d, Margin: %d, Opacity: %.2f", position, margin, opacity)
-	
-	// Create output path for watermarked video
-	watermarkedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_watermarked.mp4", uniqueID))
-	log.Printf("[HybridProcessor] Watermarked output path: %s", watermarkedPath)
-	
-	// Apply watermark using the recording package function
-	log.Printf("[HybridProcessor] Calling AddWatermarkWithPosition...")
-	err = recording.AddWatermarkWithPosition(inputPath, watermarkPath, watermarkedPath, position, margin, opacity, camera.Resolution)
-	if err != nil {
-		log.Printf("[HybridProcessor] ❌ AddWatermarkWithPosition failed: %v, using original video", err)
-		return inputPath, nil
-	}
-	
-	// Verify watermarked file was created and has content
-	if info, err := os.Stat(watermarkedPath); err != nil {
-		log.Printf("[HybridProcessor] ❌ Watermarked file was not created: %s (error: %v)", watermarkedPath, err)
-		return inputPath, nil
-	} else if info.Size() == 0 {
-		log.Printf("[HybridProcessor] ❌ Watermarked file is empty: %s", watermarkedPath)
-		return inputPath, nil
-	} else {
-		log.Printf("[HybridProcessor] ✅ Watermark applied successfully! Output: %s (%.2f MB)", 
-			filepath.Base(watermarkedPath), float64(info.Size())/(1024*1024))
-	}
-	
-	// Clean up the original file to save space
-	if inputPath != watermarkedPath {
-		log.Printf("[HybridProcessor] Cleaning up original file: %s", filepath.Base(inputPath))
-		os.Remove(inputPath)
-	}
-	
-	return watermarkedPath, nil
-}
 
 // determineStorageInfo determines storage disk ID and full path for a video file
 func (hvp *HybridVideoProcessor) determineStorageInfo(videoPath string) (string, string, error) {

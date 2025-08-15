@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,26 +148,39 @@ func getPresetNames(presets []QualityPreset) []string {
 }
 
 // parseSegmentTimestamp extracts timestamp from HLS segment filename
-// Format: segment_YYYYMMDD_HHMMSS.ts
+// Supports formats: segment_YYYYMMDD_HHMMSS.ts and HHMMSS.ts
 func parseSegmentTimestamp(filename string) (time.Time, error) {
 	// Remove extension
 	nameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
 
 	// Check if it starts with segment_
-	if !strings.HasPrefix(nameWithoutExt, "segment_") {
-		return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
+	if strings.HasPrefix(nameWithoutExt, "segment_") {
+		// Format: segment_YYYYMMDD_HHMMSS
+		// Remove prefix
+		timestampStr := strings.TrimPrefix(nameWithoutExt, "segment_")
+
+		// Parse timestamp (format: YYYYMMDD_HHMMSS)
+		timestamp, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse timestamp from %s: %v", filename, err)
+		}
+
+		return timestamp, nil
+	} else if len(nameWithoutExt) == 6 {
+		// Try numeric format: HHMMSS (e.g., 112003.ts)
+		hour, err1 := strconv.Atoi(nameWithoutExt[:2])
+		minute, err2 := strconv.Atoi(nameWithoutExt[2:4])
+		second, err3 := strconv.Atoi(nameWithoutExt[4:6])
+
+		if err1 == nil && err2 == nil && err3 == nil && hour < 24 && minute < 60 && second < 60 {
+			// For numeric segments without date, use today's date as default
+			now := time.Now()
+			return time.Date(now.Year(), now.Month(), now.Day(),
+				hour, minute, second, 0, time.Local), nil
+		}
 	}
 
-	// Remove prefix
-	timestampStr := strings.TrimPrefix(nameWithoutExt, "segment_")
-
-	// Parse timestamp (format: YYYYMMDD_HHMMSS)
-	timestamp, err := time.ParseInLocation("20060102_150405", timestampStr, time.Local)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse timestamp from %s: %v", filename, err)
-	}
-
-	return timestamp, nil
+	return time.Time{}, fmt.Errorf("invalid segment filename format: %s", filename)
 }
 
 // findSegmentsInTimeRange finds HLS segments within the specified time range
@@ -190,9 +204,9 @@ func findSegmentsInTimeRange(hlsDir string, startTime, endTime time.Time) ([]str
 			continue
 		}
 
-		// Only process .ts files with segment naming pattern
-		if filepath.Ext(entry.Name()) == ".ts" && strings.HasPrefix(entry.Name(), "segment_") {
-			// Parse timestamp from filename
+		// Only process .ts files
+		if filepath.Ext(entry.Name()) == ".ts" {
+			// Parse timestamp from filename (supports both segment_ and numeric formats)
 			timestamp, err := parseSegmentTimestamp(entry.Name())
 			if err != nil {
 				log.Printf("[1080P-OPT] WARNING: Failed to parse timestamp from %s: %v", entry.Name(), err)
@@ -444,11 +458,11 @@ func copyQualitySegments(cfg *config.Config, cameraName, qualityName, qualityDir
 	playlistFile.WriteString("#EXT-X-ENDLIST\n")
 
 	totalDuration := time.Since(copyStart)
-	log.Printf("[%s-OPT] SUCCESS: %s optimization completed!", strings.ToUpper(qualityName), qualityName)
-	log.Printf("[%s-OPT] - Segments copied: %d", strings.ToUpper(qualityName), len(copiedSegments))
-	log.Printf("[%s-OPT] - Total processing time: %.2f seconds", strings.ToUpper(qualityName), totalDuration.Seconds())
-	log.Printf("[%s-OPT] - Average time per segment: %.3f seconds", strings.ToUpper(qualityName), totalDuration.Seconds()/float64(len(copiedSegments)))
-	log.Printf("[%s-OPT] - Time range efficiency: Only copied segments within specified range", strings.ToUpper(qualityName))
+	log.Printf("[1080P-OPT] SUCCESS: 1080p optimization completed!")
+	log.Printf("[1080P-OPT] - Segments copied: %d", len(copiedSegments))
+	log.Printf("[1080P-OPT] - Total processing time: %.2f seconds", totalDuration.Seconds())
+	log.Printf("[1080P-OPT] - Average time per segment: %.3f seconds", totalDuration.Seconds()/float64(len(copiedSegments)))
+	log.Printf("[1080P-OPT] - Time range efficiency: Only copied segments within specified range")
 
 	return nil
 }
@@ -712,6 +726,8 @@ func ConvertTSToMP4WithMetrics(inputPath, outputPath string, videoMetrics *metri
 		"-c", "copy", // Copy streams without re-encoding
 		"-avoid_negative_ts", "make_zero", // Handle negative timestamps
 		"-fflags", "+genpts", // Generate presentation timestamps
+		"-movflags", "+faststart", // Optimize for streaming/playback
+		"-f", "mp4", // Explicitly specify MP4 format
 		"-y", // Overwrite output file if exists
 		outputPath)
 
@@ -727,6 +743,82 @@ func ConvertTSToMP4WithMetrics(inputPath, outputPath string, videoMetrics *metri
 
 	if err != nil {
 		return fmt.Errorf("failed to convert TS to MP4: %v", err)
+	}
+
+	return nil
+}
+
+// ConvertTSToMP4WithWatermark converts a TS file to MP4 with watermark in a single step
+// This is more efficient than remuxing then watermarking separately
+func ConvertTSToMP4WithWatermark(inputPath, outputPath, watermarkPath string, overlayPosition string, margin int) error {
+	// Create output directory if it doesn't exist
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Check if input file exists
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		return fmt.Errorf("input TS file does not exist: %s", inputPath)
+	}
+
+	// Check if watermark file exists
+	if _, err := os.Stat(watermarkPath); os.IsNotExist(err) {
+		return fmt.Errorf("watermark file does not exist: %s", watermarkPath)
+	}
+
+	log.Printf("[ConvertTSToMP4WithWatermark] Converting %s to MP4 with watermark in single step", filepath.Base(inputPath))
+
+	// Build overlay expression based on position
+	var overlayExpr string
+	switch overlayPosition {
+	case "top_left":
+		overlayExpr = fmt.Sprintf("%d:%d", margin, margin)
+	case "top_right":
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:%d", margin, margin)
+	case "bottom_left":
+		overlayExpr = fmt.Sprintf("%d:main_h-overlay_h-%d", margin, margin)
+	case "bottom_right":
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		overlayExpr = fmt.Sprintf("main_w-overlay_w-%d:%d", margin, margin) // Default to top_right
+	}
+
+	// Single-step TS to MP4 conversion with watermark overlay
+	cmd := exec.Command("ffmpeg",
+		"-i", inputPath,
+		"-i", watermarkPath,
+		"-filter_complex", fmt.Sprintf("overlay=%s", overlayExpr),
+		"-c:v", "libx264", // H.264 video codec
+		"-crf", "28", // Higher CRF for faster encoding
+		"-preset", "fast", // Fast preset (balance of speed vs quality)
+		"-profile:v", "high", // High profile for quality
+		"-pix_fmt", "yuv420p", // Standard pixel format
+		"-color_range", "tv", // TV color range
+		"-colorspace", "bt709", // Standard colorspace
+		"-c:a", "copy", // Copy audio without re-encoding
+		"-avoid_negative_ts", "make_zero",
+		"-fflags", "+genpts",
+		"-movflags", "+faststart", // Optimize for streaming
+		"-max_muxing_queue_size", "1024",
+		"-threads", "4", // Limited threads to prevent resource issues
+		"-y", // Overwrite output file if exists
+		outputPath)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	log.Printf("[ConvertTSToMP4WithWatermark] Running single-step conversion with watermark...")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to convert TS to MP4 with watermark: %v", err)
+	}
+
+	// Verify output file was created
+	if info, err := os.Stat(outputPath); err != nil {
+		return fmt.Errorf("output file was not created: %v", err)
+	} else {
+		log.Printf("[ConvertTSToMP4WithWatermark] ✅ Single-step conversion complete: %s (%.2f MB)",
+			filepath.Base(outputPath), float64(info.Size())/(1024*1024))
 	}
 
 	return nil

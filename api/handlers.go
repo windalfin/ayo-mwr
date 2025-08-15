@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -96,6 +97,22 @@ func (s *Server) handleHealthCheck(c *gin.Context) {
 		healthResponse["storage"] = diskInfo
 	}
 
+	// Check chunk processing status
+	if chunkStats, err := s.db.GetChunkStatistics(); err == nil {
+		healthResponse["chunk_processing"] = gin.H{
+			"enabled": s.isChunkProcessingEnabled(),
+			"total_chunks": chunkStats["total_chunks"],
+			"total_segments": chunkStats["total_segments"],
+			"status": "operational",
+		}
+	} else {
+		healthResponse["chunk_processing"] = gin.H{
+			"enabled": s.isChunkProcessingEnabled(),
+			"status": "unavailable",
+			"error": "Could not retrieve chunk statistics",
+		}
+	}
+
 	// Determine final status based on all checks
 	status := http.StatusOK
 	if healthResponse["status"] == "degraded" {
@@ -119,6 +136,22 @@ func (s *Server) getDiskSpace() gin.H {
 		"status":        "available",
 		"check_enabled": true,
 	}
+}
+
+// isChunkProcessingEnabled checks if chunk processing is enabled in configuration
+func (s *Server) isChunkProcessingEnabled() bool {
+	// Get chunk processing configuration from database
+	if config, err := s.db.GetSystemConfig("chunk_processing"); err == nil && config != nil {
+		// Parse the JSON configuration
+		var chunkConfig map[string]interface{}
+		if err := json.Unmarshal([]byte(config.Value), &chunkConfig); err == nil {
+			if enabled, ok := chunkConfig["enabled"].(bool); ok {
+				return enabled
+			}
+		}
+	}
+	// Default to true if configuration is not found or invalid
+	return true
 }
 
 func (s *Server) listStreams(c *gin.Context) {

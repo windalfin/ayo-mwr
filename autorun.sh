@@ -154,18 +154,35 @@ fi
 echo -e "${GREEN}Step 3: Creating daily restart timer...${NC}"
 
 if [ "$DISABLE_TIMER" = false ]; then
+    # Check if zero-downtime deployment script exists
+    ZERO_DOWNTIME_SCRIPT="$WORK_DIR/zero-downtime-deploy.sh"
+    if [ ! -f "$ZERO_DOWNTIME_SCRIPT" ]; then
+        echo -e "${YELLOW}Warning: zero-downtime-deploy.sh not found at $ZERO_DOWNTIME_SCRIPT${NC}"
+        echo -e "${YELLOW}Timer will use regular systemctl restart instead${NC}"
+        TIMER_EXEC_START="/bin/systemctl restart $SERVICE_NAME.service"
+    else
+        # Make sure the script is executable
+        chmod +x "$ZERO_DOWNTIME_SCRIPT"
+        TIMER_EXEC_START="$ZERO_DOWNTIME_SCRIPT"
+        echo -e "${GREEN}✓ Using zero-downtime deployment script for timer${NC}"
+    fi
     # Create timer service content
     TIMER_SERVICE_CONTENT="[Unit]
-Description=Restart AYO MWR Video Recording Service
+Description=Zero-Downtime Restart AYO MWR Video Recording Service
 After=$SERVICE_NAME.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/systemctl restart $SERVICE_NAME.service"
+User=$USER
+WorkingDirectory=$WORK_DIR
+ExecStart=$TIMER_EXEC_START
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal"
 
     # Create timer content
     TIMER_CONTENT="[Unit]
-Description=Restart AYO MWR Video Recording Service daily at 2 AM
+Description=Zero-Downtime Restart AYO MWR Video Recording Service daily at 2 AM
 Requires=$SERVICE_NAME.service
 
 [Timer]

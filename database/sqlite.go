@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -231,11 +232,54 @@ func initTables(db *sql.DB) error {
 			segment_end DATETIME NOT NULL,
 			file_size_bytes INTEGER,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			-- Chunk support columns
+			chunk_type TEXT DEFAULT 'segment',
+			source_segments_count INTEGER DEFAULT 1,
+			chunk_duration_seconds INTEGER,
+			processing_status TEXT DEFAULT 'ready',
 			FOREIGN KEY (storage_disk_id) REFERENCES storage_disks(id)
 		)
 	`)
 	if err != nil {
 		return err
+	}
+
+	// Add chunk support columns to existing recording_segments table (migrations)
+	migrations := []struct {
+		column string
+		query  string
+	}{
+		{"chunk_type", "ALTER TABLE recording_segments ADD COLUMN chunk_type TEXT DEFAULT 'segment'"},
+		{"source_segments_count", "ALTER TABLE recording_segments ADD COLUMN source_segments_count INTEGER DEFAULT 1"},
+		{"chunk_duration_seconds", "ALTER TABLE recording_segments ADD COLUMN chunk_duration_seconds INTEGER"},
+		{"processing_status", "ALTER TABLE recording_segments ADD COLUMN processing_status TEXT DEFAULT 'ready'"},
+		{"is_watermarked", "ALTER TABLE recording_segments ADD COLUMN is_watermarked BOOLEAN DEFAULT FALSE"},
+	}
+
+	for _, migration := range migrations {
+		_, migrationErr := db.Exec(migration.query)
+		if migrationErr != nil {
+			log.Printf("Info: Migration for %s: %v (ignore if column exists)", migration.column, migrationErr)
+		} else {
+			log.Printf("Success: Added %s column to recording_segments table", migration.column)
+		}
+	}
+
+	// Create optimized indexes for chunk queries
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_chunks_type_time ON recording_segments 
+			(chunk_type, camera_name, segment_start, segment_end)
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to create chunk index: %v", err)
+	}
+
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_segments_camera_time ON recording_segments 
+			(camera_name, segment_start, segment_end) WHERE chunk_type = 'segment'
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to create segment index: %v", err)
 	}
 
 	// Create videos table
@@ -1660,10 +1704,12 @@ func (s *SQLiteDB) GetStorageDisk(id string) (*StorageDisk, error) {
 func (s *SQLiteDB) CreateRecordingSegment(segment RecordingSegment) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recording_segments (
-			id, camera_name, storage_disk_id, mp4_path, segment_start, segment_end, file_size_bytes, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, camera_name, storage_disk_id, mp4_path, segment_start, segment_end, file_size_bytes, created_at,
+			chunk_type, source_segments_count, chunk_duration_seconds, processing_status, is_watermarked
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		segment.ID, segment.CameraName, segment.StorageDiskID, segment.MP4Path,
 		segment.SegmentStart, segment.SegmentEnd, segment.FileSizeBytes, segment.CreatedAt,
+		segment.ChunkType, segment.SourceSegmentsCount, segment.ChunkDurationSeconds, segment.ProcessingStatus, segment.IsWatermarked,
 	)
 	return err
 }
@@ -1672,7 +1718,12 @@ func (s *SQLiteDB) CreateRecordingSegment(segment RecordingSegment) error {
 func (s *SQLiteDB) GetRecordingSegments(cameraName string, start, end time.Time) ([]RecordingSegment, error) {
 	rows, err := s.db.Query(`
 		SELECT rs.id, rs.camera_name, rs.storage_disk_id, rs.mp4_path, 
-			   rs.segment_start, rs.segment_end, rs.file_size_bytes, rs.created_at
+			   rs.segment_start, rs.segment_end, rs.file_size_bytes, rs.created_at,
+			   COALESCE(rs.chunk_type, 'segment') as chunk_type,
+			   COALESCE(rs.source_segments_count, 1) as source_segments_count,
+			   rs.chunk_duration_seconds,
+			   COALESCE(rs.processing_status, 'ready') as processing_status,
+			   COALESCE(rs.is_watermarked, FALSE) as is_watermarked
 		FROM recording_segments rs
 		WHERE rs.camera_name = ? 
 		  AND rs.segment_start <= ? 
@@ -1688,12 +1739,18 @@ func (s *SQLiteDB) GetRecordingSegments(cameraName string, start, end time.Time)
 	var segments []RecordingSegment
 	for rows.Next() {
 		var segment RecordingSegment
+		var chunkDuration sql.NullInt64
 		err := rows.Scan(
 			&segment.ID, &segment.CameraName, &segment.StorageDiskID, &segment.MP4Path,
 			&segment.SegmentStart, &segment.SegmentEnd, &segment.FileSizeBytes, &segment.CreatedAt,
+			&segment.ChunkType, &segment.SourceSegmentsCount, &chunkDuration, &segment.ProcessingStatus, &segment.IsWatermarked,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if chunkDuration.Valid {
+			duration := int(chunkDuration.Int64)
+			segment.ChunkDurationSeconds = &duration
 		}
 		segments = append(segments, segment)
 	}
@@ -2357,4 +2414,231 @@ func (s *SQLiteDB) HasUsers() (bool, error) {
 func ValidatePassword(hashedPassword, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// Chunk operations implementation
+
+// CreateChunk creates a new pre-concatenated chunk record
+func (s *SQLiteDB) CreateChunk(chunk RecordingSegment) error {
+	return s.CreateRecordingSegment(chunk)
+}
+
+// FindChunksInTimeRange finds pre-concatenated chunks that overlap with the given time range
+func (s *SQLiteDB) FindChunksInTimeRange(cameraName string, start, end time.Time) ([]ChunkInfo, error) {
+	rows, err := s.db.Query(`
+		SELECT rs.id, rs.camera_name, rs.segment_start, rs.segment_end, 
+			   rs.mp4_path, rs.source_segments_count, rs.chunk_duration_seconds,
+			   rs.file_size_bytes, rs.processing_status, rs.storage_disk_id,
+			   sd.path as disk_path, COALESCE(rs.is_watermarked, FALSE) as is_watermarked
+		FROM recording_segments rs
+		JOIN storage_disks sd ON rs.storage_disk_id = sd.id
+		WHERE rs.camera_name = ? 
+		  AND rs.chunk_type = 'chunk'
+		  AND rs.processing_status = 'ready'
+		  AND rs.segment_start < ? 
+		  AND rs.segment_end > ?
+		ORDER BY rs.segment_start ASC
+	`, cameraName, end, start)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chunks []ChunkInfo
+	for rows.Next() {
+		var chunk ChunkInfo
+		var chunkDuration sql.NullInt64
+		var diskPath string
+		var relativePath string
+		err := rows.Scan(
+			&chunk.ID, &chunk.CameraName, &chunk.StartTime, &chunk.EndTime,
+			&relativePath, &chunk.SourceSegmentsCount, &chunkDuration,
+			&chunk.FileSizeBytes, &chunk.ProcessingStatus, &chunk.StorageDiskID,
+			&diskPath, &chunk.IsWatermarked,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if chunkDuration.Valid {
+			chunk.DurationSeconds = int(chunkDuration.Int64)
+		}
+		// Construct full path using filepath.Join for proper path handling
+		chunk.FilePath = filepath.Join(diskPath, relativePath)
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, rows.Err()
+}
+
+// GetPendingChunkSegments gets individual segments that need to be combined into a chunk
+func (s *SQLiteDB) GetPendingChunkSegments(cameraName string, chunkStart time.Time, chunkDurationMinutes int) ([]RecordingSegment, error) {
+	chunkEnd := chunkStart.Add(time.Duration(chunkDurationMinutes) * time.Minute)
+	
+	rows, err := s.db.Query(`
+		SELECT rs.id, rs.camera_name, rs.storage_disk_id, rs.mp4_path, 
+			   rs.segment_start, rs.segment_end, rs.file_size_bytes, rs.created_at,
+			   COALESCE(rs.chunk_type, 'segment') as chunk_type,
+			   COALESCE(rs.source_segments_count, 1) as source_segments_count,
+			   rs.chunk_duration_seconds,
+			   COALESCE(rs.processing_status, 'ready') as processing_status
+		FROM recording_segments rs
+		WHERE rs.camera_name = ? 
+		  AND rs.chunk_type = 'segment'
+		  AND rs.segment_start >= ?
+		  AND rs.segment_end <= ?
+		  AND rs.processing_status = 'ready'
+		ORDER BY rs.segment_start ASC
+	`, cameraName, chunkStart, chunkEnd)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var segments []RecordingSegment
+	for rows.Next() {
+		var segment RecordingSegment
+		var chunkDuration sql.NullInt64
+		err := rows.Scan(
+			&segment.ID, &segment.CameraName, &segment.StorageDiskID, &segment.MP4Path,
+			&segment.SegmentStart, &segment.SegmentEnd, &segment.FileSizeBytes, &segment.CreatedAt,
+			&segment.ChunkType, &segment.SourceSegmentsCount, &chunkDuration, &segment.ProcessingStatus,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if chunkDuration.Valid {
+			duration := int(chunkDuration.Int64)
+			segment.ChunkDurationSeconds = &duration
+		}
+		segments = append(segments, segment)
+	}
+
+	return segments, rows.Err()
+}
+
+// UpdateChunkProcessingStatus updates the processing status of a chunk
+func (s *SQLiteDB) UpdateChunkProcessingStatus(chunkID string, status ProcessingStatus) error {
+	_, err := s.db.Exec(`
+		UPDATE recording_segments 
+		SET processing_status = ?
+		WHERE id = ?
+	`, status, chunkID)
+	return err
+}
+
+// GetChunksByProcessingStatus gets chunks by their processing status
+func (s *SQLiteDB) GetChunksByProcessingStatus(status ProcessingStatus) ([]RecordingSegment, error) {
+	rows, err := s.db.Query(`
+		SELECT rs.id, rs.camera_name, rs.storage_disk_id, rs.mp4_path, 
+			   rs.segment_start, rs.segment_end, rs.file_size_bytes, rs.created_at,
+			   COALESCE(rs.chunk_type, 'segment') as chunk_type,
+			   COALESCE(rs.source_segments_count, 1) as source_segments_count,
+			   rs.chunk_duration_seconds,
+			   COALESCE(rs.processing_status, 'ready') as processing_status
+		FROM recording_segments rs
+		WHERE rs.chunk_type = 'chunk'
+		  AND rs.processing_status = ?
+		ORDER BY rs.segment_start ASC
+	`, status)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var segments []RecordingSegment
+	for rows.Next() {
+		var segment RecordingSegment
+		var chunkDuration sql.NullInt64
+		err := rows.Scan(
+			&segment.ID, &segment.CameraName, &segment.StorageDiskID, &segment.MP4Path,
+			&segment.SegmentStart, &segment.SegmentEnd, &segment.FileSizeBytes, &segment.CreatedAt,
+			&segment.ChunkType, &segment.SourceSegmentsCount, &chunkDuration, &segment.ProcessingStatus,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if chunkDuration.Valid {
+			duration := int(chunkDuration.Int64)
+			segment.ChunkDurationSeconds = &duration
+		}
+		segments = append(segments, segment)
+	}
+
+	return segments, rows.Err()
+}
+
+// DeleteOldChunks deletes chunks older than the specified time
+func (s *SQLiteDB) DeleteOldChunks(olderThan time.Time) error {
+	_, err := s.db.Exec(`
+		DELETE FROM recording_segments 
+		WHERE chunk_type = 'chunk' 
+		  AND created_at < ?
+	`, olderThan)
+	return err
+}
+
+// GetChunkStatistics returns statistics about chunk processing
+func (s *SQLiteDB) GetChunkStatistics() (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+	
+	// Count chunks by status
+	rows, err := s.db.Query(`
+		SELECT processing_status, COUNT(*) as count
+		FROM recording_segments 
+		WHERE chunk_type = 'chunk'
+		GROUP BY processing_status
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	statusStats := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var count int
+		err := rows.Scan(&status, &count)
+		if err != nil {
+			return nil, err
+		}
+		statusStats[status] = count
+	}
+	stats["by_status"] = statusStats
+	
+	// Total chunks
+	var totalChunks, totalSegments int
+	err = s.db.QueryRow(`
+		SELECT 
+			SUM(CASE WHEN chunk_type = 'chunk' THEN 1 ELSE 0 END) as chunk_count,
+			SUM(CASE WHEN chunk_type = 'segment' THEN 1 ELSE 0 END) as segment_count
+		FROM recording_segments
+	`).Scan(&totalChunks, &totalSegments)
+	if err != nil {
+		return nil, err
+	}
+	stats["total_chunks"] = totalChunks
+	stats["total_segments"] = totalSegments
+	
+	// Average chunk duration and size
+	var avgDuration sql.NullFloat64
+	var avgSize sql.NullFloat64
+	err = s.db.QueryRow(`
+		SELECT AVG(chunk_duration_seconds), AVG(file_size_bytes)
+		FROM recording_segments 
+		WHERE chunk_type = 'chunk'
+	`).Scan(&avgDuration, &avgSize)
+	if err != nil {
+		return nil, err
+	}
+	if avgDuration.Valid {
+		stats["avg_duration_seconds"] = avgDuration.Float64
+	}
+	if avgSize.Valid {
+		stats["avg_file_size_bytes"] = avgSize.Float64
+	}
+	
+	return stats, nil
 }

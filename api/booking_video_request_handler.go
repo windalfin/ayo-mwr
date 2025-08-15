@@ -468,148 +468,171 @@ func (h *BookingVideoRequestHandler) ProcessBookingVideo(c *gin.Context) {
 
 		log.Printf("🎬 SUCCESS: Video processing completed for task %s (ID: %s)", taskID, uniqueID)
 
+		// Mark video as ready immediately after transcoding - next video can start processing
+		h.db.UpdateVideoStatus(uniqueID, database.StatusReady, "")
+		log.Printf("✅ TRANSCODING: Video %s ready, next video request can start processing", uniqueID)
+
 		// Get paths to processed files
 		watermarkedVideoPath := filepath.Join(BaseDir, "tmp", "watermark", uniqueID+".ts")
 		previewPath := filepath.Join(BaseDir, "tmp", "preview", uniqueID+".mp4")
 		thumbnailPath := filepath.Join(BaseDir, "tmp", "thumbnail", uniqueID+".png")
 
-		// Step 2: Try direct upload with internet connectivity check
-		connectivityChecker := offline.NewConnectivityChecker()
+		// Clone variables for async upload goroutine
+		uploadUniqueID := uniqueID
+		uploadVideoPath := watermarkedVideoPath
+		uploadPreviewPath := previewPath
+		uploadThumbnailPath := thumbnailPath
+		uploadBookingID := bookingID
+		uploadCameraName := targetCamera.Name
+		uploadTaskID := taskID
 
-		if connectivityChecker.IsOnline() {
-			log.Printf("🌐 CONNECTIVITY: Online - mencoba upload langsung...")
+		// Step 2: Start upload and API notification in separate goroutine (fire-and-forget)
+		go func() {
+			log.Printf("📤 ASYNC UPLOAD: Starting background upload for %s", uploadUniqueID)
+			
+			// Update status to uploading
+			h.db.UpdateVideoStatus(uploadUniqueID, database.StatusUploading, "")
+			
+			// Check connectivity
+			connectivityChecker := offline.NewConnectivityChecker()
 
-			// Try direct upload with retry
-			var previewURL, thumbnailURL string
-			err = cleanRetryWithBackoff(func() error {
-				var err error
-				previewURL, thumbnailURL, err = bookingVideoService.UploadProcessedVideo(
-					uniqueID,
-					watermarkedVideoPath,
-					bookingID,
-					targetCamera.Name,
-				)
-				return err
-			}, 5, "File Upload")
+			if connectivityChecker.IsOnline() {
+				log.Printf("🌐 CONNECTIVITY: Online - starting async upload for %s", uploadUniqueID)
 
-			if err != nil {
-				log.Printf("⚠️ WARNING: Direct upload failed for task %s: %v", taskID, err)
-				log.Printf("📦 QUEUE: Menambahkan task upload ke offline queue...")
-
-				// Add to offline queue
-				err = h.queueManager.EnqueueR2Upload(
-					uniqueID,
-					watermarkedVideoPath,
-					previewPath,
-					thumbnailPath,
-					fmt.Sprintf("mp4/%s.ts", uniqueID),
-					fmt.Sprintf("preview/%s.mp4", uniqueID),
-					fmt.Sprintf("thumbnail/%s.png", uniqueID),
-				)
+				// Try direct upload with retry
+				var previewURL, thumbnailURL string
+				err := cleanRetryWithBackoff(func() error {
+					var err error
+					previewURL, thumbnailURL, err = bookingVideoService.UploadProcessedVideo(
+						uploadUniqueID,
+						uploadVideoPath,
+						uploadBookingID,
+						uploadCameraName,
+					)
+					return err
+				}, 5, "Async File Upload")
 
 				if err != nil {
-					log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
-					h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Upload failed and queue error: %v", err))
+					log.Printf("⚠️ WARNING: Async upload failed for task %s: %v", uploadTaskID, err)
+					log.Printf("📦 QUEUE: Adding failed upload to offline queue...")
+
+					// Add to offline queue
+					err = h.queueManager.EnqueueR2Upload(
+						uploadUniqueID,
+						uploadVideoPath,
+						uploadPreviewPath,
+						uploadThumbnailPath,
+						fmt.Sprintf("mp4/%s.ts", uploadUniqueID),
+						fmt.Sprintf("preview/%s.mp4", uploadUniqueID),
+						fmt.Sprintf("thumbnail/%s.png", uploadUniqueID),
+					)
+
+					if err != nil {
+						log.Printf("❌ ERROR: Failed to add async upload task to queue: %v", err)
+						h.db.UpdateVideoStatus(uploadUniqueID, database.StatusFailed, fmt.Sprintf("Upload failed and queue error: %v", err))
+						return
+					}
+
+					// Update status to uploading (will be processed by queue)
+					h.db.UpdateVideoStatus(uploadUniqueID, database.StatusUploading, "")
+					log.Printf("📦 QUEUE: Async upload task queued for video %s", uploadUniqueID)
 					return
 				}
 
-				// Update status to uploading (will be processed by queue)
-				h.db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
-				log.Printf("📦 QUEUE: Upload task queued for video %s", uniqueID)
-				return
-			}
+				log.Printf("📤 SUCCESS: Async direct upload completed for task %s", uploadTaskID)
 
-			log.Printf("📤 SUCCESS: Direct upload completed for task %s", taskID)
+				// Step 3: Try direct API notification
+				// Get video to calculate duration
+				video, err := h.db.GetVideo(uploadUniqueID)
+				var duration float64 = 60.0 // Default 60 seconds
+				if err == nil && video != nil {
+					duration = video.Duration
+				}
 
-			// Step 3: Try direct API notification
-			// Get video to calculate duration
-			video, err := h.db.GetVideo(uniqueID)
-			var duration float64 = 60.0 // Default 60 seconds
-			if err == nil && video != nil {
-				duration = video.Duration
-			}
+				err = cleanRetryWithBackoff(func() error {
+					return h.uploadService.NotifyAyoAPI(
+						uploadUniqueID,
+						"", // mp4URL will be filled by queue manager
+						previewURL,
+						thumbnailURL,
+						duration,
+					)
+				}, 3, "Async API Notification")
 
-			err = cleanRetryWithBackoff(func() error {
-				return h.uploadService.NotifyAyoAPI(
-					uniqueID,
-					"", // mp4URL will be filled by queue manager
-					previewURL,
-					thumbnailURL,
-					duration,
+				if err != nil {
+					log.Printf("⚠️ WARNING: Async API notification failed for task %s: %v", uploadTaskID, err)
+					log.Printf("📦 QUEUE: Adding failed API notification to offline queue...")
+
+					// Add API notification to queue
+					err = h.queueManager.EnqueueAyoAPINotify(
+						uploadUniqueID,
+						uploadUniqueID,
+						"", // MP4 URL will be updated when available
+						previewURL,
+						thumbnailURL,
+						duration,
+					)
+
+					if err != nil {
+						log.Printf("❌ ERROR: Failed to add async API notification task to queue: %v", err)
+					} else {
+						log.Printf("📦 QUEUE: Async API notification task queued for video %s", uploadUniqueID)
+					}
+				} else {
+					log.Printf("🔔 SUCCESS: Async direct API notification sent for task %s", uploadTaskID)
+				}
+			} else {
+				log.Printf("🌐 CONNECTIVITY: Offline - adding async tasks to queue...")
+
+				// Add both upload and API notification to queue since we're offline
+				err := h.queueManager.EnqueueR2Upload(
+					uploadUniqueID,
+					uploadVideoPath,
+					uploadPreviewPath,
+					uploadThumbnailPath,
+					fmt.Sprintf("mp4/%s.ts", uploadUniqueID),
+					fmt.Sprintf("preview/%s.mp4", uploadUniqueID),
+					fmt.Sprintf("thumbnail/%s.png", uploadUniqueID),
 				)
-			}, 3, "API Notification")
 
-			if err != nil {
-				log.Printf("⚠️ WARNING: Direct API notification failed for task %s: %v", taskID, err)
-				log.Printf("📦 QUEUE: Menambahkan task notifikasi API ke offline queue...")
+				if err != nil {
+					log.Printf("❌ ERROR: Failed to add async upload task to offline queue: %v", err)
+					h.db.UpdateVideoStatus(uploadUniqueID, database.StatusFailed, fmt.Sprintf("Offline queue error: %v", err))
+					return
+				}
 
-				// Add API notification to queue
+				// Get video duration
+				video, err := h.db.GetVideo(uploadUniqueID)
+				var duration float64 = 60.0 // Default 60 seconds
+				if err == nil && video != nil {
+					duration = video.Duration
+				}
+
 				err = h.queueManager.EnqueueAyoAPINotify(
-					uniqueID,
-					uniqueID,
-					"", // MP4 URL will be updated when available
-					previewURL,
-					thumbnailURL,
+					uploadUniqueID,
+					uploadUniqueID,
+					"", // MP4 URL will be updated when upload completes
+					"", // Preview URL will be updated when upload completes
+					"", // Thumbnail URL will be updated when upload completes
 					duration,
 				)
 
 				if err != nil {
-					log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
+					log.Printf("❌ ERROR: Failed to add async API notification task to offline queue: %v", err)
 				} else {
-					log.Printf("📦 QUEUE: API notification task queued for video %s", uniqueID)
+					log.Printf("📦 QUEUE: Async API notification task queued for video %s", uploadUniqueID)
 				}
-			} else {
-				log.Printf("🔔 SUCCESS: Direct API notification sent for task %s", taskID)
-			}
-		} else {
-			log.Printf("🌐 CONNECTIVITY: Offline - menambahkan semua task ke queue...")
 
-			// Add both upload and API notification to queue since we're offline
-			err = h.queueManager.EnqueueR2Upload(
-				uniqueID,
-				watermarkedVideoPath,
-				previewPath,
-				thumbnailPath,
-				fmt.Sprintf("mp4/%s.ts", uniqueID),
-				fmt.Sprintf("preview/%s.mp4", uniqueID),
-				fmt.Sprintf("thumbnail/%s.png", uniqueID),
-			)
-
-			if err != nil {
-				log.Printf("❌ ERROR: Failed to add upload task to queue: %v", err)
-				h.db.UpdateVideoStatus(uniqueID, database.StatusFailed, fmt.Sprintf("Offline queue error: %v", err))
-				return
+				// Update status to uploading (will be processed by queue when online)
+				h.db.UpdateVideoStatus(uploadUniqueID, database.StatusUploading, "")
+				log.Printf("📦 QUEUE: Async tasks queued for video %s - will be processed when online", uploadUniqueID)
 			}
 
-			// Get video duration
-			video, err := h.db.GetVideo(uniqueID)
-			var duration float64 = 60.0 // Default 60 seconds
-			if err == nil && video != nil {
-				duration = video.Duration
-			}
+			log.Printf("🎉 ASYNC COMPLETED: Background upload/notification finished for task %s (video: %s)", uploadTaskID, uploadUniqueID)
+		}() // End of async upload goroutine
 
-			err = h.queueManager.EnqueueAyoAPINotify(
-				uniqueID,
-				uniqueID,
-				"", // MP4 URL will be updated when upload completes
-				"", // Preview URL will be updated when upload completes
-				"", // Thumbnail URL will be updated when upload completes
-				duration,
-			)
-
-			if err != nil {
-				log.Printf("❌ ERROR: Failed to add API notification task to queue: %v", err)
-			} else {
-				log.Printf("📦 QUEUE: API notification task queued untuk video %s", uniqueID)
-			}
-
-			// Update status to uploading (will be processed by queue when online)
-			h.db.UpdateVideoStatus(uniqueID, database.StatusUploading, "")
-			log.Printf("📦 QUEUE: Tasks queued untuk video %s - akan diproses saat online", uniqueID)
-		}
-
-		log.Printf("🎉 COMPLETED: Background processing finished for task %s (video: %s)", taskID, uniqueID)
-	}()
+		log.Printf("🎉 TRANSCODING COMPLETED: Video processing finished for task %s (video: %s) - NEXT VIDEO CAN START", taskID, uniqueID)
+	}() // End of main background processing goroutine
 
 	// Return immediate success response
 	c.JSON(http.StatusOK, ApiResponse{
@@ -650,3 +673,4 @@ func getConnectivityStatusString(isOnline bool) string {
 	}
 	return "OFFLINE ❌"
 }
+

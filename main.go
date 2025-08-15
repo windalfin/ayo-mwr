@@ -154,6 +154,14 @@ func main() {
 	hlsCron.Start()
 	log.Println("Started HLS cleanup cron job")
 
+	// Start chunk processing cron job (every 15 minutes)
+	chunkCron := cron.NewChunkProcessingCron(db, diskManager)
+	if err := chunkCron.Start(); err != nil {
+		log.Printf("Warning: Failed to start chunk processing cron: %v", err)
+	} else {
+		log.Println("Started chunk processing cron job (15-minute intervals)")
+	}
+
 	// Start health check cron job (every minute)
 	healthCheckCron, err := cron.NewHealthCheckCron()
 	if err != nil {
@@ -192,6 +200,9 @@ func main() {
 		log.Printf("Warning: Failed to initialize AyoIndo API client: %v", apiErr)
 		apiClient = nil // Explicitly set to nil for clarity
 	} else {
+		// Set AYO client for chunk processor watermarking
+		chunkCron.SetAyoClient(apiClient)
+		log.Println("Set AYO client for chunk processor watermarking")
 		// Start video cleanup cron job (every 24 hours)
 		// delay 10 seconds before first run
 		// time.Sleep(15 * time.Second)
@@ -222,8 +233,8 @@ func main() {
 	// Initialize upload service with AYO API client
 	uploadService := service.NewUploadService(db, r2Storage, &cfg, apiClient)
 
-	// Initialize and start API server
-	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS)
+	// Initialize and start API server with chunk optimization
+	apiServer := api.NewServer(&cfg, db, r2Storage, uploadService, embeddedDashboardFS, diskManager)
 	go apiServer.Start()
 
 	// Initialize Arduino signal handler via signaling package

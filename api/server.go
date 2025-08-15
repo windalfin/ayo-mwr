@@ -24,6 +24,7 @@ type Server struct {
 	r2Storage           *storage.R2Storage
 	uploadService       *service.UploadService
 	videoRequestHandler *BookingVideoRequestHandler
+	chunkHandlers       *ChunkHandlers
 	dashboardFS         embed.FS
 
 	// Mutex untuk prevent concurrent uploads
@@ -31,9 +32,13 @@ type Server struct {
 	activeUploads map[string]bool // key: cameraName, value: isUploading
 }
 
-func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS) *Server {
-	// Initialize video request handler
+func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2Storage, uploadService *service.UploadService, dashboardFS embed.FS, diskManager *storage.DiskManager) *Server {
+	// Initialize video request handler with chunk optimization
 	videoRequestHandler := NewBookingVideoRequestHandler(cfg, db, r2Storage, uploadService)
+
+	// Initialize chunk configuration service and handlers
+	chunkConfigService := config.NewChunkConfigService(db)
+	chunkHandlers := NewChunkHandlers(chunkConfigService, db)
 
 	return &Server{
 		config:              cfg,
@@ -41,6 +46,7 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		r2Storage:           r2Storage,
 		uploadService:       uploadService,
 		videoRequestHandler: videoRequestHandler,
+		chunkHandlers:       chunkHandlers,
 		dashboardFS:         dashboardFS,
 		activeUploads:       make(map[string]bool),
 	}
@@ -83,7 +89,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 
 	// Static routes - serve HLS files from the recordings directory
 	r.Static("/hls", filepath.Join(s.config.StoragePath, "recordings"))
-	
+
 	// Static route for watermarks
 	r.Static("/watermarks", filepath.Join(s.config.StoragePath, "watermarks"))
 
@@ -128,58 +134,66 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 		dashboardGroup.StaticFS("/", http.FS(dashboardHTTPFS))
 	}
 
-	   // API routes
-	   api := r.Group("/api")
-	   {
-			   // Public API endpoints (for external integrations and onboarding)
-			   api.GET("/health", s.handleHealthCheck)
-			   api.POST("/upload", s.handleUpload)
-			   api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
-			   api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
+	// API routes
+	api := r.Group("/api")
+	{
+		// Public API endpoints (for external integrations and onboarding)
+		api.GET("/health", s.handleHealthCheck)
+		api.POST("/upload", s.handleUpload)
+		api.POST("/request-booking-video", s.videoRequestHandler.ProcessBookingVideo)
+		api.GET("/queue-status", s.videoRequestHandler.GetQueueStatus)
 
-			   // Onboarding endpoints (public)
-			   api.GET("/onboarding-status", s.getOnboardingStatus)
-			   api.POST("/onboarding/venue-config", s.saveVenueConfig)
-			   api.GET("/onboarding/camera-defaults", s.getCameraDefaults)
-			   api.POST("/onboarding/first-camera", s.saveFirstCamera)
+		// Onboarding endpoints (public)
+		api.GET("/onboarding-status", s.getOnboardingStatus)
+		api.POST("/onboarding/venue-config", s.saveVenueConfig)
+		api.GET("/onboarding/camera-defaults", s.getCameraDefaults)
+		api.POST("/onboarding/first-camera", s.saveFirstCamera)
 
-			   // All dashboard/admin endpoints are protected
-			   dashboard := api.Group("", s.AuthMiddleware())
-			   {
-					   dashboard.GET("/streams", s.listStreams)
-					   dashboard.GET("/arduino-status", s.getArduinoStatus)
-					   dashboard.GET("/streams/:id", s.getStream)
-					   dashboard.GET("/cameras", s.listCameras)
-					   dashboard.GET("/videos", s.listVideos)
-					   dashboard.GET("/system_health", s.getSystemHealth)
-					   dashboard.GET("/logs", s.getLogs)
+		// All dashboard/admin endpoints are protected
+		dashboard := api.Group("", s.AuthMiddleware())
+		{
+			dashboard.GET("/streams", s.listStreams)
+			dashboard.GET("/arduino-status", s.getArduinoStatus)
+			dashboard.GET("/streams/:id", s.getStream)
+			dashboard.GET("/cameras", s.listCameras)
+			dashboard.GET("/videos", s.listVideos)
+			dashboard.GET("/system_health", s.getSystemHealth)
+			dashboard.GET("/logs", s.getLogs)
 
-					   // Booking management endpoints (protected)
-					   dashboard.GET("/bookings", s.getBookings)
-					   dashboard.GET("/bookings/:booking_id", s.getBookingByID)
-					   dashboard.GET("/bookings/status/:status", s.getBookingsByStatus)
-					   dashboard.GET("/bookings/date/:date", s.getBookingsByDate)
-			   }
+			// Booking management endpoints (protected)
+			dashboard.GET("/bookings", s.getBookings)
+			dashboard.GET("/bookings/:booking_id", s.getBookingByID)
+			dashboard.GET("/bookings/status/:status", s.getBookingsByStatus)
+			dashboard.GET("/bookings/date/:date", s.getBookingsByDate)
+		}
 
-			   // Admin endpoints for camera/system/disk config (protected)
-			   admin := api.Group("/admin", s.AuthMiddleware())
-			   {
-					   admin.GET("/cameras-config", s.getCamerasConfig)
-					   admin.PUT("/arduino-config", s.updateArduinoConfig)
-					   admin.PUT("/cameras-config", s.updateCamerasConfig)
-					   admin.POST("/cameras-config", s.updateCamerasConfig) // Add POST support for camera config
-					   admin.POST("/reload-cameras", s.reloadCameras)
+		// Admin endpoints for camera/system/disk config (protected)
+		admin := api.Group("/admin", s.AuthMiddleware())
+		{
+			admin.GET("/cameras-config", s.getCamerasConfig)
+			admin.PUT("/arduino-config", s.updateArduinoConfig)
+			admin.PUT("/cameras-config", s.updateCamerasConfig)
+			admin.POST("/cameras-config", s.updateCamerasConfig) // Add POST support for camera config
+			admin.POST("/reload-cameras", s.reloadCameras)
 
-					   // System configuration endpoints
-					   admin.GET("/system-config", s.getSystemConfig)
-					   admin.PUT("/system-config", s.updateSystemConfig)
+			// System configuration endpoints
+			admin.GET("/system-config", s.getSystemConfig)
+			admin.PUT("/system-config", s.updateSystemConfig)
 
-					   // Disk manager configuration endpoints
+			// Disk manager configuration endpoints
 			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
 			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
 
+			// Chunk processing endpoints
+			admin.GET("/chunk-config", s.chunkHandlers.GetChunkConfig)
+			admin.PUT("/chunk-config", s.chunkHandlers.UpdateChunkConfig)
+			admin.GET("/chunk-statistics", s.chunkHandlers.GetChunkStatistics)
+			admin.POST("/chunk-processing/enable", s.chunkHandlers.EnableChunkProcessing)
+			admin.POST("/chunk-processing/force", s.chunkHandlers.ForceChunkProcessing)
+			admin.POST("/chunk-cleanup/force", s.chunkHandlers.ForceChunkCleanup)
+
 			// Watermark endpoints
 			admin.POST("/force-update-watermark", s.forceUpdateWatermark)
-			   }
-	   }
+		}
+	}
 }

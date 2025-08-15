@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"ayo-mwr/database"
 )
@@ -68,16 +70,29 @@ func GetWatermark(venueCode string) (string, error) {
 	}
 	wanted := map[string]bool{"360": true, "480": true, "720": true, "1080": true}
 
-	// Check if all files exist
+	// Check if any files exist first - prioritize using existing files
 	cwd, _ := os.Getwd()
 	log.Printf("Current working directory: %s", cwd)
+	log.Printf("Checking watermark files in folder: %s", folder)
+	
+	// First try to return any existing watermark file (prioritize 1080 > 720 > 480 > 360)
+	for _, res := range []string{"1080", "720", "480", "360"} {
+		fname := sizes[res]
+		path := filepath.Join(folder, fname)
+		if _, err := os.Stat(path); err == nil {
+			log.Printf("Found existing watermark: %s", path)
+			return path, nil
+		}
+	}
+	
+	// No existing files found, try to download
 	allExist := true
 	for res, fname := range sizes {
 		if _, err := os.Stat(filepath.Join(folder, fname)); os.IsNotExist(err) && wanted[res] {
 			allExist = false
 		}
 	}
-	log.Printf("Checking watermark files in folder: %s", folder)
+	log.Printf("No existing watermark files found, attempting download...")
 	log.Printf("Does watermark files exist: %t", allExist)
 
 	if !allExist {
@@ -137,15 +152,16 @@ func GetWatermark(venueCode string) (string, error) {
 		}
 	}
 
-	// Return 360p if available, else fallback to 480/720/1080
-	for _, res := range []string{"360", "480", "720", "1080"} {
+	// Try again to return any downloaded watermark file (prioritize 1080 > 720 > 480 > 360)
+	for _, res := range []string{"1080", "720", "480", "360"} {
 		fname := sizes[res]
 		path := filepath.Join(folder, fname)
 		if _, err := os.Stat(path); err == nil {
+			log.Printf("Using downloaded watermark: %s", path)
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("no watermark image found after download")
+	return "", fmt.Errorf("no watermark image found after download attempt")
 }
 
 // WatermarkPosition defines standard positions for watermark overlay
@@ -284,25 +300,32 @@ func AddWatermarkWithPosition(inputVideo, watermarkImg, outputVideo string, posi
 	
 	log.Printf("AddWatermarkWithPosition : Using watermark: %s with opacity %.2f", watermarkImg, opacity)
 	
-	// Komando ffmpeg dengan parameter yang menjaga kualitas video tetap original
-	cmd := exec.Command(
-		"ffmpeg", "-y",
+	// Komando ffmpeg dengan parameter optimized untuk kecepatan
+	args := []string{
+		"-y",
 		"-v", "warning", // Show more detailed output
 		"-i", inputVideo,
 		"-i", watermarkImg,
 		"-filter_complex", filter,
 		"-c:v", "libx264",           // Codec video H.264
-		"-crf", "17",                // CRF sangat rendah untuk kualitas mendekati lossless (0-51, semakin rendah semakin bagus)
-		"-preset", "ultrafast",     // Preset encoding yang mementingkan kecepatan
+		"-crf", "28",                // Higher CRF for much faster encoding (slightly lower quality but much faster)
+		"-preset", "ultrafast",      // Ultra fast preset for maximum encoding speed
 		"-profile:v", "high",        // Profil high untuk kualitas maksimal
 		"-pix_fmt", "yuv420p",       // Format pixel standar untuk kompatibilitas maksimal
 		"-c:a", "copy",              // Copy audio tanpa mengubah kualitas
 		"-map_metadata", "0",        // Pertahankan metadata dari video asli
 		"-movflags", "+faststart",   // Optimasi file untuk streaming
+		"-threads", "0",             // Use all available CPU threads for faster encoding
 		outputVideo,
-	)
+	}
 	
-	log.Printf("AddWatermarkWithPosition : Executing ffmpeg with high quality settings for watermark overlay")
+	// Create context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	
+	log.Printf("AddWatermarkWithPosition : Executing ffmpeg with optimized settings for watermark overlay (5min timeout)")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("AddWatermarkWithPosition : ffmpeg error: %v, output: %s", err, string(output))

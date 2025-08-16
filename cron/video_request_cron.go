@@ -524,27 +524,50 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				var convertedMP4Path string
 				var shouldDeleteConverted bool
 
+				// Check if video already has watermark applied during recording
+				hasRealtimeWatermark := false
+				
+				// Check if real-time watermarking is enabled
+				enableRealtimeWatermark := true // Default to enabled
+				if realtimeConfig, err := db.GetSystemConfig(database.ConfigEnableRealtimeWatermark); err == nil {
+					if realtimeConfig.Value == "false" {
+						enableRealtimeWatermark = false
+					}
+				}
+				
+				if enableRealtimeWatermark {
+					if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+						if watermarkPath, err := recording.GetWatermark(venueConfig.Value); err == nil && watermarkPath != "" {
+							hasRealtimeWatermark = true
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Video has real-time watermark, skipping post-processing", cronID)
+						}
+					}
+				}
+
 				// Get watermark settings from database using existing recording package functions
 				var watermarkPath string
 				position, margin, opacity := recording.GetWatermarkSettings()
 
-				// Get venue code for watermark
-				venueCode := ""
-				if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
-					venueCode = venueConfig.Value
-					log.Printf("📋 VIDEO-REQUEST-CRON-%d: Found venue code: %s", cronID, venueCode)
-				}
+				// Only apply post-processing watermark if not already applied during recording
+				if !hasRealtimeWatermark {
+					// Get venue code for watermark
+					venueCode := ""
+					if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+						venueCode = venueConfig.Value
+						log.Printf("📋 VIDEO-REQUEST-CRON-%d: Found venue code: %s", cronID, venueCode)
+					}
 
-				if venueCode != "" {
-					// Get watermark using recording package
-					var err error
-					watermarkPath, err = recording.GetWatermark(venueCode)
-					if err != nil {
-						log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Failed to get watermark: %v", cronID, err)
-						// Continue without watermark
-						watermarkPath = ""
-					} else {
-						log.Printf("✅ VIDEO-REQUEST-CRON-%d: Got watermark path: %s", cronID, watermarkPath)
+					if venueCode != "" {
+						// Get watermark using recording package
+						var err error
+						watermarkPath, err = recording.GetWatermark(venueCode)
+						if err != nil {
+							log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Failed to get watermark: %v", cronID, err)
+							// Continue without watermark
+							watermarkPath = ""
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Got watermark path: %s", cronID, watermarkPath)
+						}
 					}
 				}
 
@@ -570,8 +593,8 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 					// Create temporary MP4 file path for conversion
 					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
 
-					// Convert TS to MP4 with or without watermark in single step
-					if watermarkPath != "" {
+					// Convert TS to MP4 with or without watermark based on real-time status
+					if !hasRealtimeWatermark && watermarkPath != "" {
 						// Convert with watermark in single step (more efficient)
 						var positionStr string
 						switch position {
@@ -601,13 +624,17 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion with watermark successful (single step)", cronID)
 						}
 					} else {
-						// Convert without watermark
+						// Convert without watermark (either already has real-time watermark or no watermark configured)
 						if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
 							log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
 							db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 							return
 						}
-						log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
+						if hasRealtimeWatermark {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (real-time watermark preserved)", cronID)
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
+						}
 					}
 
 					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)

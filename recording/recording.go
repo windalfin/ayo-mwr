@@ -28,6 +28,30 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
+// getOverlayExpression returns FFmpeg overlay expression based on watermark position
+func getOverlayExpression(position WatermarkPosition, margin int) string {
+	switch position {
+	case TopLeft:
+		return fmt.Sprintf("overlay=%d:%d", margin, margin)
+	case TopRight:
+		return fmt.Sprintf("overlay=main_w-overlay_w-%d:%d", margin, margin)
+	case BottomLeft:
+		return fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
+	case BottomRight:
+		return fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		return fmt.Sprintf("overlay=%d:%d", margin, margin)
+	}
+}
+
+// isRealtimeWatermarkEnabled checks if real-time watermarking is enabled in system configuration
+func isRealtimeWatermarkEnabled() bool {
+	// TODO: This should be updated to use a proper database connection
+	// For now, we'll assume it's enabled by default until database integration is available
+	// In a full implementation, this would query: database.ConfigEnableRealtimeWatermark
+	return true
+}
+
 // startQualityStream starts and manages a single quality stream
 func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, cameraLogsDir string) {
 	hlsPlaylistPath := filepath.Join(stream.HLSDir, "playlist.m3u8")
@@ -49,6 +73,17 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 			// Detect stream info first
 			streamInfo := detectStreamInfo(stream.RTSPURL, fmt.Sprintf("%s-%s", cameraName, stream.Quality))
 
+			// Check for watermark settings and real-time watermark configuration
+			useWatermark := false
+			var watermarkPath string
+			
+			// Only check for real-time watermarking if enabled in config
+			if isRealtimeWatermarkEnabled() {
+				var err error
+				watermarkPath, err = GetWatermark(cameraName)
+				useWatermark = err == nil && watermarkPath != ""
+			}
+			
 			ffmpegArgs := []string{
 				"-rtsp_transport", "tcp",
 				"-timeout", "5000000",
@@ -57,16 +92,43 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 				"-probesize", "1000000",
 				"-re",
 				"-i", stream.RTSPURL,
-				"-c:v", "copy", // Stream copy for zero CPU encoding
 			}
 
-			// Add appropriate bitstream filter based on video codec
-			if streamInfo.VideoCodec == "h264" {
-				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
-				log.Printf("[%s-%s] Using H.264 bitstream filter", cameraName, stream.Quality)
-			} else if streamInfo.VideoCodec == "hevc" {
-				ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
-				log.Printf("[%s-%s] Using HEVC bitstream filter", cameraName, stream.Quality)
+			// Add watermark input if available
+			if useWatermark {
+				ffmpegArgs = append(ffmpegArgs, "-i", watermarkPath)
+				log.Printf("[%s-%s] Real-time watermarking enabled with: %s", cameraName, stream.Quality, watermarkPath)
+			}
+
+			// Configure video processing based on watermark availability
+			if useWatermark {
+				// Real-time watermarking with re-encoding
+				position, margin, opacity := GetWatermarkSettings()
+				overlayExpr := getOverlayExpression(position, margin)
+				filter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm];[0:v][wm]%s", opacity, overlayExpr)
+				
+				ffmpegArgs = append(ffmpegArgs,
+					"-filter_complex", filter,
+					"-c:v", "libx264",
+					"-preset", "ultrafast",
+					"-tune", "zerolatency",
+					"-crf", "30",
+					"-profile:v", "baseline",
+					"-level", "3.1",
+				)
+				log.Printf("[%s-%s] Using real-time watermark encoding", cameraName, stream.Quality)
+			} else {
+				// Stream copy for zero CPU encoding when no watermark
+				ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+				
+				// Add appropriate bitstream filter based on video codec
+				if streamInfo.VideoCodec == "h264" {
+					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
+					log.Printf("[%s-%s] Using H.264 bitstream filter", cameraName, stream.Quality)
+				} else if streamInfo.VideoCodec == "hevc" {
+					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
+					log.Printf("[%s-%s] Using HEVC bitstream filter", cameraName, stream.Quality)
+				}
 			}
 
 			ffmpegArgs = append(ffmpegArgs,

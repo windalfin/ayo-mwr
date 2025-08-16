@@ -46,10 +46,32 @@ func getOverlayExpression(position WatermarkPosition, margin int) string {
 
 // isRealtimeWatermarkEnabled checks if real-time watermarking is enabled in system configuration
 func isRealtimeWatermarkEnabled() bool {
-	// TODO: This should be updated to use a proper database connection
-	// For now, we'll assume it's enabled by default until database integration is available
-	// In a full implementation, this would query: database.ConfigEnableRealtimeWatermark
+	// For now, always return true to enable real-time watermarking
+	// This will be updated to check database configuration in a future version
+	log.Printf("ℹ️ REALTIME-WATERMARK: Real-time watermarking is enabled (default)")
 	return true
+}
+
+// getVenueCodeFromEnv gets venue code from environment or database
+func getVenueCodeFromEnv() string {
+	// First try environment variable
+	if venueCode := os.Getenv("VENUE_CODE"); venueCode != "" {
+		return venueCode
+	}
+	
+	// Try to get from database as fallback
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("⚠️ VENUE-CODE: Failed to connect to database: %v", err)
+		return ""
+	}
+	defer db.Close()
+	
+	if config, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && config.Value != "" {
+		return config.Value
+	}
+	
+	return ""
 }
 
 // startQualityStream starts and manages a single quality stream
@@ -77,12 +99,35 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 			useWatermark := false
 			var watermarkPath string
 			
+			log.Printf("[%s-%s] 🔍 WATERMARK-CHECK: Starting watermark detection for camera", cameraName, stream.Quality)
+			
 			// Only check for real-time watermarking if enabled in config
 			if isRealtimeWatermarkEnabled() {
-				var err error
-				watermarkPath, err = GetWatermark(cameraName)
-				useWatermark = err == nil && watermarkPath != ""
+				log.Printf("[%s-%s] ✅ WATERMARK-CHECK: Real-time watermarking is enabled, checking for watermark file", cameraName, stream.Quality)
+				
+				// Get venue code from database - this is what GetWatermark expects
+				venueCode := getVenueCodeFromEnv()
+				log.Printf("[%s-%s] 🏢 VENUE-CODE: Using venue code: %s", cameraName, stream.Quality, venueCode)
+				
+				if venueCode == "" {
+					log.Printf("[%s-%s] ⚠️ WATERMARK-CHECK: No venue code configured, watermark disabled", cameraName, stream.Quality)
+				} else {
+					var err error
+					watermarkPath, err = GetWatermark(venueCode)
+					if err != nil {
+						log.Printf("[%s-%s] ⚠️ WATERMARK-CHECK: Failed to get watermark for venue '%s': %v", cameraName, stream.Quality, venueCode, err)
+					} else if watermarkPath == "" {
+						log.Printf("[%s-%s] ℹ️ WATERMARK-CHECK: No watermark path found for venue '%s'", cameraName, stream.Quality, venueCode)
+					} else {
+						log.Printf("[%s-%s] ✅ WATERMARK-CHECK: Found watermark file for venue '%s': %s", cameraName, stream.Quality, venueCode, watermarkPath)
+					}
+					useWatermark = err == nil && watermarkPath != ""
+				}
+			} else {
+				log.Printf("[%s-%s] ❌ WATERMARK-CHECK: Real-time watermarking is disabled", cameraName, stream.Quality)
 			}
+			
+			log.Printf("[%s-%s] 📋 WATERMARK-DECISION: useWatermark=%v, watermarkPath=%s", cameraName, stream.Quality, useWatermark, watermarkPath)
 			
 			ffmpegArgs := []string{
 				"-rtsp_transport", "tcp",
@@ -104,8 +149,13 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 			if useWatermark {
 				// Real-time watermarking with re-encoding
 				position, margin, opacity := GetWatermarkSettings()
+				log.Printf("[%s-%s] 🎨 WATERMARK-SETTINGS: position=%d, margin=%d, opacity=%.2f", cameraName, stream.Quality, position, margin, opacity)
+				
 				overlayExpr := getOverlayExpression(position, margin)
 				filter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm];[0:v][wm]%s", opacity, overlayExpr)
+				
+				log.Printf("[%s-%s] 🎬 WATERMARK-FILTER: %s", cameraName, stream.Quality, filter)
+				log.Printf("[%s-%s] 🎬 WATERMARK-OVERLAY: %s", cameraName, stream.Quality, overlayExpr)
 				
 				ffmpegArgs = append(ffmpegArgs,
 					"-filter_complex", filter,
@@ -116,7 +166,7 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 					"-profile:v", "baseline",
 					"-level", "3.1",
 				)
-				log.Printf("[%s-%s] Using real-time watermark encoding", cameraName, stream.Quality)
+				log.Printf("[%s-%s] ✅ WATERMARK-ENCODING: Using real-time watermark encoding with re-encode", cameraName, stream.Quality)
 			} else {
 				// Stream copy for zero CPU encoding when no watermark
 				ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
@@ -124,10 +174,12 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 				// Add appropriate bitstream filter based on video codec
 				if streamInfo.VideoCodec == "h264" {
 					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
-					log.Printf("[%s-%s] Using H.264 bitstream filter", cameraName, stream.Quality)
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using H.264 bitstream filter with stream copy", cameraName, stream.Quality)
 				} else if streamInfo.VideoCodec == "hevc" {
 					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
-					log.Printf("[%s-%s] Using HEVC bitstream filter", cameraName, stream.Quality)
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using HEVC bitstream filter with stream copy", cameraName, stream.Quality)
+				} else {
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using stream copy without bitstream filter", cameraName, stream.Quality)
 				}
 			}
 
@@ -150,7 +202,8 @@ func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, 
 				hlsPlaylistPath,
 			)
 
-			log.Printf("[%s-%s] Starting FFmpeg with graceful shutdown support", cameraName, stream.Quality)
+			log.Printf("[%s-%s] 🚀 FFMPEG-COMMAND: Starting FFmpeg with graceful shutdown support", cameraName, stream.Quality)
+			log.Printf("[%s-%s] 🔧 FFMPEG-ARGS: %v", cameraName, stream.Quality, ffmpegArgs)
 
 			stream.Cmd = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
 			stream.Cmd.Stdout = logFile
@@ -318,7 +371,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	// Start the MP4 segmenter in the background (legacy HLS-based segmentation)
 	// StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
-	log.Printf("Starting capture for camera: %s", cameraName)
+	log.Printf("[%s] ⚠️ OLD-RECORDING: Starting capture using OLD recording function (no watermark support)", cameraName)
 
 	// Start continuous HLS streaming
 	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
@@ -1106,6 +1159,8 @@ func captureRTSPStreamForCameraWithGracefulShutdown(ctx context.Context, cfg *co
 	if cameraName == "" {
 		cameraName = fmt.Sprintf("camera_%d", cameraID)
 	}
+	
+	log.Printf("[%s] 🚀 GRACEFUL-RECORDING: Starting graceful shutdown recording with watermark support", cameraName)
 
 	// Create camera-specific directories
 	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)

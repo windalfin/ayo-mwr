@@ -488,12 +488,13 @@ func (cp *ChunkProcessor) createPhysicalChunk(ctx context.Context, cameraName st
 	// Use FFmpeg directly to concatenate TS segments
 	log.Printf("[ChunkProcessor] Creating chunk %s from %d segments...", chunkFilename, len(group.Segments))
 	
-	// Build FFmpeg command to concatenate TS files
+	// Build FFmpeg command to concatenate TS files with exact 10-minute duration
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", segmentListPath,
 		"-c", "copy", // Copy streams without re-encoding
+		"-t", "600", // Trim to exactly 10 minutes (600 seconds)
 		"-y", // Overwrite output file if exists
 		chunkPath,
 	)

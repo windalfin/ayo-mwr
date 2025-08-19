@@ -729,16 +729,18 @@ func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID stri
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
 
-	// Calculate duration from end_time - start_time
-	duration := endTime.Sub(startTime)
-	durationStr := fmt.Sprintf("%.3f", duration.Seconds())
+	// Calculate duration from booking times to ensure exact duration
+	// regardless of when recording actually started
+	bookingDuration := endTime.Sub(startTime)
+	durationStr := fmt.Sprintf("%.3f", bookingDuration.Seconds())
 
 	ffmpegArgs := []string{
 		"-y",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
-		"-t", durationStr, // Duration limit based on end_time - start_time
+		"-t", durationStr, // Exact booking duration to ensure precise timing
+		"-avoid_negative_ts", "make_zero", // Handle timing adjustments
 		"-c", "copy", // Copy codec - no transcoding, very fast
 		outputPath,
 	}

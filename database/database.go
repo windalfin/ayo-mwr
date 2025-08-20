@@ -305,9 +305,10 @@ const (
 	ConfigR2TokenValue = "r2_token_value"
 	
 	// Watermark Configuration
-	ConfigWatermarkPosition = "watermark_position"
-	ConfigWatermarkMargin   = "watermark_margin"
-	ConfigWatermarkOpacity  = "watermark_opacity"
+	ConfigWatermarkPosition         = "watermark_position"
+	ConfigWatermarkMargin           = "watermark_margin"
+	ConfigWatermarkOpacity          = "watermark_opacity"
+	ConfigEnableRealtimeWatermark   = "enable_realtime_watermark"
 	
 	// AYO API Configuration
 	ConfigAyoindoAPIBaseEndpoint = "ayoindo_api_base_endpoint"

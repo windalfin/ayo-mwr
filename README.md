@@ -82,6 +82,14 @@ Camera 4: 192.168.1.104 (MAC: xx:xx:xx:xx:xx:04)
 
 ```
 
+#### DayNight Switch Configuration
+Make sure to change the day-night switch config to Day, to force 
+the IP Cam to keep recording color
+
+the setting can be found at
+http://{camera_ip}/doc/index.html#/config/image/display
+
+
 #### WiFi Configuration
 Setup the Wifi Password which we will later setup in the Mini-PC
 

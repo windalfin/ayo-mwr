@@ -61,20 +61,26 @@ type VideoMetadata struct {
 
 // CameraConfig represents camera configuration stored in the database
 type CameraConfig struct {
-	ButtonNo   string `json:"button_no"`
-	Name       string `json:"name"`
-	IP         string `json:"ip"`
-	Port       string `json:"port"`
-	Path       string `json:"path"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Enabled    bool   `json:"enabled"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	FrameRate  int    `json:"frame_rate"`
-	Field      string `json:"field"`
-	Resolution string `json:"resolution"`
-	AutoDelete int    `json:"auto_delete"`
+	ButtonNo        string `json:"button_no"`
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	Port            string `json:"port"`
+	Path            string `json:"path"`
+	Path720         string `json:"path_720"`
+	Path480         string `json:"path_480"`
+	Path360         string `json:"path_360"`
+	ActivePath720   bool   `json:"active_path_720"`
+	ActivePath480   bool   `json:"active_path_480"`
+	ActivePath360   bool   `json:"active_path_360"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	Enabled         bool   `json:"enabled"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	FrameRate       int    `json:"frame_rate"`
+	Field           string `json:"field"`
+	Resolution      string `json:"resolution"`
+	AutoDelete      int    `json:"auto_delete"`
 }
 
 // StorageDisk represents a storage disk for recording data
@@ -89,16 +95,55 @@ type StorageDisk struct {
 	CreatedAt        time.Time `json:"createdAt"`        // When this disk was added to the system
 }
 
-// RecordingSegment represents an individual MP4 recording segment
+// ChunkType represents the type of recording segment
+type ChunkType string
+
+const (
+	ChunkTypeSegment ChunkType = "segment" // Individual 4-second segment
+	ChunkTypeChunk   ChunkType = "chunk"   // Pre-concatenated 15-minute chunk
+)
+
+// ProcessingStatus represents the processing status of a chunk
+type ProcessingStatus string
+
+const (
+	ProcessingStatusReady      ProcessingStatus = "ready"      // Ready for use
+	ProcessingStatusProcessing ProcessingStatus = "processing" // Currently being processed
+	ProcessingStatusFailed     ProcessingStatus = "failed"     // Processing failed
+	ProcessingStatusPending    ProcessingStatus = "pending"    // Waiting to be processed
+)
+
+// RecordingSegment represents an individual MP4 recording segment or pre-concatenated chunk
 type RecordingSegment struct {
-	ID            string    `json:"id"`            // Unique identifier for the segment
-	CameraName    string    `json:"cameraName"`    // Name of the camera that recorded this segment
-	StorageDiskID string    `json:"storageDiskId"` // ID of the storage disk where this segment is stored
-	MP4Path       string    `json:"mp4Path"`       // Relative path to the MP4 file on the storage disk
-	SegmentStart  time.Time `json:"segmentStart"`  // Start time of the recording segment
-	SegmentEnd    time.Time `json:"segmentEnd"`    // End time of the recording segment
-	FileSizeBytes int64     `json:"fileSizeBytes"` // Size of the MP4 file in bytes
-	CreatedAt     time.Time `json:"createdAt"`     // When this segment record was created
+	ID                   string           `json:"id"`                   // Unique identifier for the segment
+	CameraName           string           `json:"cameraName"`           // Name of the camera that recorded this segment
+	StorageDiskID        string           `json:"storageDiskId"`        // ID of the storage disk where this segment is stored
+	MP4Path              string           `json:"mp4Path"`              // Relative path to the MP4 file on the storage disk
+	SegmentStart         time.Time        `json:"segmentStart"`         // Start time of the recording segment
+	SegmentEnd           time.Time        `json:"segmentEnd"`           // End time of the recording segment
+	FileSizeBytes        int64            `json:"fileSizeBytes"`        // Size of the MP4 file in bytes
+	CreatedAt            time.Time        `json:"createdAt"`            // When this segment record was created
+	// Chunk support fields
+	ChunkType            ChunkType        `json:"chunkType"`            // Type: "segment" or "chunk"
+	SourceSegmentsCount  int              `json:"sourceSegmentsCount"` // Number of source segments (1 for segments, 225 for 15min chunks)
+	ChunkDurationSeconds *int             `json:"chunkDurationSeconds"` // Duration in seconds (null for individual segments)
+	ProcessingStatus     ProcessingStatus `json:"processingStatus"`     // Processing status
+	IsWatermarked        bool             `json:"isWatermarked"`        // Whether this chunk/segment has watermark applied
+}
+
+// ChunkInfo represents metadata about a pre-concatenated chunk
+type ChunkInfo struct {
+	ID                   string           `json:"id"`
+	CameraName           string           `json:"cameraName"`
+	StartTime            time.Time        `json:"startTime"`
+	EndTime              time.Time        `json:"endTime"`
+	FilePath             string           `json:"filePath"`             // Full path to chunk file
+	SourceSegmentsCount  int              `json:"sourceSegmentsCount"` // Number of original segments
+	DurationSeconds      int              `json:"durationSeconds"`
+	FileSizeBytes        int64            `json:"fileSizeBytes"`
+	ProcessingStatus     ProcessingStatus `json:"processingStatus"`
+	StorageDiskID        string           `json:"storageDiskId"`
+	IsWatermarked        bool             `json:"isWatermarked"`        // Whether this chunk has watermark applied
 }
 
 // PendingTask represents a task waiting to be executed
@@ -148,6 +193,15 @@ type AyoAPINotifyTaskData struct {
 	PreviewURL   string  `json:"previewUrl"`
 	ThumbnailURL string  `json:"thumbnailUrl"`
 	Duration     float64 `json:"duration"`
+}
+
+// ChunkProcessingConfig represents configuration for chunk processing
+type ChunkProcessingConfig struct {
+	Enabled                bool `json:"enabled"`                // Whether chunk processing is enabled
+	ChunkDurationMinutes   int  `json:"chunkDurationMinutes"`   // Duration of each chunk in minutes (default: 15)
+	MinSegmentsForChunk    int  `json:"minSegmentsForChunk"`    // Minimum segments required to create a chunk
+	RetentionDays          int  `json:"retentionDays"`          // How long to keep chunks
+	ProcessingTimeoutMinutes int `json:"processingTimeoutMinutes"` // Timeout for chunk processing
 }
 
 // BookingData represents a booking from AYO API
@@ -251,9 +305,10 @@ const (
 	ConfigR2TokenValue = "r2_token_value"
 	
 	// Watermark Configuration
-	ConfigWatermarkPosition = "watermark_position"
-	ConfigWatermarkMargin   = "watermark_margin"
-	ConfigWatermarkOpacity  = "watermark_opacity"
+	ConfigWatermarkPosition         = "watermark_position"
+	ConfigWatermarkMargin           = "watermark_margin"
+	ConfigWatermarkOpacity          = "watermark_opacity"
+	ConfigEnableRealtimeWatermark   = "enable_realtime_watermark"
 	
 	// AYO API Configuration
 	ConfigAyoindoAPIBaseEndpoint = "ayoindo_api_base_endpoint"
@@ -303,6 +358,15 @@ type Database interface {
 	GetRecordingSegments(cameraName string, start, end time.Time) ([]RecordingSegment, error)
 	DeleteRecordingSegment(id string) error
 	GetRecordingSegmentsByDisk(diskID string) ([]RecordingSegment, error)
+
+	// Chunk operations
+	CreateChunk(chunk RecordingSegment) error
+	FindChunksInTimeRange(cameraName string, start, end time.Time) ([]ChunkInfo, error)
+	GetPendingChunkSegments(cameraName string, chunkStart time.Time, chunkDurationMinutes int) ([]RecordingSegment, error)
+	UpdateChunkProcessingStatus(chunkID string, status ProcessingStatus) error
+	GetChunksByProcessingStatus(status ProcessingStatus) ([]RecordingSegment, error)
+	DeleteOldChunks(olderThan time.Time) error
+	GetChunkStatistics() (map[string]interface{}, error)
 
 	// R2 storage operations
 	UpdateVideoR2Paths(id, hlsPath, mp4Path string) error

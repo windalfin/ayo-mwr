@@ -15,6 +15,7 @@ import (
 	"ayo-mwr/api"
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 	"ayo-mwr/transcode"
 
@@ -156,9 +157,9 @@ func StartVideoRequestCron(cfg *config.Config) {
 		if err != nil {
 			log.Printf("Error initializing AYO API client: %v", err)
 			return
-	}
+		}
 
-	// Initialize R2 storage client with database configuration
+		// Initialize R2 storage client with database configuration
 		r2Config := storage.R2Config{
 			AccessKey: cfg.R2AccessKey,
 			SecretKey: cfg.R2SecretKey,
@@ -349,14 +350,17 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 			currentActive = activeVideoRequestProcesses
 			videoRequestProcessingMutex.Unlock()
 
+			var semaphoreReleased bool
 			defer func() {
-				// Release semaphore dan update counter
-				globalVideoRequestSemaphore.Release(1)
-				videoRequestProcessingMutex.Lock()
-				activeVideoRequestProcesses--
-				newActive := activeVideoRequestProcesses
-				videoRequestProcessingMutex.Unlock()
-				log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/%d)", cronID, videoRequestID, newActive, maxConcurrent)
+				// Release semaphore dan update counter hanya jika belum di-release
+				if !semaphoreReleased {
+					globalVideoRequestSemaphore.Release(1)
+					videoRequestProcessingMutex.Lock()
+					activeVideoRequestProcesses--
+					newActive := activeVideoRequestProcesses
+					videoRequestProcessingMutex.Unlock()
+					log.Printf("✅ VIDEO-REQUEST-CRON-%d: Request %s processing selesai (aktif: %d/%d)", cronID, videoRequestID, newActive, maxConcurrent)
+				}
 			}()
 
 			// Calculate wait time
@@ -509,7 +513,155 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream created at: %s", cronID, hlsDir)
 				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS stream can be accessed at: %s", cronID, hlsURL)
 
-				// Upload HLS ke R2
+				// HLS generation selesai, lanjut ke MP4 processing (masih menggunakan slot antrian)
+				log.Printf("✅ VIDEO-REQUEST-CRON-%d: HLS generation completed, proceeding to MP4 processing (aktif: %d/%d)", cronID, activeVideoRequestProcesses, maxConcurrent)
+			}
+
+			// Upload MP4 to R2 if local video exists
+			if matchingVideo.LocalPath != "" {
+				// Check if the file is TS or MP4 and handle accordingly
+				var uploadPath string
+				var convertedMP4Path string
+				var shouldDeleteConverted bool
+
+				// Check if video already has watermark applied during recording
+				hasRealtimeWatermark := false
+				
+				// Check if real-time watermarking is enabled
+				enableRealtimeWatermark := true // Default to enabled
+				if realtimeConfig, err := db.GetSystemConfig(database.ConfigEnableRealtimeWatermark); err == nil {
+					if realtimeConfig.Value == "false" {
+						enableRealtimeWatermark = false
+					}
+				}
+				
+				if enableRealtimeWatermark {
+					if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+						if watermarkPath, err := recording.GetWatermark(venueConfig.Value); err == nil && watermarkPath != "" {
+							hasRealtimeWatermark = true
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Video has real-time watermark, skipping post-processing", cronID)
+						}
+					}
+				}
+
+				// Get watermark settings from database using existing recording package functions
+				var watermarkPath string
+				position, margin, opacity := recording.GetWatermarkSettings()
+
+				// Only apply post-processing watermark if not already applied during recording
+				if !hasRealtimeWatermark {
+					// Get venue code for watermark
+					venueCode := ""
+					if venueConfig, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+						venueCode = venueConfig.Value
+						log.Printf("📋 VIDEO-REQUEST-CRON-%d: Found venue code: %s", cronID, venueCode)
+					}
+
+					if venueCode != "" {
+						// Get watermark using recording package
+						var err error
+						watermarkPath, err = recording.GetWatermark(venueCode)
+						if err != nil {
+							log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Failed to get watermark: %v", cronID, err)
+							// Continue without watermark
+							watermarkPath = ""
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: Got watermark path: %s", cronID, watermarkPath)
+						}
+					}
+				}
+
+				// Get watermark margin
+				if marginConfig, err := db.GetSystemConfig(database.ConfigWatermarkMargin); err == nil && marginConfig.Value != "" {
+					if val, err := strconv.Atoi(marginConfig.Value); err == nil {
+						margin = val
+					}
+				}
+
+				// Get watermark opacity
+				if opacityConfig, err := db.GetSystemConfig(database.ConfigWatermarkOpacity); err == nil && opacityConfig.Value != "" {
+					if val, err := strconv.ParseFloat(opacityConfig.Value, 64); err == nil {
+						opacity = val
+					}
+				}
+
+				log.Printf("🎨 VIDEO-REQUEST-CRON-%d: Watermark settings - Position: %d, Margin: %d, Opacity: %.2f", cronID, position, margin, opacity)
+
+				if transcode.IsTSFile(matchingVideo.LocalPath) {
+					log.Printf("📹 TS file detected: %s, converting to MP4...", matchingVideo.LocalPath)
+
+					// Create temporary MP4 file path for conversion
+					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
+
+					// Convert TS to MP4 with or without watermark based on real-time status
+					if !hasRealtimeWatermark && watermarkPath != "" {
+						// Convert with watermark in single step (more efficient)
+						var positionStr string
+						switch position {
+						case recording.TopLeft:
+							positionStr = "top_left"
+						case recording.TopRight:
+							positionStr = "top_right"
+						case recording.BottomLeft:
+							positionStr = "bottom_left"
+						case recording.BottomRight:
+							positionStr = "bottom_right"
+						default:
+							positionStr = "top_right"
+						}
+						
+						if err := transcode.ConvertTSToMP4WithWatermark(matchingVideo.LocalPath, convertedMP4Path, watermarkPath, positionStr, margin); err != nil {
+							log.Printf("❌ ERROR: Failed to convert TS to MP4 with watermark: %v", err)
+							log.Printf("⚠️ Falling back to conversion without watermark")
+							// Fallback to conversion without watermark
+							if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
+								log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
+								db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+								return
+							}
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion with watermark successful (single step)", cronID)
+						}
+					} else {
+						// Convert without watermark (either already has real-time watermark or no watermark configured)
+						if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
+							log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
+							db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+							return
+						}
+						if hasRealtimeWatermark {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (real-time watermark preserved)", cronID)
+						} else {
+							log.Printf("✅ VIDEO-REQUEST-CRON-%d: TS to MP4 conversion successful (no watermark)", cronID)
+						}
+					}
+
+					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)
+					uploadPath = convertedMP4Path
+					shouldDeleteConverted = true
+
+				} else if transcode.IsMP4File(matchingVideo.LocalPath) {
+					log.Printf("📹 MP4 file detected: %s, uploading directly...", matchingVideo.LocalPath)
+					uploadPath = matchingVideo.LocalPath
+					shouldDeleteConverted = false
+
+				} else {
+					log.Printf("⚠️ WARNING: Unknown file format: %s", matchingVideo.LocalPath)
+					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
+					return
+				}
+
+				// Release semaphore setelah HLS generation dan MP4 processing selesai - antrian selanjutnya bisa diproses
+				globalVideoRequestSemaphore.Release(1)
+				videoRequestProcessingMutex.Lock()
+				activeVideoRequestProcesses--
+				newActive := activeVideoRequestProcesses
+				videoRequestProcessingMutex.Unlock()
+				semaphoreReleased = true
+				log.Printf("🚀 VIDEO-REQUEST-CRON-%d: HLS generation and MP4 processing completed, queue slot released (aktif: %d/%d)", cronID, newActive, maxConcurrent)
+
+				// Upload HLS ke R2 (tanpa menggunakan slot antrian)
 				_, r2HlsURLTemp, err := r2Client.UploadHLSStream(hlsDir, uniqueID)
 				if err != nil {
 					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Warning: Failed to upload HLS stream to R2: %v", cronID, err)
@@ -547,42 +699,6 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				err = db.UpdateVideo(*matchingVideo)
 				if err != nil {
 					log.Printf("⚠️ VIDEO-REQUEST-CRON-%d: Warning: Failed to update video metadata in database: %v", cronID, err)
-					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-					return
-				}
-			}
-
-			// Upload MP4 to R2 if local video exists
-			if matchingVideo.LocalPath != "" {
-				// Check if the file is TS or MP4 and handle accordingly
-				var uploadPath string
-				var convertedMP4Path string
-				var shouldDeleteConverted bool
-
-				if transcode.IsTSFile(matchingVideo.LocalPath) {
-					log.Printf("📹 TS file detected: %s, converting to MP4...", matchingVideo.LocalPath)
-
-					// Create temporary MP4 file path for conversion
-					convertedMP4Path = filepath.Join(filepath.Dir(matchingVideo.LocalPath), fmt.Sprintf("%s_converted.mp4", uniqueID))
-
-					// Convert TS to MP4 without changing quality
-					if err := transcode.ConvertTSToMP4(matchingVideo.LocalPath, convertedMP4Path); err != nil {
-						log.Printf("❌ ERROR: Failed to convert TS to MP4: %v", err)
-						db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
-						return
-					}
-
-					log.Printf("✅ TS to MP4 conversion successful: %s", convertedMP4Path)
-					uploadPath = convertedMP4Path
-					shouldDeleteConverted = true
-
-				} else if transcode.IsMP4File(matchingVideo.LocalPath) {
-					log.Printf("📹 MP4 file detected: %s, uploading directly...", matchingVideo.LocalPath)
-					uploadPath = matchingVideo.LocalPath
-					shouldDeleteConverted = false
-
-				} else {
-					log.Printf("⚠️ WARNING: Unknown file format: %s", matchingVideo.LocalPath)
 					db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 					return
 				}
@@ -670,11 +786,11 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: Failed to send video data to AYO API for %s: %v", cronID, uniqueID, err)
 
 				// Set database status to failed when API call fails
-				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
-					fmt.Sprintf("AYO API call failed: %v", err))
-				if updateErr != nil {
-					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
-				}
+				// updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
+				// 	fmt.Sprintf("AYO API call failed: %v", err))
+				// if updateErr != nil {
+				// 	log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
+				// }
 
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return
@@ -690,11 +806,11 @@ func processVideoRequests(cfg *config.Config, db database.Database, ayoClient *a
 				log.Printf("❌ VIDEO-REQUEST-CRON-%d: ERROR: API returned error for video request %s (status: %.0f): %s", cronID, videoRequestID, statusCode, message)
 
 				// Set database status to failed when API returns error
-				updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
-					fmt.Sprintf("AYO API error (status: %.0f): %s", statusCode, message))
-				if updateErr != nil {
-					log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
-				}
+				// updateErr := db.UpdateVideoStatus(matchingVideo.ID, database.StatusFailed,
+				// 	fmt.Sprintf("AYO API error (status: %.0f): %s", statusCode, message))
+				// if updateErr != nil {
+				// 	log.Printf("❌ VIDEO-REQUEST-CRON-%d: Error updating video status to failed: %v", cronID, updateErr)
+				// }
 
 				db.UpdateVideoRequestID(uniqueID, videoRequestID, true)
 				return

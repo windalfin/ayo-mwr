@@ -2,11 +2,13 @@ package api
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,137 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// handleHealthCheck provides detailed health information for zero-downtime deployments
+func (s *Server) handleHealthCheck(c *gin.Context) {
+	startTime := time.Now()
+
+	// Basic service info
+	healthResponse := gin.H{
+		"status":      "healthy",
+		"timestamp":   startTime.UTC().Format(time.RFC3339),
+		"uptime":      time.Since(startTime).String(),
+		"version":     "1.0.0",               // You can make this dynamic
+		"instance_id": os.Getenv("HOSTNAME"), // Or generate a unique ID
+	}
+
+	// Check database connectivity by attempting a simple query
+	_, err := s.db.ListVideos(1, 0) // Try to get one video to test DB connection
+	if err != nil {
+		healthResponse["status"] = "unhealthy"
+		healthResponse["database"] = gin.H{
+			"status": "failed",
+			"error":  err.Error(),
+		}
+		c.JSON(http.StatusServiceUnavailable, healthResponse)
+		return
+	}
+
+	healthResponse["database"] = gin.H{"status": "connected"}
+
+	// Check camera recording status
+	runningCameras := recording.ListRunningWorkers()
+	totalCameras := 0
+	enabledCameras := 0
+
+	for _, cam := range s.config.Cameras {
+		totalCameras++
+		if cam.Enabled {
+			enabledCameras++
+		}
+	}
+
+	cameraStatus := gin.H{
+		"total_cameras":   totalCameras,
+		"enabled_cameras": enabledCameras,
+		"running_cameras": len(runningCameras),
+		"camera_list":     runningCameras,
+	}
+
+	// If no cameras are running but some are enabled, mark as degraded
+	if enabledCameras > 0 && len(runningCameras) == 0 {
+		healthResponse["status"] = "degraded"
+		cameraStatus["status"] = "no_cameras_running"
+	} else if len(runningCameras) < enabledCameras {
+		healthResponse["status"] = "degraded"
+		cameraStatus["status"] = "partial_recording"
+	} else {
+		cameraStatus["status"] = "recording"
+	}
+
+	healthResponse["recording"] = cameraStatus
+
+	// Check system resources
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	healthResponse["system"] = gin.H{
+		"memory_mb":  memStats.Alloc / 1024 / 1024,
+		"goroutines": runtime.NumGoroutine(),
+		"go_version": runtime.Version(),
+	}
+
+	// Check disk space on storage path
+	if diskInfo := s.getDiskSpace(); diskInfo != nil {
+		healthResponse["storage"] = diskInfo
+	}
+
+	// Check chunk processing status
+	if chunkStats, err := s.db.GetChunkStatistics(); err == nil {
+		healthResponse["chunk_processing"] = gin.H{
+			"enabled": s.isChunkProcessingEnabled(),
+			"total_chunks": chunkStats["total_chunks"],
+			"total_segments": chunkStats["total_segments"],
+			"status": "operational",
+		}
+	} else {
+		healthResponse["chunk_processing"] = gin.H{
+			"enabled": s.isChunkProcessingEnabled(),
+			"status": "unavailable",
+			"error": "Could not retrieve chunk statistics",
+		}
+	}
+
+	// Determine final status based on all checks
+	status := http.StatusOK
+	if healthResponse["status"] == "degraded" {
+		status = http.StatusOK // Still return 200 for degraded
+	} else if healthResponse["status"] == "unhealthy" {
+		status = http.StatusServiceUnavailable
+	}
+
+	// Add response time
+	healthResponse["response_time_ms"] = time.Since(startTime).Milliseconds()
+
+	c.JSON(status, healthResponse)
+}
+
+// getDiskSpace returns disk space information for the storage path
+func (s *Server) getDiskSpace() gin.H {
+	// This is a simplified version - you might want to use a proper disk space library
+	// or system calls for more accurate information
+	return gin.H{
+		"path":          s.config.StoragePath,
+		"status":        "available",
+		"check_enabled": true,
+	}
+}
+
+// isChunkProcessingEnabled checks if chunk processing is enabled in configuration
+func (s *Server) isChunkProcessingEnabled() bool {
+	// Get chunk processing configuration from database
+	if config, err := s.db.GetSystemConfig("chunk_processing"); err == nil && config != nil {
+		// Parse the JSON configuration
+		var chunkConfig map[string]interface{}
+		if err := json.Unmarshal([]byte(config.Value), &chunkConfig); err == nil {
+			if enabled, ok := chunkConfig["enabled"].(bool); ok {
+				return enabled
+			}
+		}
+	}
+	// Default to true if configuration is not found or invalid
+	return true
+}
 
 func (s *Server) listStreams(c *gin.Context) {
 	limit := 20
@@ -327,6 +460,14 @@ func (s *Server) getCamerasConfig(c *gin.Context) {
 			Field:      cam.Field,
 			Resolution: cam.Resolution,
 			AutoDelete: cam.AutoDelete,
+			// New path fields
+			Path720:       cam.Path720,
+			Path480:       cam.Path480,
+			Path360:       cam.Path360,
+			// Active path fields
+			ActivePath720: cam.ActivePath720,
+			ActivePath480: cam.ActivePath480,
+			ActivePath360: cam.ActivePath360,
 		}
 	}
 
@@ -457,6 +598,14 @@ func (s *Server) reloadCamerasInternal() error {
 			Field:      c.Field,
 			Resolution: c.Resolution,
 			AutoDelete: c.AutoDelete,
+			// New path fields
+			Path720:       c.Path720,
+			Path480:       c.Path480,
+			Path360:       c.Path360,
+			// Active path fields
+			ActivePath720: c.ActivePath720,
+			ActivePath480: c.ActivePath480,
+			ActivePath360: c.ActivePath360,
 		}
 	}
 
@@ -941,6 +1090,7 @@ func (s *Server) getOnboardingStatus(c *gin.Context) {
 
 	// Check if at least one camera is configured
 	cameras, err := s.db.GetCameras()
+	log.Printf("getOnboardingStatus: cameras: %v", err)
 	hasCameras := err == nil && len(cameras) > 0
 
 	// Determine onboarding completion status

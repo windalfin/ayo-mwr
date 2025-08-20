@@ -16,6 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	
+	"ayo-mwr/metrics"
 )
 
 // R2Config holds configuration for Cloudflare R2 storage
@@ -52,6 +54,11 @@ type R2Storage struct {
 
 // NewR2Storage creates a new R2Storage instance
 func NewR2Storage(config R2Config) (*R2Storage, error) {
+	return NewR2StorageWithConcurrency(config, 1)
+}
+
+// NewR2StorageWithConcurrency creates a new R2Storage instance with configurable concurrency
+func NewR2StorageWithConcurrency(config R2Config, concurrency int) (*R2Storage, error) {
 	// Set default region if not provided
 	if config.Region == "" {
 		config.Region = "auto"
@@ -77,13 +84,19 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 	// Create S3 client
 	client := s3.New(sess)
 
-	// Create uploader with single-connection concurrency to respect limited bandwidth
-	// We set PartSize to 10 MB (must be ≥ 5 MB) and Concurrency to 1 so that multipart
-	// uploads are performed sequentially, ensuring only **one** HTTP connection is
-	// active at a time.
+	// Create uploader with configurable concurrency
+	// We set PartSize to 10 MB (must be ≥ 5 MB) and allow configurable concurrency
+	// for parallel multipart uploads
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > maxUploadConcurrency {
+		concurrency = maxUploadConcurrency
+	}
+	
 	uploader := s3manager.NewUploader(sess, func(u *s3manager.Uploader) {
 		u.PartSize = 10 * 1024 * 1024 // 10 MB
-		u.Concurrency = 1             // single connection / no parallel parts
+		u.Concurrency = concurrency   // configurable parallel parts
 	})
 
 	return &R2Storage{
@@ -96,6 +109,11 @@ func NewR2Storage(config R2Config) (*R2Storage, error) {
 
 // UploadFile uploads a file to R2 storage using chunked uploads for large files
 func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
+	return r.UploadFileWithMetrics(localPath, remotePath, nil)
+}
+
+// UploadFileWithMetrics uploads a file to R2 storage with metrics tracking
+func (r *R2Storage) UploadFileWithMetrics(localPath, remotePath string, videoMetrics *metrics.VideoProcessingMetrics) (string, error) {
 	file, err := os.Open(localPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file %s: %v", localPath, err)
@@ -133,6 +151,11 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 	// --- Single-connection upload (standard or multipart handled by SDK) ---
 	log.Printf("Uploading file (%.2f MB) via single-connection uploader: %s", float64(fileInfo.Size())/1024/1024, localPath)
 
+	// Start upload metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartUpload()
+	}
+
 	// Ensure we read from the beginning
 	if _, err := file.Seek(0, 0); err != nil {
 		return "", fmt.Errorf("failed to seek to beginning of file: %v", err)
@@ -163,6 +186,11 @@ func (r *R2Storage) UploadFile(localPath, remotePath string) (string, error) {
 	}
 	if lastErr != nil {
 		return "", fmt.Errorf("failed to upload file to R2 after %d attempts: %v", maxUploadAttempts, lastErr)
+	}
+
+	// End upload metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.EndUpload()
 	}
 
 	// Generate public URL
@@ -365,6 +393,17 @@ func (r *R2Storage) UploadDirectory(localDir, remotePrefix string) ([]string, er
 
 // UploadHLSStream uploads an HLS stream directory to R2
 func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, string, error) {
+	return r.UploadHLSStreamWithMetrics(hlsDir, videoID, nil)
+}
+
+// UploadHLSStreamWithMetrics uploads HLS stream with metrics tracking
+func (r *R2Storage) UploadHLSStreamWithMetrics(hlsDir, videoID string, videoMetrics *metrics.VideoProcessingMetrics) (string, string, error) {
+	// Start upload metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartUpload()
+		defer videoMetrics.EndUpload()
+	}
+
 	remotePrefix := fmt.Sprintf("hls/%s", videoID)
 	_, err := r.UploadDirectory(hlsDir, remotePrefix)
 	if err != nil {
@@ -378,12 +417,17 @@ func (r *R2Storage) UploadHLSStream(hlsDir, videoID string) (string, string, err
 
 // Upload MP4 to R2
 func (r *R2Storage) UploadMP4(mp4Dir, videoID string) (string, error) {
+	return r.UploadMP4WithMetrics(mp4Dir, videoID, nil)
+}
+
+// UploadMP4WithMetrics uploads MP4 file with metrics tracking
+func (r *R2Storage) UploadMP4WithMetrics(mp4Dir, videoID string, videoMetrics *metrics.VideoProcessingMetrics) (string, error) {
 	remotePrefix := fmt.Sprintf("mp4/%s%s", videoID, filepath.Ext(mp4Dir))
 
 	log.Printf("Uploading MP4 %s to R2 bucket %s with key %s", mp4Dir, r.config.Bucket, remotePrefix)
 
 	// Use UploadFile instead of UploadDirectory since we're uploading a single file
-	_, err := r.UploadFile(mp4Dir, remotePrefix)
+	_, err := r.UploadFileWithMetrics(mp4Dir, remotePrefix, videoMetrics)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload MP4: %v", err)
 	}

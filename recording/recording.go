@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"ayo-mwr/config"
@@ -25,6 +26,218 @@ var segmenterLocks sync.Map
 // Initialize random seed for unique ID generation
 func init() {
 	rand.Seed(time.Now().UnixNano())
+}
+
+// getOverlayExpression returns FFmpeg overlay expression based on watermark position
+func getOverlayExpression(position WatermarkPosition, margin int) string {
+	switch position {
+	case TopLeft:
+		return fmt.Sprintf("overlay=%d:%d", margin, margin)
+	case TopRight:
+		return fmt.Sprintf("overlay=main_w-overlay_w-%d:%d", margin, margin)
+	case BottomLeft:
+		return fmt.Sprintf("overlay=%d:main_h-overlay_h-%d", margin, margin)
+	case BottomRight:
+		return fmt.Sprintf("overlay=main_w-overlay_w-%d:main_h-overlay_h-%d", margin, margin)
+	default:
+		return fmt.Sprintf("overlay=%d:%d", margin, margin)
+	}
+}
+
+// isRealtimeWatermarkEnabled checks if real-time watermarking is enabled in system configuration
+func isRealtimeWatermarkEnabled() bool {
+	// For now, always return true to enable real-time watermarking
+	// This will be updated to check database configuration in a future version
+	log.Printf("ℹ️ REALTIME-WATERMARK: Real-time watermarking is enabled (default)")
+	return true
+}
+
+// getVenueCodeFromEnv gets venue code from environment or database
+func getVenueCodeFromEnv() string {
+	// First try environment variable
+	if venueCode := os.Getenv("VENUE_CODE"); venueCode != "" {
+		return venueCode
+	}
+	
+	// Try to get from database as fallback
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("⚠️ VENUE-CODE: Failed to connect to database: %v", err)
+		return ""
+	}
+	defer db.Close()
+	
+	if config, err := db.GetSystemConfig(database.ConfigVenueCode); err == nil && config.Value != "" {
+		return config.Value
+	}
+	
+	return ""
+}
+
+// startQualityStream starts and manages a single quality stream
+func startQualityStream(ctx context.Context, stream *QualityStream, cameraName, cameraLogsDir string) {
+	hlsPlaylistPath := filepath.Join(stream.HLSDir, "playlist.m3u8")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s-%s] Stream context cancelled", cameraName, stream.Quality)
+			return
+		default:
+			logFile, err := os.Create(filepath.Join(cameraLogsDir, fmt.Sprintf("ffmpeg_%s_%s.log", stream.Quality, time.Now().Format("20060102_150405"))))
+			if err != nil {
+				log.Printf("[%s-%s] Error creating FFmpeg log file: %v", cameraName, stream.Quality, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			defer logFile.Close()
+
+			// Detect stream info first
+			streamInfo := detectStreamInfo(stream.RTSPURL, fmt.Sprintf("%s-%s", cameraName, stream.Quality))
+
+			// Check for watermark settings and real-time watermark configuration
+			useWatermark := false
+			var watermarkPath string
+			
+			log.Printf("[%s-%s] 🔍 WATERMARK-CHECK: Starting watermark detection for camera", cameraName, stream.Quality)
+			
+			// Only check for real-time watermarking if enabled in config
+			if isRealtimeWatermarkEnabled() {
+				log.Printf("[%s-%s] ✅ WATERMARK-CHECK: Real-time watermarking is enabled, checking for watermark file", cameraName, stream.Quality)
+				
+				// Get venue code from database - this is what GetWatermark expects
+				venueCode := getVenueCodeFromEnv()
+				log.Printf("[%s-%s] 🏢 VENUE-CODE: Using venue code: %s", cameraName, stream.Quality, venueCode)
+				
+				if venueCode == "" {
+					log.Printf("[%s-%s] ⚠️ WATERMARK-CHECK: No venue code configured, watermark disabled", cameraName, stream.Quality)
+				} else {
+					var err error
+					watermarkPath, err = GetWatermark(venueCode)
+					if err != nil {
+						log.Printf("[%s-%s] ⚠️ WATERMARK-CHECK: Failed to get watermark for venue '%s': %v", cameraName, stream.Quality, venueCode, err)
+					} else if watermarkPath == "" {
+						log.Printf("[%s-%s] ℹ️ WATERMARK-CHECK: No watermark path found for venue '%s'", cameraName, stream.Quality, venueCode)
+					} else {
+						log.Printf("[%s-%s] ✅ WATERMARK-CHECK: Found watermark file for venue '%s': %s", cameraName, stream.Quality, venueCode, watermarkPath)
+					}
+					useWatermark = err == nil && watermarkPath != ""
+				}
+			} else {
+				log.Printf("[%s-%s] ❌ WATERMARK-CHECK: Real-time watermarking is disabled", cameraName, stream.Quality)
+			}
+			
+			log.Printf("[%s-%s] 📋 WATERMARK-DECISION: useWatermark=%v, watermarkPath=%s", cameraName, stream.Quality, useWatermark, watermarkPath)
+			
+			ffmpegArgs := []string{
+				"-rtsp_transport", "tcp",
+				"-timeout", "5000000",
+				"-fflags", "nobuffer+discardcorrupt",
+				"-analyzeduration", "2000000",
+				"-probesize", "1000000",
+				"-re",
+				"-i", stream.RTSPURL,
+			}
+
+			// Add watermark input if available
+			if useWatermark {
+				ffmpegArgs = append(ffmpegArgs, "-i", watermarkPath)
+				log.Printf("[%s-%s] Real-time watermarking enabled with: %s", cameraName, stream.Quality, watermarkPath)
+			}
+
+			// Configure video processing based on watermark availability
+			if useWatermark {
+				// Real-time watermarking with re-encoding
+				position, margin, opacity := GetWatermarkSettings()
+				log.Printf("[%s-%s] 🎨 WATERMARK-SETTINGS: position=%d, margin=%d, opacity=%.2f", cameraName, stream.Quality, position, margin, opacity)
+				
+				overlayExpr := getOverlayExpression(position, margin)
+				filter := fmt.Sprintf("[1:v]colorchannelmixer=aa=%.1f[wm];[0:v][wm]%s", opacity, overlayExpr)
+				
+				log.Printf("[%s-%s] 🎬 WATERMARK-FILTER: %s", cameraName, stream.Quality, filter)
+				log.Printf("[%s-%s] 🎬 WATERMARK-OVERLAY: %s", cameraName, stream.Quality, overlayExpr)
+				
+				ffmpegArgs = append(ffmpegArgs,
+					"-filter_complex", filter,
+					"-c:v", "libx264",
+					"-preset", "ultrafast",
+					"-tune", "zerolatency",
+					"-crf", "30",
+					"-profile:v", "baseline",
+					"-level", "3.1",
+				)
+				log.Printf("[%s-%s] ✅ WATERMARK-ENCODING: Using real-time watermark encoding with re-encode", cameraName, stream.Quality)
+			} else {
+				// Stream copy for zero CPU encoding when no watermark
+				ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+				
+				// Add appropriate bitstream filter based on video codec
+				if streamInfo.VideoCodec == "h264" {
+					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "h264_mp4toannexb")
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using H.264 bitstream filter with stream copy", cameraName, stream.Quality)
+				} else if streamInfo.VideoCodec == "hevc" {
+					ffmpegArgs = append(ffmpegArgs, "-bsf:v", "hevc_mp4toannexb")
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using HEVC bitstream filter with stream copy", cameraName, stream.Quality)
+				} else {
+					log.Printf("[%s-%s] ⚡ NO-WATERMARK: Using stream copy without bitstream filter", cameraName, stream.Quality)
+				}
+			}
+
+			ffmpegArgs = append(ffmpegArgs,
+				"-flags", "+global_header",
+				"-sc_threshold", "0",
+				"-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-c:a", "aac",
+				"-b:a", "128k",
+				"-ar", "44100",
+				"-max_muxing_queue_size", "1024",
+				"-f", "hls",
+				"-hls_time", "4",
+				"-hls_list_size", "0",
+				"-hls_flags", "independent_segments+delete_segments",
+				"-hls_segment_type", "mpegts",
+				"-reset_timestamps", "1",
+				"-strftime", "1",
+				"-hls_segment_filename", filepath.Join(stream.HLSDir, "segment_%Y%m%d_%H%M%S.ts"),
+				hlsPlaylistPath,
+			)
+
+			log.Printf("[%s-%s] 🚀 FFMPEG-COMMAND: Starting FFmpeg with graceful shutdown support", cameraName, stream.Quality)
+			log.Printf("[%s-%s] 🔧 FFMPEG-ARGS: %v", cameraName, stream.Quality, ffmpegArgs)
+
+			stream.Cmd = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+			stream.Cmd.Stdout = logFile
+			stream.Cmd.Stderr = logFile
+
+			err = stream.Cmd.Start()
+			if err != nil {
+				log.Printf("[%s-%s] Failed to start FFmpeg: %v", cameraName, stream.Quality, err)
+				stream.Cmd = nil
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Wait for FFmpeg to complete
+			err = stream.Cmd.Wait()
+			stream.Cmd = nil
+			
+			if ctx.Err() != nil {
+				// Context was canceled, this is expected
+				log.Printf("[%s-%s] FFmpeg stopped due to context cancellation", cameraName, stream.Quality)
+				return
+			}
+			
+			if err != nil {
+				log.Printf("[%s-%s] FFmpeg process exited with error: %v", cameraName, stream.Quality, err)
+			} else {
+				log.Printf("[%s-%s] FFmpeg process exited normally", cameraName, stream.Quality)
+			}
+
+			// Wait before restarting to avoid rapid restarts
+			log.Printf("[%s-%s] Restarting FFmpeg in 2 seconds...", cameraName, stream.Quality)
+			time.Sleep(2 * time.Second)
+		}
+	}
 }
 
 // ExtractThumbnail extracts a frame from the middle of the video (duration/2) and saves it as an image (e.g., PNG).
@@ -158,7 +371,7 @@ func captureRTSPStreamForCamera(ctx context.Context, cfg *config.Config, camera 
 	// Start the MP4 segmenter in the background (legacy HLS-based segmentation)
 	// StartMP4Segmenter(cameraName, cameraHLSDir, cameraMP4Dir)
 
-	log.Printf("Starting capture for camera: %s", cameraName)
+	log.Printf("[%s] ⚠️ OLD-RECORDING: Starting capture using OLD recording function (no watermark support)", cameraName)
 
 	// Start continuous HLS streaming
 	hlsPlaylistPath := filepath.Join(cameraHLSDir, "playlist.m3u8")
@@ -516,16 +729,18 @@ func fastConcatSegments(segments []string, outputPath, workingDir, uniqueID stri
 		return fmt.Errorf("failed to get project root: %w", err)
 	}
 
-	// Calculate duration from end_time - start_time
-	duration := endTime.Sub(startTime)
-	durationStr := fmt.Sprintf("%.3f", duration.Seconds())
+	// Calculate duration from booking times to ensure exact duration
+	// regardless of when recording actually started
+	bookingDuration := endTime.Sub(startTime)
+	durationStr := fmt.Sprintf("%.3f", bookingDuration.Seconds())
 
 	ffmpegArgs := []string{
 		"-y",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
-		"-t", durationStr, // Duration limit based on end_time - start_time
+		"-t", durationStr, // Exact booking duration to ensure precise timing
+		"-avoid_negative_ts", "make_zero", // Handle timing adjustments
 		"-c", "copy", // Copy codec - no transcoding, very fast
 		outputPath,
 	}
@@ -930,6 +1145,162 @@ func parseSegmentTimeFromFilename(filename string) (time.Time, error) {
 	}
 
 	return segmentTime, nil
+}
+
+// QualityStream represents a recording stream for a specific quality
+type QualityStream struct {
+	RTSPURL    string
+	HLSDir     string
+	Quality    string
+	Cmd        *exec.Cmd
+}
+
+// captureRTSPStreamForCameraWithGracefulShutdown handles graceful shutdown for FFmpeg processes
+func captureRTSPStreamForCameraWithGracefulShutdown(ctx context.Context, cfg *config.Config, camera config.CameraConfig, cameraID int) {
+	cameraName := camera.Name
+	if cameraName == "" {
+		cameraName = fmt.Sprintf("camera_%d", cameraID)
+	}
+	
+	log.Printf("[%s] 🚀 GRACEFUL-RECORDING: Starting graceful shutdown recording with watermark support", cameraName)
+
+	// Create camera-specific directories
+	cameraDir := filepath.Join(cfg.StoragePath, "recordings", cameraName)
+	cameraLogsDir := filepath.Join(cameraDir, "logs")
+	cameraMP4Dir := filepath.Join(cameraDir, "mp4")
+
+	// Prepare quality streams
+	var qualityStreams []QualityStream
+
+	// Main quality (original path)
+	if camera.Path != "" {
+		rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+			camera.Username,
+			camera.Password,
+			camera.IP,
+			camera.Port,
+			camera.Path,
+		)
+		cameraHLSDir := filepath.Join(cameraDir, "hls")
+		qualityStreams = append(qualityStreams, QualityStream{
+			RTSPURL: rtspURL,
+			HLSDir:  cameraHLSDir,
+			Quality: "main",
+		})
+	}
+
+	// 720p quality
+	if camera.Path720 != "" && camera.ActivePath720 {
+		rtspURL720 := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+			camera.Username,
+			camera.Password,
+			camera.IP,
+			camera.Port,
+			camera.Path720,
+		)
+		cameraHLSDir720 := filepath.Join(cameraDir, "hls", "720")
+		qualityStreams = append(qualityStreams, QualityStream{
+			RTSPURL: rtspURL720,
+			HLSDir:  cameraHLSDir720,
+			Quality: "720p",
+		})
+	}
+
+	// 480p quality
+	if camera.Path480 != "" && camera.ActivePath480 {
+		rtspURL480 := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+			camera.Username,
+			camera.Password,
+			camera.IP,
+			camera.Port,
+			camera.Path480,
+		)
+		cameraHLSDir480 := filepath.Join(cameraDir, "hls", "480")
+		qualityStreams = append(qualityStreams, QualityStream{
+			RTSPURL: rtspURL480,
+			HLSDir:  cameraHLSDir480,
+			Quality: "480p",
+		})
+	}
+
+	// 360p quality
+	if camera.Path360 != "" && camera.ActivePath360 {
+		rtspURL360 := fmt.Sprintf("rtsp://%s:%s@%s:%s%s",
+			camera.Username,
+			camera.Password,
+			camera.IP,
+			camera.Port,
+			camera.Path360,
+		)
+		cameraHLSDir360 := filepath.Join(cameraDir, "hls", "360")
+		qualityStreams = append(qualityStreams, QualityStream{
+			RTSPURL: rtspURL360,
+			HLSDir:  cameraHLSDir360,
+			Quality: "360p",
+		})
+	}
+
+	if len(qualityStreams) == 0 {
+		log.Printf("[%s] No active streams configured, skipping recording", cameraName)
+		return
+	}
+
+	// Create all required directories
+	dirs := []string{cameraDir, cameraLogsDir, cameraMP4Dir}
+	for _, stream := range qualityStreams {
+		dirs = append(dirs, stream.HLSDir)
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Printf("[%s] Error creating directory %s: %v", cameraName, dir, err)
+		}
+	}
+
+	log.Printf("[%s] Starting capture with graceful shutdown support for %d quality streams", cameraName, len(qualityStreams))
+
+	// Start goroutines for each quality stream
+	var wg sync.WaitGroup
+	for i := range qualityStreams {
+		wg.Add(1)
+		go func(stream *QualityStream) {
+			defer wg.Done()
+			startQualityStream(ctx, stream, cameraName, cameraLogsDir)
+		}(&qualityStreams[i])
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	log.Printf("[%s] Graceful shutdown requested for all streams", cameraName)
+
+	// Stop all FFmpeg processes gracefully
+	for i := range qualityStreams {
+		if qualityStreams[i].Cmd != nil && qualityStreams[i].Cmd.Process != nil {
+			log.Printf("[%s-%s] Sending SIGTERM to FFmpeg process", cameraName, qualityStreams[i].Quality)
+			qualityStreams[i].Cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+
+	// Wait for all streams to finish gracefully
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// Wait up to 15 seconds for graceful termination
+	select {
+	case <-done:
+		log.Printf("[%s] All streams terminated gracefully", cameraName)
+	case <-time.After(15 * time.Second):
+		log.Printf("[%s] Graceful shutdown timeout, forcing kill all processes", cameraName)
+		for i := range qualityStreams {
+			if qualityStreams[i].Cmd != nil && qualityStreams[i].Cmd.Process != nil {
+				qualityStreams[i].Cmd.Process.Kill()
+			}
+		}
+	}
+
+	log.Printf("[%s] Camera capture stopped gracefully", cameraName)
 }
 
 // parseSegmentTime extracts start and end times from segment filename

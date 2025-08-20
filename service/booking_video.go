@@ -15,6 +15,7 @@ import (
 
 	"ayo-mwr/config"
 	"ayo-mwr/database"
+	"ayo-mwr/metrics"
 	"ayo-mwr/recording"
 	"ayo-mwr/storage"
 	// "ayo-mwr/transcode"
@@ -33,6 +34,7 @@ type BookingVideoService struct {
 	ayoClient AyoAPIClient
 	r2Client  *storage.R2Storage
 	config    *config.Config
+	metricsCollector *metrics.MetricsCollector
 }
 
 // Tipe file sementara yang disimpan
@@ -69,6 +71,7 @@ func NewBookingVideoService(db database.Database, ayoClient AyoAPIClient, r2Clie
 		ayoClient: ayoClient,
 		r2Client:  r2Client,
 		config:    cfg,
+		metricsCollector: metrics.NewMetricsCollector(),
 	}
 }
 
@@ -137,35 +140,66 @@ func (s *BookingVideoService) ProcessVideoSegments(
 	// Tentukan direktori tempat segment berada (ambil dari segment pertama)
 	segmentDir := filepath.Dir(segments[0])
 
-	// Gabungkan video segments dan tambahkan watermark dalam satu operasi FFmpeg
-	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".ts", camera.Name)
-	log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
+	// Check if video already has real-time watermark applied during recording
+	hasRealtimeWatermark := false
+	
+	// Check if real-time watermarking is enabled
+	enableRealtimeWatermark := true // Default to enabled
+	if realtimeConfig, err := s.db.GetSystemConfig(database.ConfigEnableRealtimeWatermark); err == nil {
+		if realtimeConfig.Value == "false" {
+			enableRealtimeWatermark = false
+		}
+	}
+	
+	if enableRealtimeWatermark {
+		if venueConfig, err := s.db.GetSystemConfig(database.ConfigVenueCode); err == nil && venueConfig.Value != "" {
+			if watermarkPath, err := recording.GetWatermark(venueConfig.Value); err == nil && watermarkPath != "" {
+				hasRealtimeWatermark = true
+				log.Printf("✅ ProcessVideoSegments: Video has real-time watermark, skipping post-processing watermark")
+			}
+		}
+	}
 
-	// Mendapatkan watermark dan pengaturannya
-	watermarkPath, watermarkErr := s.ayoClient.GetWatermark(camera.Resolution)
-	if watermarkErr != nil {
-		log.Printf("ProcessVideoSegments : Warning: Failed to get watermark: %v, continuing with merge only", watermarkErr)
-		// Jika gagal mendapatkan watermark, lakukan merge saja
+	watermarkedVideoPath := s.getTempPath(TmpTypeWatermark, uniqueID, ".ts", camera.Name)
+
+	// Only apply post-processing watermark if not already applied during recording
+	if !hasRealtimeWatermark {
+		log.Printf("ProcessVideoSegments : Merging video segments and adding watermark in one FFmpeg operation, output to: %s", watermarkedVideoPath)
+		
+		// Mendapatkan watermark dan pengaturannya
+		watermarkPath, watermarkErr := s.ayoClient.GetWatermark(camera.Resolution)
+		if watermarkErr != nil {
+			log.Printf("ProcessVideoSegments : Warning: Failed to get watermark: %v, continuing with merge only", watermarkErr)
+			// Jika gagal mendapatkan watermark, lakukan merge saja
+			err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
+			if err != nil {
+				s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
+				return "", fmt.Errorf("failed to merge video segments: %v", err)
+			}
+		} else {
+			// Dapatkan pengaturan watermark
+			pos, margin, opacity := recording.GetWatermarkSettings()
+
+			// Lakukan merge dan tambahkan watermark dalam satu operasi
+			err := recording.MergeAndWatermark(segmentDir, startTime, endTime, watermarkedVideoPath,
+				watermarkPath, pos, margin, opacity, camera.Resolution)
+			if err != nil {
+				log.Printf("ProcessVideoSegments : Warning: Failed to merge and add watermark: %v, falling back to merge only", err)
+				// Jika gagal, coba lakukan hanya merge saja
+				err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
+				if err != nil {
+					s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
+					return "", fmt.Errorf("failed to merge video segments in fallback mode: %v", err)
+				}
+			}
+		}
+	} else {
+		log.Printf("ProcessVideoSegments : Real-time watermark detected, performing merge only, output to: %s", watermarkedVideoPath)
+		// Only merge segments without adding watermark
 		err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
 		if err != nil {
 			s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
 			return "", fmt.Errorf("failed to merge video segments: %v", err)
-		}
-	} else {
-		// Dapatkan pengaturan watermark
-		pos, margin, opacity := recording.GetWatermarkSettings()
-
-		// Lakukan merge dan tambahkan watermark dalam satu operasi
-		err := recording.MergeAndWatermark(segmentDir, startTime, endTime, watermarkedVideoPath,
-			watermarkPath, pos, margin, opacity, camera.Resolution)
-		if err != nil {
-			log.Printf("ProcessVideoSegments : Warning: Failed to merge and add watermark: %v, falling back to merge only", err)
-			// Jika gagal, coba lakukan hanya merge saja
-			err := recording.MergeSessionVideos(segmentDir, startTime, endTime, watermarkedVideoPath, camera.Resolution)
-			if err != nil {
-				s.db.UpdateVideoStatus(uniqueID, database.StatusFailed, err.Error())
-				return "", fmt.Errorf("failed to merge video segments in fallback mode: %v", err)
-			}
 		}
 	}
 
@@ -205,13 +239,17 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	bookingID string,
 	cameraName string,
 ) (string, string, error) {
+	// Start metrics tracking for this video
+	videoMetrics := s.metricsCollector.StartVideo(uniqueID)
+	defer videoMetrics.Finalize()
+
 	// UniqueID sudah berisi booking ID yang aman
 	// getVideoMeta := s.db.GetVideo(uniqueID)
 
 	// Create preview video (di folder preview)
 	previewVideoPath := s.getTempPath(TmpTypePreview, uniqueID, ".mp4", cameraName)
 	log.Printf("Creating preview video at: %s", previewVideoPath)
-	err := s.CreateVideoPreview(videoPath, previewVideoPath)
+	err := s.CreateVideoPreviewWithMetrics(videoPath, previewVideoPath, videoMetrics)
 	if err != nil {
 		log.Printf("Warning: Failed to create preview video: %v", err)
 		previewVideoPath = "" // Don't use preview if creation failed
@@ -270,7 +308,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	previewPath := fmt.Sprintf("mp4/%s_preview.mp4", uniqueID)
 	previewURL := ""
 	if previewVideoPath != "" {
-		_, err = s.r2Client.UploadFile(previewVideoPath, previewPath)
+		_, err = s.r2Client.UploadFileWithMetrics(previewVideoPath, previewPath, videoMetrics)
 		if err != nil {
 			log.Printf("Warning: Failed to upload preview video: %v", err)
 		} else {
@@ -284,7 +322,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	thumbnailR2Path := fmt.Sprintf("mp4/%s_thumbnail.png", uniqueID)
 	thumbnailURL := ""
 	if thumbnailPath != "" {
-		_, err = s.r2Client.UploadFile(thumbnailPath, thumbnailR2Path)
+		_, err = s.r2Client.UploadFileWithMetrics(thumbnailPath, thumbnailR2Path, videoMetrics)
 		if err != nil {
 			log.Printf("Warning: Failed to upload thumbnail: %v", err)
 		} else {
@@ -490,6 +528,16 @@ func (s *BookingVideoService) addWatermarkToVideo(inputPath, outputPath string, 
 
 // CreateVideoPreview creates a preview video using interval-based clipping based on video duration
 func (s *BookingVideoService) CreateVideoPreview(inputPath, outputPath string) error {
+	return s.CreateVideoPreviewWithMetrics(inputPath, outputPath, nil)
+}
+
+// CreateVideoPreviewWithMetrics creates a preview video with metrics tracking
+func (s *BookingVideoService) CreateVideoPreviewWithMetrics(inputPath, outputPath string, videoMetrics *metrics.VideoProcessingMetrics) error {
+	// Start preview metrics if provided
+	if videoMetrics != nil {
+		videoMetrics.StartPreview()
+		defer videoMetrics.EndPreview()
+	}
 	// Get video duration to determine which interval pattern to use
 	duration, err := s.GetVideoDuration(inputPath)
 	if err != nil {

@@ -220,8 +220,18 @@ func (hvp *HybridVideoProcessor) ProcessVideoSegmentsOptimized(
 
 // processVideoSources processes the optimal combination of chunks and segments
 func (hvp *HybridVideoProcessor) processVideoSources(sources []SegmentSource, uniqueID string, camera config.CameraConfig, startTime, endTime time.Time) (string, error) {
-	// Create temporary directory for processing
-	tmpDir := filepath.Join(hvp.config.StoragePath, "recordings", camera.Name, "tmp", "hybrid")
+	// Get current active disk path (don't rely on potentially stale config)
+	activeDisk, err := hvp.db.GetActiveDisk()
+	if err != nil {
+		return "", fmt.Errorf("error getting active disk: %v", err)
+	}
+	if activeDisk == nil {
+		return "", fmt.Errorf("no active disk available")
+	}
+	
+	// Create temporary directory for processing using current active disk path
+	tmpDir := filepath.Join(activeDisk.Path, "recordings", camera.Name, "tmp", "hybrid")
+	log.Printf("[HybridProcessor] Using tmpDir: %s (from active disk: %s)", tmpDir, activeDisk.Path)
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return "", fmt.Errorf("error creating temp directory: %v", err)
 	}

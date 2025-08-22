@@ -103,15 +103,15 @@ func main() {
 	// 🧹 STARTUP CLEANUP: Clean up stuck videos from previous runs (SYNCHRONOUS)
 	// This MUST complete before starting any other services to ensure clean state
 	log.Println("🧹 STARTUP CLEANUP: Starting synchronous cleanup process...")
-	
+
 	// Wait for stuck videos and request_ids cleanup to complete
 	if err := db.CleanupStuckVideosOnStartup(); err != nil {
 		log.Printf("❌ STARTUP CLEANUP: Error during cleanup: %v", err)
 		// Continue anyway, don't fail startup
 	}
-	
+
 	log.Println("✅ STARTUP CLEANUP: Cleanup completed successfully - system is ready to start services!")
-	
+
 	// Only proceed with other initializations AFTER cleanup is done
 	log.Println("🚀 SYSTEM: Starting other services after cleanup completion...")
 
@@ -144,10 +144,11 @@ func main() {
 	// Start video request processing cron job (every 30 minutes)
 	cron.StartVideoRequestCron(&cfg)
 
-	// Start disk management cron job (nightly at 2 AM)
-	diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)
-	diskCron.Start()
-	log.Println("Started disk management cron job")
+	// // Start disk management cron job (nightly at 2 AM)
+	// // Commented disk management Cron Job since it will be handled by auto-restart service
+	// diskCron := cron.NewDiskManagementCron(db, diskManager, &cfg)
+	// diskCron.Start()
+	// log.Println("Started disk management cron job")
 
 	// Start HLS cleanup cron job (nightly at 3 AM)
 	hlsCron := cron.NewHLSCleanupCron(db)
@@ -268,19 +269,19 @@ func main() {
 		sig := <-sigChan
 		fmt.Printf("[MAIN] Received signal: %v. Starting graceful shutdown...\n", sig)
 		log.Printf("Received signal: %v. Starting graceful shutdown...", sig)
-		
+
 		// Cancel context to signal all goroutines to stop
 		cancel()
-		
+
 		// Give services time to shutdown gracefully
 		shutdownTimer := time.NewTimer(30 * time.Second)
 		shutdownComplete := make(chan struct{})
-		
+
 		go func() {
 			wg.Wait()
 			close(shutdownComplete)
 		}()
-		
+
 		select {
 		case <-shutdownComplete:
 			fmt.Println("[MAIN] Graceful shutdown completed successfully")
@@ -289,7 +290,7 @@ func main() {
 			fmt.Println("[MAIN] Shutdown timeout reached, forcing exit")
 			log.Println("Shutdown timeout reached, forcing exit")
 		}
-		
+
 		os.Exit(0)
 	}()
 

@@ -256,7 +256,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	}
 
 	// Create thumbnail (di folder thumbnail)
-	thumbnailPath := s.getTempPath(TmpTypeThumbnail, uniqueID, ".png", cameraName)
+	thumbnailPath := s.getTempPath(TmpTypeThumbnail, uniqueID, ".jpg", cameraName)
 	log.Printf("Creating thumbnail at: %s", thumbnailPath)
 	err = s.CreateThumbnail(videoPath, thumbnailPath)
 	if err != nil {
@@ -319,7 +319,7 @@ func (s *BookingVideoService) UploadProcessedVideo(
 	}
 
 	// Upload thumbnail if available
-	thumbnailR2Path := fmt.Sprintf("mp4/%s_thumbnail.png", uniqueID)
+	thumbnailR2Path := fmt.Sprintf("mp4/%s_thumbnail.jpg", uniqueID)
 	thumbnailURL := ""
 	if thumbnailPath != "" {
 		_, err = s.r2Client.UploadFileWithMetrics(thumbnailPath, thumbnailR2Path, videoMetrics)
@@ -799,7 +799,8 @@ func (s *BookingVideoService) CreateThumbnail(inputPath, outputPath string) erro
 		"-i", inputPath,
 		"-ss", "00:00:05", // Take frame at 5 seconds
 		"-vframes", "1", // Extract just one frame
-		"-vf", "scale=480:-2", // 480p width thumbnail, maintain aspect ratio
+		"-vf", "scale=328:174:force_original_aspect_ratio=decrease,pad=328:174:(ow-iw)/2:(oh-ih)/2", // Exact 328x174 with padding if needed
+		"-q:v", "5", // JPEG quality (5 is medium quality)
 		outputPath,
 	}
 

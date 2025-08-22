@@ -831,6 +831,79 @@ func (s *Server) updateDiskManagerConfig(c *gin.Context) {
 	})
 }
 
+// POST /api/admin/disk/switch/:diskId
+// Switch active disk and restart all camera recordings
+func (s *Server) switchDiskAndRestartRecordings(c *gin.Context) {
+	diskID := c.Param("diskId")
+	if diskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Missing disk ID",
+			"message": "Disk ID is required in the URL path",
+		})
+		return
+	}
+	
+	log.Printf("[API] Switching active disk to %s and restarting recordings", diskID)
+	
+	// Verify disk exists before switching
+	disk, err := s.db.GetStorageDisk(diskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get disk information",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	if disk == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "Disk not found",
+			"message": fmt.Sprintf("No disk found with ID: %s", diskID),
+		})
+		return
+	}
+	
+	// Get current active disk for logging
+	currentDisk, err := s.db.GetActiveDisk()
+	if err == nil && currentDisk != nil {
+		log.Printf("[API] Current active disk: %s (%s)", currentDisk.Path, currentDisk.ID)
+	}
+	
+	// Switch disk and restart recordings using disk manager
+	err = s.diskManager.SetActiveDiskAndRestartRecordings(diskID)
+	if err != nil {
+		log.Printf("[API] Error switching disk and restarting recordings: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to switch disk and restart recordings",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	log.Printf("[API] ✅ Successfully switched to disk %s and restarted recordings", diskID)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Disk switched and recordings restarted successfully",
+		"data": gin.H{
+			"previous_disk": func() gin.H {
+				if currentDisk != nil {
+					return gin.H{
+						"id":   currentDisk.ID,
+						"path": currentDisk.Path,
+					}
+				}
+				return gin.H{}
+			}(),
+			"new_active_disk": gin.H{
+				"id":   disk.ID,
+				"path": disk.Path,
+			},
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+}
+
 // PUT /api/admin/system-config
 // Update system configuration
 func (s *Server) updateSystemConfig(c *gin.Context) {

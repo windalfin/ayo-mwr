@@ -151,11 +151,30 @@ func (dm *DiskManager) GetActiveDiskPath() (string, error) {
 		return "", fmt.Errorf("no active disk found")
 	}
 
-	return activeDisk.Path, nil
+	// Ensure we return an absolute path
+	path := activeDisk.Path
+	if !filepath.IsAbs(path) {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to get absolute path for disk %s: %v", activeDisk.ID, err)
+		}
+		path = absPath
+		log.Printf("[DiskManager] Converted relative disk path to absolute: %s -> %s (disk: %s)", activeDisk.Path, path, activeDisk.ID)
+	}
+
+	return path, nil
 }
 
 // RegisterDisk adds a new storage disk to the system with automatic priority detection
 func (dm *DiskManager) RegisterDisk(path string, priorityOrder int) error {
+	// Normalize path to absolute to ensure consistency
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
+	}
+	path = absPath
+	log.Printf("[DiskManager] Normalized disk path to absolute: %s", path)
+	
 	// Verify the path exists and is accessible
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("path does not exist: %s", path)
@@ -680,4 +699,103 @@ func (dm *DiskManager) getAutoPriority(diskType DiskType, sizeGB int64) int {
 	}
 
 	return finalPriority
+}
+
+// NormalizeDiskPaths ensures all disk paths in the database are absolute paths
+// This is safe to run on a live system as it only updates database records
+func (dm *DiskManager) NormalizeDiskPaths() error {
+	disks, err := dm.db.GetStorageDisks()
+	if err != nil {
+		return fmt.Errorf("failed to get storage disks: %v", err)
+	}
+	
+	updatedCount := 0
+	for _, disk := range disks {
+		if !filepath.IsAbs(disk.Path) {
+			// Convert relative path to absolute
+			absPath, err := filepath.Abs(disk.Path)
+			if err != nil {
+				log.Printf("[DiskManager] Warning: Failed to convert disk path to absolute for %s (%s): %v", disk.ID, disk.Path, err)
+				continue
+			}
+			
+			// Verify the path exists before updating
+			if _, err := os.Stat(absPath); os.IsNotExist(err) {
+				log.Printf("[DiskManager] Warning: Absolute path does not exist for disk %s: %s -> %s", disk.ID, disk.Path, absPath)
+				continue
+			}
+			
+			// Update the disk path in database
+			if err := dm.db.UpdateDiskPath(disk.ID, absPath); err != nil {
+				log.Printf("[DiskManager] Warning: Failed to update path for disk %s: %v", disk.ID, err)
+				continue
+			}
+			
+			log.Printf("[DiskManager] ✅ Normalized disk path: %s -> %s (disk: %s)", disk.Path, absPath, disk.ID)
+			updatedCount++
+		}
+	}
+	
+	if updatedCount > 0 {
+		log.Printf("[DiskManager] ✅ Normalized %d disk paths to absolute paths", updatedCount)
+	} else {
+		log.Printf("[DiskManager] ✅ All disk paths are already absolute - no updates needed")
+	}
+	
+	return nil
+}
+
+// RecordingManager interface for disk manager to restart recordings
+type RecordingManager interface {
+	RestartAllCameras() error
+}
+
+// recordingManager stores the recording manager instance
+var recordingManager RecordingManager
+
+// SetRecordingManager sets the recording manager for disk change notifications
+func (dm *DiskManager) SetRecordingManager(rm RecordingManager) {
+	recordingManager = rm
+	log.Printf("[DiskManager] Recording manager registered for disk change notifications")
+}
+
+// SetActiveDiskAndRestartRecordings switches active disk and restarts all recordings
+func (dm *DiskManager) SetActiveDiskAndRestartRecordings(diskID string) error {
+	log.Printf("[DiskManager] Switching active disk to %s and restarting recordings", diskID)
+	
+	// Get current active disk for logging
+	currentDisk, err := dm.db.GetActiveDisk()
+	if err == nil && currentDisk != nil {
+		log.Printf("[DiskManager] Current active disk: %s (%s)", currentDisk.Path, currentDisk.ID)
+	}
+	
+	// Set the new active disk
+	if err := dm.db.SetActiveDisk(diskID); err != nil {
+		return fmt.Errorf("failed to set active disk: %v", err)
+	}
+	
+	// Get new active disk info
+	newDisk, err := dm.db.GetActiveDisk()
+	if err != nil {
+		return fmt.Errorf("failed to get new active disk info: %v", err)
+	}
+	
+	if newDisk == nil {
+		return fmt.Errorf("new active disk not found")
+	}
+	
+	log.Printf("[DiskManager] New active disk: %s (%s)", newDisk.Path, newDisk.ID)
+	
+	// Restart recordings if recording manager is available
+	if recordingManager != nil {
+		log.Printf("[DiskManager] Restarting recordings on new disk...")
+		if err := recordingManager.RestartAllCameras(); err != nil {
+			return fmt.Errorf("failed to restart recordings: %v", err)
+		}
+		log.Printf("[DiskManager] ✅ Recordings restarted successfully on new disk")
+	} else {
+		log.Printf("[DiskManager] ⚠️ No recording manager registered - recordings may continue on old disk")
+	}
+	
+	return nil
 }

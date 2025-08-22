@@ -230,8 +230,20 @@ func (hvp *HybridVideoProcessor) processVideoSources(sources []SegmentSource, un
 	}
 	
 	// Create temporary directory for processing using current active disk path
-	tmpDir := filepath.Join(activeDisk.Path, "recordings", camera.Name, "tmp", "hybrid")
-	log.Printf("[HybridProcessor] Using tmpDir: %s (from active disk: %s)", tmpDir, activeDisk.Path)
+	// Ensure we have an absolute path
+	diskPath := activeDisk.Path
+	if !filepath.IsAbs(diskPath) {
+		// If disk path is relative, make it absolute
+		absDiskPath, err := filepath.Abs(diskPath)
+		if err != nil {
+			return "", fmt.Errorf("error getting absolute disk path: %v", err)
+		}
+		diskPath = absDiskPath
+		log.Printf("[HybridProcessor] Converted relative disk path to absolute: %s -> %s", activeDisk.Path, diskPath)
+	}
+	
+	tmpDir := filepath.Join(diskPath, "recordings", camera.Name, "tmp", "hybrid")
+	log.Printf("[HybridProcessor] Using tmpDir: %s (from active disk: %s)", tmpDir, diskPath)
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return "", fmt.Errorf("error creating temp directory: %v", err)
 	}
@@ -314,9 +326,20 @@ func (hvp *HybridVideoProcessor) processMultipleSources(sources []SegmentSource,
 		}
 
 		// Add to concat list
-		escapedPath := strings.ReplaceAll(sourcePath, "'", "'\\''")
+		// For concat demuxer, we need to handle paths correctly
+		var pathToWrite string
+		if source.Type == "chunk" {
+			// For extracted chunks, they are in the same directory as concat list
+			// so we can use just the filename
+			pathToWrite = filepath.Base(sourcePath)
+		} else {
+			// For segments, use the full absolute path
+			pathToWrite = sourcePath
+		}
+		
+		escapedPath := strings.ReplaceAll(pathToWrite, "'", "'\\''")
 		fmt.Fprintf(concatFile, "file '%s'\n", escapedPath)
-		log.Printf("[HybridProcessor] Added to concat list: %s", escapedPath)
+		log.Printf("[HybridProcessor] Added to concat list: %s (source type: %s, full path: %s)", escapedPath, source.Type, sourcePath)
 	}
 	concatFile.Close()
 
@@ -382,6 +405,7 @@ func (hvp *HybridVideoProcessor) extractFromChunk(source SegmentSource, startTim
 	}
 
 	extractedPath := filepath.Join(tmpDir, fmt.Sprintf("%s_chunk_extract_%d.ts", uniqueID, index))
+	log.Printf("[HybridProcessor] Extract output path: %s (tmpDir: %s)", extractedPath, tmpDir)
 	
 	cmd := exec.Command("ffmpeg",
 		"-ss", fmt.Sprintf("%.3f", extractStart),

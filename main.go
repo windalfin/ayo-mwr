@@ -124,6 +124,12 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: Failed to setup initial disk: %v", err)
 	}
+	
+	// Normalize disk paths to ensure all paths are absolute (safe migration)
+	log.Printf("🔧 STARTUP: Normalizing disk paths to absolute paths...")
+	if err := diskManager.NormalizeDiskPaths(); err != nil {
+		log.Printf("Warning: Failed to normalize disk paths: %v", err)
+	}
 	// Start config update cron job (every 24 hours)
 	cron.StartConfigUpdateCron(&cfg, db)
 	// delay 15 seconds before first run
@@ -256,19 +262,39 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// Start capturing from all cameras with context
-	fmt.Println("[MAIN] Starting camera workers")
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		recording.StartAllCamerasWithContext(ctx, &cfg)
-	}()
+	// Initialize recording manager with disk change capabilities
+	fmt.Println("[MAIN] Starting recording manager")
+	recordingManager := recording.NewRecordingManager(&cfg, db, diskManager)
+	
+	// Register recording manager with disk manager for restart notifications
+	diskManager.SetRecordingManager(recordingManager)
+	
+	// Start all cameras with recording manager
+	if err := recordingManager.StartAllCameras(); err != nil {
+		log.Printf("Failed to start cameras with recording manager: %v", err)
+		log.Println("Falling back to direct camera start...")
+		
+		// Fallback to original method if recording manager fails
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recording.StartAllCamerasWithContext(ctx, &cfg)
+		}()
+	} else {
+		log.Printf("✅ All cameras started successfully with recording manager")
+	}
 
 	// Wait for shutdown signal
 	go func() {
 		sig := <-sigChan
 		fmt.Printf("[MAIN] Received signal: %v. Starting graceful shutdown...\n", sig)
 		log.Printf("Received signal: %v. Starting graceful shutdown...", sig)
+
+		// Stop recording manager first
+		if recordingManager != nil {
+			fmt.Println("[MAIN] Stopping recording manager...")
+			recordingManager.StopAllCameras()
+		}
 
 		// Cancel context to signal all goroutines to stop
 		cancel()

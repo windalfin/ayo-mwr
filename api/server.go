@@ -26,6 +26,7 @@ type Server struct {
 	videoRequestHandler *BookingVideoRequestHandler
 	chunkHandlers       *ChunkHandlers
 	dashboardFS         embed.FS
+	diskManager         *storage.DiskManager
 
 	// Mutex untuk prevent concurrent uploads
 	uploadMutex   sync.Mutex
@@ -48,6 +49,7 @@ func NewServer(cfg *config.Config, db database.Database, r2Storage *storage.R2St
 		videoRequestHandler: videoRequestHandler,
 		chunkHandlers:       chunkHandlers,
 		dashboardFS:         dashboardFS,
+		diskManager:         diskManager,
 		activeUploads:       make(map[string]bool),
 	}
 }
@@ -183,6 +185,9 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 			// Disk manager configuration endpoints
 			admin.GET("/disk-manager-config", s.getDiskManagerConfig)
 			admin.PUT("/disk-manager-config", s.updateDiskManagerConfig)
+			
+			// Disk switching with recording restart
+			admin.POST("/disk/switch/:diskId", s.switchDiskAndRestartRecordings)
 
 			// Chunk processing endpoints
 			admin.GET("/chunk-config", s.chunkHandlers.GetChunkConfig)

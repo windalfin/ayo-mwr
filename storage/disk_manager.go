@@ -43,8 +43,9 @@ const (
 // DiskManager handles storage disk management and selection
 // It also supports automatic discovery of new storage disks (Linux only).
 type DiskManager struct {
-	db            database.Database
-	configService *config.SystemConfigService
+	db               database.Database
+	configService    *config.SystemConfigService
+	recordingManager RecordingManager // Embedded dependency, not global
 }
 
 // NewDiskManager creates a new disk manager instance
@@ -52,6 +53,7 @@ func NewDiskManager(db database.Database) *DiskManager {
 	return &DiskManager{
 		db:            db,
 		configService: config.NewSystemConfigService(db),
+		// recordingManager will be set later via SetRecordingManager
 	}
 }
 
@@ -750,12 +752,9 @@ type RecordingManager interface {
 	RestartAllCameras() error
 }
 
-// recordingManager stores the recording manager instance
-var recordingManager RecordingManager
-
 // SetRecordingManager sets the recording manager for disk change notifications
 func (dm *DiskManager) SetRecordingManager(rm RecordingManager) {
-	recordingManager = rm
+	dm.recordingManager = rm
 	log.Printf("[DiskManager] Recording manager registered for disk change notifications")
 }
 
@@ -787,9 +786,9 @@ func (dm *DiskManager) SetActiveDiskAndRestartRecordings(diskID string) error {
 	log.Printf("[DiskManager] New active disk: %s (%s)", newDisk.Path, newDisk.ID)
 	
 	// Restart recordings if recording manager is available
-	if recordingManager != nil {
+	if dm.recordingManager != nil {
 		log.Printf("[DiskManager] Restarting recordings on new disk...")
-		if err := recordingManager.RestartAllCameras(); err != nil {
+		if err := dm.recordingManager.RestartAllCameras(); err != nil {
 			return fmt.Errorf("failed to restart recordings: %v", err)
 		}
 		log.Printf("[DiskManager] ✅ Recordings restarted successfully on new disk")

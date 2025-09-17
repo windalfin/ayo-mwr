@@ -2108,13 +2108,6 @@ async function loadSystemConfig() {
     document.getElementById('arduino-com-port').value = systemConfig['arduino_com_port'] || '/dev/ttyUSB0';
     document.getElementById('arduino-baud-rate').value = systemConfig['arduino_baud_rate'] || 9600;
     
-    // RTSP Configuration
-    document.getElementById('rtsp-username').value = systemConfig['rtsp_username'] || 'admin';
-    document.getElementById('rtsp-password').value = systemConfig['rtsp_password'] || 'admin123';
-    document.getElementById('rtsp-ip').value = systemConfig['rtsp_ip'] || '192.168.1.100';
-    document.getElementById('rtsp-port').value = systemConfig['rtsp_port'] || 554;
-    document.getElementById('rtsp-path').value = systemConfig['rtsp_path'] || '/stream1';
-    
     // Recording Configuration
     document.getElementById('segment-duration').value = systemConfig['segment_duration'] || 10;
     document.getElementById('clip-duration').value = systemConfig['clip_duration'] || 30;
@@ -2236,14 +2229,7 @@ async function saveSystemConfig() {
       // Arduino Configuration
       'arduino_com_port': document.getElementById('arduino-com-port').value,
       'arduino_baud_rate': parseInt(document.getElementById('arduino-baud-rate').value),
-      
-      // RTSP Configuration
-      'rtsp_username': document.getElementById('rtsp-username').value,
-      'rtsp_password': document.getElementById('rtsp-password').value,
-      'rtsp_ip': document.getElementById('rtsp-ip').value,
-      'rtsp_port': parseInt(document.getElementById('rtsp-port').value),
-      'rtsp_path': document.getElementById('rtsp-path').value,
-      
+    
       // Recording Configuration
       'segment_duration': parseInt(document.getElementById('segment-duration').value),
       'clip_duration': parseInt(document.getElementById('clip-duration').value),

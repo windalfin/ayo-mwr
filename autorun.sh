@@ -28,7 +28,7 @@ echo -e "${BLUE}=== AYO MWR Auto Setup Script ===${NC}"
 echo -e "${BLUE}This script will:${NC}"
 echo -e "${BLUE}1. Build the Go application${NC}"
 echo -e "${BLUE}2. Create a systemd service${NC}"
-echo -e "${BLUE}3. Create a daily restart timer (2 AM)${NC}"
+echo -e "${BLUE}3. Create a daily restart timer (midnight)${NC}"
 echo -e "${BLUE}4. Enable auto-start on boot${NC}"
 echo -e "${BLUE}5. Start the service${NC}"
 echo ""
@@ -182,11 +182,11 @@ StandardError=journal"
 
     # Create timer content
     TIMER_CONTENT="[Unit]
-Description=Zero-Downtime Restart AYO MWR Video Recording Service daily at 2 AM
+Description=Zero-Downtime Restart AYO MWR Video Recording Service daily at midnight
 Requires=$SERVICE_NAME.service
 
 [Timer]
-OnCalendar=*-*-* 02:00:00
+OnCalendar=*-*-* 00:00:00
 Persistent=true
 
 [Install]
@@ -229,7 +229,7 @@ sudo systemctl enable "$SERVICE_NAME"
 if [ "$DISABLE_TIMER" = false ]; then
     sudo systemctl enable "$TIMER_NAME.timer"
     sudo systemctl start "$TIMER_NAME.timer"
-    echo -e "${GREEN}✓ Daily restart timer enabled (2 AM)${NC}"
+    echo -e "${GREEN}✓ Daily restart timer enabled (midnight)${NC}"
 fi
 
 echo -e "${GREEN}✓ Service enabled for auto-start on boot${NC}"
@@ -261,7 +261,7 @@ echo ""
 echo -e "${GREEN}=== Setup Complete! ===${NC}"
 echo -e "${GREEN}Your AYO MWR application is now running as a systemd service.${NC}"
 if [ "$DISABLE_TIMER" = false ]; then
-    echo -e "${GREEN}The service will automatically restart every day at 2:00 AM.${NC}"
+    echo -e "${GREEN}The service will automatically restart every day at midnight.${NC}"
 fi
 echo ""
 echo -e "${BLUE}Useful commands:${NC}"

@@ -1653,6 +1653,14 @@ func (s *SQLiteDB) UpdateDiskPriority(id string, priority int) error {
 	return err
 }
 
+// UpdateDiskPath updates the path for a storage disk
+func (s *SQLiteDB) UpdateDiskPath(id string, path string) error {
+	_, err := s.db.Exec(`
+        UPDATE storage_disks SET path = ?, last_scan = ? WHERE id = ?
+    `, path, time.Now(), id)
+	return err
+}
+
 // SetActiveDisk sets a disk as active and deactivates all others
 func (s *SQLiteDB) SetActiveDisk(id string) error {
 	tx, err := s.db.Begin()

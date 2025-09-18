@@ -866,41 +866,6 @@
           </div>
         </div>
         
-        <!-- RTSP Configuration (Legacy) -->
-        <h4 style="color: #273c75; margin-top: 2rem;">RTSP Configuration (Legacy Single Camera)</h4>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
-          <div class="form-group">
-            <label for="rtsp-username">RTSP Username</label>
-            <input type="text" id="rtsp-username" placeholder="admin">
-            <small style="color: #666; font-size: 0.9em;">Username for RTSP authentication</small>
-          </div>
-          <div class="form-group">
-            <label for="rtsp-password">RTSP Password</label>
-            <div class="password-input-container">
-              <input type="password" id="rtsp-password" class="password-input" placeholder="admin123">
-              <button type="button" class="toggle-password" onclick="togglePassword('rtsp-password')">
-                <span class="eye-icon">🙈</span>
-              </button>
-            </div>
-            <small style="color: #666; font-size: 0.9em;">Password for RTSP authentication</small>
-          </div>
-          <div class="form-group">
-            <label for="rtsp-ip">RTSP IP Address</label>
-            <input type="text" id="rtsp-ip" placeholder="192.168.1.100">
-            <small style="color: #666; font-size: 0.9em;">IP address of the RTSP camera</small>
-          </div>
-          <div class="form-group">
-            <label for="rtsp-port">RTSP Port</label>
-            <input type="number" id="rtsp-port" min="1" max="65535" value="554">
-            <small style="color: #666; font-size: 0.9em;">Port number for RTSP connection</small>
-          </div>
-          <div class="form-group">
-            <label for="rtsp-path">RTSP Path</label>
-            <input type="text" id="rtsp-path" placeholder="/stream1">
-            <small style="color: #666; font-size: 0.9em;">RTSP stream path</small>
-          </div>
-        </div>
-        
         <!-- Recording Configuration -->
         <h4 style="color: #273c75; margin-top: 2rem;">Recording Configuration</h4>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
@@ -2143,13 +2108,6 @@ async function loadSystemConfig() {
     document.getElementById('arduino-com-port').value = systemConfig['arduino_com_port'] || '/dev/ttyUSB0';
     document.getElementById('arduino-baud-rate').value = systemConfig['arduino_baud_rate'] || 9600;
     
-    // RTSP Configuration
-    document.getElementById('rtsp-username').value = systemConfig['rtsp_username'] || 'admin';
-    document.getElementById('rtsp-password').value = systemConfig['rtsp_password'] || 'admin123';
-    document.getElementById('rtsp-ip').value = systemConfig['rtsp_ip'] || '192.168.1.100';
-    document.getElementById('rtsp-port').value = systemConfig['rtsp_port'] || 554;
-    document.getElementById('rtsp-path').value = systemConfig['rtsp_path'] || '/stream1';
-    
     // Recording Configuration
     document.getElementById('segment-duration').value = systemConfig['segment_duration'] || 10;
     document.getElementById('clip-duration').value = systemConfig['clip_duration'] || 30;
@@ -2271,14 +2229,7 @@ async function saveSystemConfig() {
       // Arduino Configuration
       'arduino_com_port': document.getElementById('arduino-com-port').value,
       'arduino_baud_rate': parseInt(document.getElementById('arduino-baud-rate').value),
-      
-      // RTSP Configuration
-      'rtsp_username': document.getElementById('rtsp-username').value,
-      'rtsp_password': document.getElementById('rtsp-password').value,
-      'rtsp_ip': document.getElementById('rtsp-ip').value,
-      'rtsp_port': parseInt(document.getElementById('rtsp-port').value),
-      'rtsp_path': document.getElementById('rtsp-path').value,
-      
+    
       // Recording Configuration
       'segment_duration': parseInt(document.getElementById('segment-duration').value),
       'clip_duration': parseInt(document.getElementById('clip-duration').value),

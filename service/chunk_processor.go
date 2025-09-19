@@ -65,10 +65,17 @@ func (cp *ChunkProcessor) ProcessChunks(ctx context.Context) error {
 
 	log.Printf("[ChunkProcessor] Using active disk: %s (ID: %s)", activeDisk.Path, activeDisk.ID)
 
-	// Process each camera on the active disk
-	cameras := []string{"CAMERA_1", "CAMERA_2", "CAMERA_3", "CAMERA_4"}
+	// Get cameras from database
+	cameraConfigs, err := cp.db.GetCameras()
+	if err != nil {
+		return fmt.Errorf("failed to get cameras from database: %v", err)
+	}
 	
-	for _, camera := range cameras {
+	log.Printf("[ChunkProcessor] Found %d cameras in database", len(cameraConfigs))
+	
+	// Process each camera on the active disk
+	for _, cameraConfig := range cameraConfigs {
+		camera := cameraConfig.Name
 		// Build absolute paths using the active disk path from storage_disks table
 		// Convert activeDisk.Path to absolute path first
 		absActiveDiskPath, err := filepath.Abs(activeDisk.Path)

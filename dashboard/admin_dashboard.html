@@ -569,6 +569,7 @@
     <a href="#system-config" data-tab="system-config">System Config</a>
     <a href="#system" data-tab="system">System Health</a>
     <a href="#logs" data-tab="logs">Logs</a>
+    <a href="#" onclick="openChangePasswordModal(); return false;" style="float: right;">Change Password</a>
   </nav>
   <div class="container">
     <!-- Summary Cards -->
@@ -2067,6 +2068,51 @@
     </div>
   </div>
 
+  <!-- Change Password Modal -->
+  <div id="change-password-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close" onclick="closeChangePasswordModal()">&times;</span>
+      <h2>Change Password</h2>
+      <form id="change-password-form">
+        <div class="form-group">
+          <label for="current-password">Current Password</label>
+          <div class="password-input-container">
+            <input type="password" id="current-password" class="password-input" placeholder="Enter current password" required>
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('current-password')">
+              <span class="eye-icon">🙈</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label for="new-password">New Password</label>
+          <div class="password-input-container">
+            <input type="password" id="new-password" class="password-input" placeholder="Enter new password" required>
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('new-password')">
+              <span class="eye-icon">🙈</span>
+            </button>
+          </div>
+          <small style="color: #666;">Password must be at least 8 characters long</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="confirm-password">Confirm New Password</label>
+          <div class="password-input-container">
+            <input type="password" id="confirm-password" class="password-input" placeholder="Confirm new password" required>
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('confirm-password')">
+              <span class="eye-icon">🙈</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="form-actions" style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+          <button type="submit" class="btn btn-primary">Change Password</button>
+          <button type="button" class="btn btn-secondary" onclick="closeChangePasswordModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 <script>
 // ---------- System Config ----------
 let systemConfig = {};
@@ -2680,6 +2726,87 @@ function toggleOnboardingPassword() {
     eyeIcon.textContent = '🙈';
   }
 }
+
+// Change Password Functions
+function openChangePasswordModal() {
+  document.getElementById('change-password-modal').style.display = 'block';
+  document.getElementById('change-password-form').reset();
+}
+
+function closeChangePasswordModal() {
+  document.getElementById('change-password-modal').style.display = 'none';
+  document.getElementById('change-password-form').reset();
+}
+
+function togglePasswordVisibility(fieldId) {
+  const passwordInput = document.getElementById(fieldId);
+  const button = passwordInput.nextElementSibling;
+  const eyeIcon = button.querySelector('.eye-icon');
+  
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    eyeIcon.textContent = '👁️';
+  } else {
+    passwordInput.type = 'password';
+    eyeIcon.textContent = '🙈';
+  }
+}
+
+// Handle change password form submission
+document.addEventListener('DOMContentLoaded', function() {
+  const changePasswordForm = document.getElementById('change-password-form');
+  if (changePasswordForm) {
+    changePasswordForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const currentPassword = document.getElementById('current-password').value;
+      const newPassword = document.getElementById('new-password').value;
+      const confirmPassword = document.getElementById('confirm-password').value;
+      
+      // Validation
+      if (newPassword.length < 8) {
+        showNotification('New password must be at least 8 characters long', 'error');
+        return;
+      }
+      
+      if (newPassword !== confirmPassword) {
+        showNotification('New password and confirmation do not match', 'error');
+        return;
+      }
+      
+      if (currentPassword === newPassword) {
+        showNotification('New password must be different from current password', 'error');
+        return;
+      }
+      
+      try {
+        const response = await handleAuthenticatedFetch('/api/change-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            currentPassword: currentPassword,
+            newPassword: newPassword
+          })
+        });
+        
+        if (!response) return;
+        
+        if (response.ok) {
+          showNotification('Password changed successfully', 'success');
+          closeChangePasswordModal();
+        } else {
+          const error = await response.json();
+          showNotification(error.message || 'Failed to change password', 'error');
+        }
+      } catch (error) {
+        console.error('Error changing password:', error);
+        showNotification('Failed to change password: ' + error.message, 'error');
+      }
+    });
+  }
+});
 
 
 

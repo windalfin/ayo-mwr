@@ -313,6 +313,7 @@ const (
 	// AYO API Configuration
 	ConfigAyoindoAPIBaseEndpoint = "ayoindo_api_base_endpoint"
 	ConfigAyoindoAPIToken        = "ayoindo_api_token"
+	ConfigCameraToken            = "camera_token"
 	
 	// Note: cameras_config is stored in separate 'cameras' table, not in system_config
 )
@@ -400,6 +401,7 @@ type Database interface {
 	CreateUser(username, passwordHash string) error
 	GetUserByUsername(username string) (*User, error)
 	HasUsers() (bool, error)
+	UpdateUserPassword(userID int, newPassword string) error
 
 	// Helper operations
 	Close() error

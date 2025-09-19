@@ -2,9 +2,9 @@ package cron
 
 import (
 	"ayo-mwr/api"
+	"ayo-mwr/database"
 	"context"
 	"log"
-	"os"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -24,8 +24,8 @@ func NewHealthCheckCron() (*HealthCheckCron, error) {
 		return nil, err
 	}
 
-	// Get camera token from environment or use default
-	cameraToken := os.Getenv("CAMERA_TOKEN")
+	// Get camera token from database or use default
+	cameraToken := getCameraTokenFromDB()
 	if cameraToken == "" {
 		cameraToken = "health-check-camera-token"
 	}
@@ -122,4 +122,23 @@ func RunHealthCheckCronStandalone() {
 	if err := healthCheckCron.Start(ctx); err != nil {
 		log.Fatalf("Failed to start health check cron: %v", err)
 	}
+}
+
+// getCameraTokenFromDB gets camera token from database
+func getCameraTokenFromDB() string {
+	// Get camera token from database
+	db, err := database.NewSQLiteDB("./data/videos.db")
+	if err != nil {
+		log.Printf("⚠️ CAMERA-TOKEN: Failed to connect to database: %v", err)
+		return ""
+	}
+	defer db.Close()
+	
+	config, err := db.GetSystemConfig(database.ConfigCameraToken)
+	if err != nil {
+		log.Printf("⚠️ CAMERA-TOKEN: Failed to get camera token from database: %v", err)
+		return ""
+	}
+	
+	return config.Value
 }

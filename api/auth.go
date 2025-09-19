@@ -223,6 +223,60 @@ func (s *Server) handleLogout(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/login")
 }
 
+// ChangePassword handles password change requests
+func (s *Server) handleChangePassword(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	username := session.Get("username")
+	
+	if userID == nil || username == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+	
+	var req struct {
+		CurrentPassword string `json:"currentPassword" binding:"required"`
+		NewPassword     string `json:"newPassword" binding:"required"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+	
+	// Validate new password length
+	if len(req.NewPassword) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "New password must be at least 8 characters long"})
+		return
+	}
+	
+	// Get user from database
+	user, err := s.db.GetUserByUsername(username.(string))
+	if err != nil || user == nil {
+		log.Printf("❌ AUTH: Error getting user for password change: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	
+	// Verify current password
+	if !database.ValidatePassword(user.PasswordHash, req.CurrentPassword) {
+		log.Printf("❌ AUTH: Invalid current password for user '%s' during password change", username.(string))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		return
+	}
+	
+	// Update password in database
+	err = s.db.UpdateUserPassword(user.ID, req.NewPassword)
+	if err != nil {
+		log.Printf("❌ AUTH: Error updating password for user '%s': %v", username.(string), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+		return
+	}
+	
+	log.Printf("✅ AUTH: Password changed successfully for user '%s'", username.(string))
+	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
+}
+
 // getRegisterHTML returns the registration page HTML
 func (s *Server) getRegisterHTML() string {
 	return `
@@ -311,6 +365,9 @@ func (s *Server) getLoginHTML() string {
             </div>
             <button type="submit" class="btn">Login</button>
         </form>
+        <div class="footer">
+            <p>You can change your password after logging in</p>
+        </div>
     </div>
 </body>
 </html>`

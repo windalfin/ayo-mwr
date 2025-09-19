@@ -2418,6 +2418,26 @@ func (s *SQLiteDB) HasUsers() (bool, error) {
 	return count > 0, nil
 }
 
+// UpdateUserPassword updates a user's password
+func (s *SQLiteDB) UpdateUserPassword(userID int, newPassword string) error {
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %v", err)
+	}
+	
+	// Update the password in the database
+	_, err = s.db.Exec(
+		"UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		string(hashedPassword), userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update password: %v", err)
+	}
+	
+	return nil
+}
+
 // ValidatePassword checks if the provided password matches the user's hashed password
 func ValidatePassword(hashedPassword, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))

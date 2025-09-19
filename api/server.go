@@ -167,6 +167,9 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 			dashboard.GET("/bookings/:booking_id", s.getBookingByID)
 			dashboard.GET("/bookings/status/:status", s.getBookingsByStatus)
 			dashboard.GET("/bookings/date/:date", s.getBookingsByDate)
+			
+			// Change password endpoint
+			dashboard.POST("/change-password", s.handleChangePassword)
 		}
 
 		// Admin endpoints for camera/system/disk config (protected)
